@@ -1,0 +1,83 @@
+---
+# Configure clang-tidy for this project.
+
+# Here is an explanation for why some of the checks are disabled:
+#  -google-readability-braces-around-statements,
+#  -google-readability-namespace-comments,
+#  -google-runtime-references,
+#  -misc-non-private-member-variables-in-classes,
+#  -misc-const-correctness,
+#  -misc-include-cleaner,
+#  -modernize-return-braced-init-list,
+#  -modernize-use-trailing-return-type,
+#  -modernize-concat-nested-namespaces,
+#  -modernize-use-nodiscard,
+#  -modernize-avoid-c-arrays,
+#  -performance-move-const-arg,
+#  -performance-avoid-endl,
+#  -readability-braces-around-statements,
+#  -readability-identifier-length,
+#  -readability-magic-numbers,
+#  -readability-named-parameter,
+#  -readability-redundant-declaration,
+#  -readability-function-cognitive-complexity,
+#  -bugprone-narrowing-conversions,
+#  -bugprone-easily-swappable-parameters,
+#  -bugprone-implicit-widening-of-multiplication-result,
+Checks: >
+  -*,
+  abseil-*,
+  bugprone-*,
+  google-*,
+  misc-*,
+  modernize-*,
+  performance-*,
+  portability-*,
+  readability-*,
+  -misc-non-private-member-variables-in-classes,
+  -modernize-use-trailing-return-type,
+  -modernize-avoid-c-arrays,
+  -readability-braces-around-statements,
+  -readability-identifier-length,
+  -readability-magic-numbers,
+  -readability-uppercase-literal-suffix,
+  -bugprone-easily-swappable-parameters,
+  -readability-named-parameter,
+  -bugprone-narrowing-conversions,
+  -readability-implicit-bool-conversion,
+  -readability-function-cognitive-complexity,
+  -readability-convert-member-functions-to-static,
+  -google-readability-todo,
+  -readability-isolate-declaration,
+  -performance-no-int-to-ptr,
+  -bugprone-assert-side-effect,
+  -readability-avoid-nested-conditional-operator,
+  -modernize-use-designated-initializers,
+  -misc-no-recursion
+# Turn all the warnings from the checks above into errors.
+WarningsAsErrors: "*"
+
+CheckOptions:
+  - { key: readability-identifier-naming.NamespaceCase, value: lower_case }
+  - { key: readability-identifier-naming.ClassCase, value: CamelCase }
+  - { key: readability-identifier-naming.StructCase, value: CamelCase }
+  - {
+      key: readability-identifier-naming.TemplateParameterCase,
+      value: CamelCase,
+    }
+  - { key: readability-identifier-naming.FunctionCase, value: aNy_CasE }
+  - { key: readability-identifier-naming.VariableCase, value: lower_case }
+  - { key: readability-identifier-naming.ClassMemberCase, value: lower_case }
+  - { key: readability-identifier-naming.ClassMemberSuffix, value: _ }
+  - { key: readability-identifier-naming.PrivateMemberSuffix, value: _ }
+  - { key: readability-identifier-naming.ProtectedMemberSuffix, value: _ }
+  - { key: readability-identifier-naming.EnumConstantCase, value: CamelCase }
+  # - { key: readability-identifier-naming.EnumConstantPrefix, value: k }
+  - {
+      key: readability-identifier-naming.ConstexprVariableCase,
+      value: CamelCase,
+    }
+  - { key: readability-identifier-naming.GlobalConstantCase, value: CamelCase }
+  - { key: readability-identifier-naming.MemberConstantCase, value: CamelCase }
+  - { key: readability-identifier-naming.StaticConstantCase, value: CamelCase }
+  - { key: readability-function-cognitive-complexity.IgnoreMacros, value: 1 }
