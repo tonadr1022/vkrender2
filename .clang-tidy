@@ -1,29 +1,4 @@
 ---
-# Configure clang-tidy for this project.
-
-# Here is an explanation for why some of the checks are disabled:
-#  -google-readability-braces-around-statements,
-#  -google-readability-namespace-comments,
-#  -google-runtime-references,
-#  -misc-non-private-member-variables-in-classes,
-#  -misc-const-correctness,
-#  -misc-include-cleaner,
-#  -modernize-return-braced-init-list,
-#  -modernize-use-trailing-return-type,
-#  -modernize-concat-nested-namespaces,
-#  -modernize-use-nodiscard,
-#  -modernize-avoid-c-arrays,
-#  -performance-move-const-arg,
-#  -performance-avoid-endl,
-#  -readability-braces-around-statements,
-#  -readability-identifier-length,
-#  -readability-magic-numbers,
-#  -readability-named-parameter,
-#  -readability-redundant-declaration,
-#  -readability-function-cognitive-complexity,
-#  -bugprone-narrowing-conversions,
-#  -bugprone-easily-swappable-parameters,
-#  -bugprone-implicit-widening-of-multiplication-result,
 Checks: >
   -*,
   abseil-*,
@@ -53,10 +28,10 @@ Checks: >
   -bugprone-assert-side-effect,
   -readability-avoid-nested-conditional-operator,
   -modernize-use-designated-initializers,
-  -misc-no-recursion
-# Turn all the warnings from the checks above into errors.
+  -misc-no-recursion,
+  -google-build-using-namespace,
+  -google-readability-casting
 WarningsAsErrors: "*"
-
 CheckOptions:
   - { key: readability-identifier-naming.NamespaceCase, value: lower_case }
   - { key: readability-identifier-naming.ClassCase, value: CamelCase }
@@ -65,19 +40,25 @@ CheckOptions:
       key: readability-identifier-naming.TemplateParameterCase,
       value: CamelCase,
     }
-  - { key: readability-identifier-naming.FunctionCase, value: aNy_CasE }
+  - { key: readability-identifier-naming.FunctionCase, value: lower_case }
   - { key: readability-identifier-naming.VariableCase, value: lower_case }
   - { key: readability-identifier-naming.ClassMemberCase, value: lower_case }
-  - { key: readability-identifier-naming.ClassMemberSuffix, value: _ }
+  # - { key: readability-identifier-naming.ClassMemberSuffix, value: _ }
   - { key: readability-identifier-naming.PrivateMemberSuffix, value: _ }
   - { key: readability-identifier-naming.ProtectedMemberSuffix, value: _ }
-  - { key: readability-identifier-naming.EnumConstantCase, value: CamelCase }
-  # - { key: readability-identifier-naming.EnumConstantPrefix, value: k }
+  - {
+      key: readability-identifier-naming.EnumConstantCase,
+      value: UpperCamelCase,
+    }
   - {
       key: readability-identifier-naming.ConstexprVariableCase,
-      value: CamelCase,
+      value: lower_case,
     }
-  - { key: readability-identifier-naming.GlobalConstantCase, value: CamelCase }
-  - { key: readability-identifier-naming.MemberConstantCase, value: CamelCase }
-  - { key: readability-identifier-naming.StaticConstantCase, value: CamelCase }
+  # - { key: readability-identifier-naming.ConstexprVariablePrefix, value: k }
+  - { key: readability-identifier-naming.GlobalConstantCase, value: UPPER_CASE }
+  # - { key: readability-identifier-naming.GlobalConstantPrefix, value: k }
+  - { key: readability-identifier-naming.MemberConstantCase, value: lower_case }
+  # - { key: readability-identifier-naming.MemberConstantPrefix, value: k }
+  - { key: readability-identifier-naming.StaticConstantCase, value: UPPER_CASE }
+  # - { key: readability-identifier-naming.StaticConstantPrefix, value: k }
   - { key: readability-function-cognitive-complexity.IgnoreMacros, value: 1 }

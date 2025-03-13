@@ -48,6 +48,7 @@ FetchContent_Declare(
 )
 
 option(ENABLE_OPT "" OFF)
+set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     glslang
     GIT_REPOSITORY https://github.com/KhronosGroup/glslang.git
@@ -62,7 +63,7 @@ FetchContent_Declare(
     GIT_TAG         v0.11.1
 )
 
-FetchContent_MakeAvailable(glm fastgltf tracy volk vkbootstrap vma glslang glfw)
+FetchContent_MakeAvailable(glfw glslang glm fastgltf tracy volk vkbootstrap vma)
 
 FetchContent_MakeAvailable(imgui)
 FetchContent_GetProperties(imgui)

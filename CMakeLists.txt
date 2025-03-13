@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.21)
+cmake_minimum_required(VERSION 3.24)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 23)
@@ -9,6 +9,13 @@ add_subdirectory(third_party)
 
 add_executable(vkrender2
 src/main.cpp
+src/App.cpp
+src/vk2/Device.cpp
+src/vk2/Definitions.cpp
+src/vk2/DeletionQueue.cpp
+src/vk2/Initializers.cpp
+src/vk2/Swapchain.cpp
+src/vk2/VkCommon.cpp
 src/VkRender2.cpp
 
 )
@@ -40,6 +47,7 @@ endif()
 
 target_include_directories(vkrender2 PRIVATE
 third_party
+src
 )
 
 target_link_libraries(vkrender2 PRIVATE
