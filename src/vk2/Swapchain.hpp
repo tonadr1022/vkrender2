@@ -12,9 +12,7 @@ struct UpdateSwapchainInfo {
   VkPhysicalDevice phys_device;
   VkDevice device;
   VkSurfaceKHR surface;
-  VkSurfaceCapabilitiesKHR* surface_caps;
   VkPresentModeKHR present_mode;
-  uvec2 dims;
   u32 queue_idx;
   bool requested_resize;
 };
@@ -29,10 +27,13 @@ struct Swapchain {
   VkPresentModeKHR present_mode;
   VkFormat format;
   uvec2 dims;
-  void init(const UpdateSwapchainInfo& info, VkFormat format);
   Status update(const UpdateSwapchainInfo& info);
   void destroy(VkDevice device);
   void recreate_img_views(VkDevice device);
+  void init(const UpdateSwapchainInfo& info, VkFormat format);
+
+ private:
+  void init(const UpdateSwapchainInfo& info, VkFormat format, VkSwapchainKHR old);
 };
 
 }  // namespace vk2

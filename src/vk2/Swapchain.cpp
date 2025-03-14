@@ -13,14 +13,14 @@ namespace vk2 {
 namespace {
 
 VkSwapchainKHR create_swapchain(const UpdateSwapchainInfo& info, VkFormat format,
-                                VkSwapchainKHR old) {
+                                VkSwapchainKHR old, VkSurfaceCapabilitiesKHR surface_caps) {
   ZoneScoped;
   VkCompositeAlphaFlagBitsKHR surface_composite =
-      (info.surface_caps->supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR)
+      (surface_caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR)
           ? VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
-      : (info.surface_caps->supportedCompositeAlpha & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR)
+      : (surface_caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR)
           ? VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR
-      : (info.surface_caps->supportedCompositeAlpha & VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR)
+      : (surface_caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR)
           ? VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR
           : VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
   VkSwapchainKHR res;
@@ -29,10 +29,10 @@ VkSwapchainKHR create_swapchain(const UpdateSwapchainInfo& info, VkFormat format
       addr(VkSwapchainCreateInfoKHR{
           .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
           .surface = info.surface,
-          .minImageCount = std::max(2u, info.surface_caps->minImageCount),
+          .minImageCount = std::max(2u, surface_caps.minImageCount),
           .imageFormat = format,
           .imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
-          .imageExtent = {.width = info.dims.x, .height = info.dims.y},
+          .imageExtent = surface_caps.currentExtent,
           .imageArrayLayers = 1,
           .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
           .queueFamilyIndexCount = 1,
@@ -47,32 +47,44 @@ VkSwapchainKHR create_swapchain(const UpdateSwapchainInfo& info, VkFormat format
 
 }  // namespace
 
-void Swapchain::init(const UpdateSwapchainInfo& info, VkFormat format) {
-  ZoneScoped;
-  VkSwapchainKHR new_swapchain = create_swapchain(info, format, nullptr);
+void Swapchain::init(const UpdateSwapchainInfo& info, VkFormat format, VkSwapchainKHR old) {
+  VkSurfaceCapabilitiesKHR surface_caps;
+  {
+    ZoneScopedN("get surface caps");
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vk2::device().phys_device(), info.surface,
+                                              &surface_caps);
+  }
+  VkSwapchainKHR new_swapchain = create_swapchain(info, format, old, surface_caps);
   assert(new_swapchain);
   uint32_t new_img_cnt = 0;
   VK_CHECK(vkGetSwapchainImagesKHR(info.device, new_swapchain, &new_img_cnt, nullptr));
   imgs.resize(new_img_cnt);
   VK_CHECK(vkGetSwapchainImagesKHR(info.device, new_swapchain, &new_img_cnt, imgs.data()));
   swapchain = new_swapchain;
-  dims = info.dims;
   this->present_mode = info.present_mode;
   img_cnt = new_img_cnt;
   this->format = format;
 }
 
 Swapchain::Status Swapchain::update(const UpdateSwapchainInfo& info) {
-  if (info.dims.x == 0 || info.dims.y == 0) {
+  ZoneScoped;
+  VkSurfaceCapabilitiesKHR surface_caps;
+  {
+    ZoneScopedN("get surface caps");
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vk2::device().phys_device(), info.surface,
+                                              &surface_caps);
+  }
+  if (surface_caps.currentExtent.width == 0 || surface_caps.currentExtent.height == 0) {
     return Swapchain::Status::NotReady;
   }
 
-  if (dims.x == info.dims.x && dims.y == info.dims.y && !info.requested_resize) {
+  if (dims.x == surface_caps.currentExtent.width && dims.y == surface_caps.currentExtent.height &&
+      !info.requested_resize) {
     return Swapchain::Status::Ready;
   }
 
   VkSwapchainKHR old = swapchain;
-  init(info, format);
+  init(info, format, old);
   VK_CHECK(vkDeviceWaitIdle(info.device));
 
   vkDestroySwapchainKHR(info.device, old, nullptr);
@@ -105,4 +117,7 @@ void Swapchain::recreate_img_views(VkDevice device) {
   }
 }
 
+void Swapchain::init(const UpdateSwapchainInfo& info, VkFormat format) {
+  init(info, format, nullptr);
+}
 }  // namespace vk2

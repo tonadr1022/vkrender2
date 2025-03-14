@@ -106,12 +106,6 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info) 
   app_del_queue_.push([]() { vk2::Device::destroy(); });
   device_ = vk2::device().device();
 
-  {
-    ZoneScopedN("get surface caps");
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vk2::device().phys_device(), surface_,
-                                              &surface_caps_);
-  }
-
   auto graphics_queue_result = vk2::device().vkb_device().get_queue(vkb::QueueType::graphics);
   if (!graphics_queue_result.value()) {
     LCRITICAL("graphics queue unavailable");
@@ -129,14 +123,10 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info) 
 
   {
     ZoneScopedN("init swapchain");
-    int w, h;
-    glfwGetWindowSize(window_, &w, &h);
     swapchain_.init({.phys_device = vk2::device().phys_device(),
                      .device = vk2::device().device(),
                      .surface = surface_,
-                     .surface_caps = &surface_caps_,
                      .present_mode = info.present_mode,
-                     .dims = uvec2{w, h},
                      .queue_idx = queues_.graphics_queue_idx,
                      .requested_resize = false},
                     vk2::device().get_swapchain_format());
@@ -185,6 +175,20 @@ void BaseRenderer::on_gui() {}
 void BaseRenderer::on_update() {}
 
 void BaseRenderer::draw() {
+  curr_frame_swapchain_status_ = swapchain_.update({.phys_device = vk2::device().phys_device(),
+                                                    .device = vk2::device().device(),
+                                                    .surface = surface_,
+                                                    .present_mode = swapchain_.present_mode,
+                                                    .queue_idx = queues_.graphics_queue_idx,
+                                                    .requested_resize = resize_swapchain_req_});
+  resize_swapchain_req_ = false;
+  if (curr_frame_swapchain_status_ == vk2::Swapchain::Status::NotReady) {
+    return;
+  }
+  if (curr_frame_swapchain_status_ == vk2::Swapchain::Status::Resized) {
+    swapchain_.recreate_img_views(device_);
+  }
+
   // wait for fence
   u64 timeout = 1000000000;
   vkWaitForFences(device_, 1, &curr_frame().render_fence, true, timeout);
@@ -193,36 +197,7 @@ void BaseRenderer::draw() {
   VkResult get_swapchain_img_res =
       vkAcquireNextImageKHR(device_, swapchain_.swapchain, timeout,
                             curr_frame().swapchain_semaphore, nullptr, &curr_swapchain_img_idx_);
-  bool resize_requested = get_swapchain_img_res == VK_ERROR_OUT_OF_DATE_KHR ||
-                          get_swapchain_img_res == VK_SUBOPTIMAL_KHR;
-  // sleep for events until un-minimized
-  int w, h;
-  glfwGetFramebufferSize(window_, &w, &h);
-  while (w == 0 || h == 0) {
-    // TODO: log sleep msg to debug this
-    glfwGetFramebufferSize(window_, &w, &h);
-    glfwWaitEvents();
-  }
-  curr_frame_swapchain_status_ = swapchain_.update({.phys_device = vk2::device().phys_device(),
-                                                    .device = vk2::device().device(),
-                                                    .surface = surface_,
-                                                    .surface_caps = &surface_caps_,
-                                                    .present_mode = swapchain_.present_mode,
-                                                    .dims = uvec2{w, h},
-                                                    .queue_idx = queues_.graphics_queue_idx,
-                                                    .requested_resize = resize_requested});
-  // not ready, return
-  if (curr_frame_swapchain_status_ == vk2::Swapchain::Status::NotReady) {
-    return;
-  }
-  if (curr_frame_swapchain_status_ == vk2::Swapchain::Status::Resized) {
-    // recreated image views, the derived app will recreate draw images
-    swapchain_.recreate_img_views(device_);
-  }
-
-  // if out of date, can't draw now
   if (get_swapchain_img_res == VK_ERROR_OUT_OF_DATE_KHR) {
-    LINFO("out of date swapchain img_res");
     return;
   }
 
@@ -240,11 +215,12 @@ void BaseRenderer::draw() {
                           .pSwapchains = &swapchain_.swapchain,
                           .pImageIndices = &curr_swapchain_img_idx_,
                           .pResults = &res};
-    VK_CHECK(vkQueuePresentKHR(queues_.graphics_queue, &info));
-
-    if (res != VK_SUCCESS) {
-      LERROR("queue present fail: {}", string_VkResult(res));
+    VkResult present_result = vkQueuePresentKHR(queues_.graphics_queue, &info);
+    if (present_result == VK_ERROR_OUT_OF_DATE_KHR || present_result == VK_SUBOPTIMAL_KHR) {
+    } else {
+      VK_CHECK(present_result);
     }
+
     curr_frame_num_++;
   }
 }

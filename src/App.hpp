@@ -61,7 +61,6 @@ class BaseRenderer {
   virtual void on_draw();
   virtual void on_gui();
 
-  VkSurfaceCapabilitiesKHR surface_caps_{};
   QueueFamilies queues_;
   vkb::Instance instance_;
   VkSurfaceKHR surface_;
@@ -86,6 +85,7 @@ class BaseRenderer {
  private:
   vk2::DeletionQueue app_del_queue_;
   vk2::Swapchain::Status curr_frame_swapchain_status_;
+  bool resize_swapchain_req_{};
   u32 curr_swapchain_img_idx_{};
   bool initialized_{false};
   u64 curr_frame_num_{};
