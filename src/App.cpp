@@ -53,7 +53,6 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info) 
 #ifdef DEBUG_CALLBACK_ENABLED
     instance_builder.set_debug_callback(debug_callback);
 #endif
-
 #ifdef VALIDATION_LAYERS_ENABLED
     instance_builder.request_validation_layers(true);
 #endif
@@ -243,15 +242,8 @@ void BaseRenderer::submit_single_command_buf_to_graphics(VkCommandBuffer cmd) {
     auto signal_info = vk2::init::semaphore_submit_info(curr_frame().render_semaphore,
                                                         VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT);
     auto cmd_buf_submit_info = vk2::init::command_buffer_submit_info(cmd);
-    auto submit = VkSubmitInfo2{.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
-                                .waitSemaphoreInfoCount = 1,
-                                .pWaitSemaphoreInfos = &wait_info,
-                                .commandBufferInfoCount = 1,
-                                .pCommandBufferInfos = &cmd_buf_submit_info,
-                                .signalSemaphoreInfoCount = 1,
-                                .pSignalSemaphoreInfos = &signal_info};
-    // auto submit = vk2::init::queue_submit_info(SPAN1(cmd_buf_submit_info), SPAN1(wait_info),
-    //                                            SPAN1(signal_info));
+    auto submit = vk2::init::queue_submit_info(SPAN1(cmd_buf_submit_info), SPAN1(wait_info),
+                                               SPAN1(signal_info));
     VK_CHECK(vkQueueSubmit2(queues_.graphics_queue, 1, &submit, curr_frame().render_fence));
   }
 }

@@ -23,4 +23,5 @@ VkSemaphoreSubmitInfo semaphore_submit_info(VkSemaphore semaphore, VkPipelineSta
 VkImageSubresourceRange image_subresource_range(VkImageAspectFlags aspectMask);
 void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout currentLayout,
                       VkImageLayout newLayout);
+
 }  // namespace vk2::init
