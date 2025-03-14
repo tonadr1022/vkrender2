@@ -14,6 +14,7 @@ src/vk2/Device.cpp
 src/vk2/Definitions.cpp
 src/vk2/DeletionQueue.cpp
 src/vk2/Initializers.cpp
+src/vk2/Resource.cpp
 src/vk2/Swapchain.cpp
 src/vk2/VkCommon.cpp
 src/VkRender2.cpp

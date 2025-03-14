@@ -4,6 +4,7 @@
 #include <vulkan/vulkan_core.h>
 
 #include "Common.hpp"
+#include "vk2/Resource.hpp"
 
 namespace vk2::init {
 
@@ -78,6 +79,39 @@ void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout currentL
   dep_info.pImageMemoryBarriers = &image_barrier;
 
   vkCmdPipelineBarrier2(cmd, &dep_info);
+}
+
+VkImageCreateInfo img_create_info(const ImageCreateInfo& info) {
+  return {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+          .flags = info.img_flags,
+          .imageType = info.img_type,
+          .format = info.format,
+          .extent = VkExtent3D{info.dims.x, info.dims.y, info.dims.z},
+          .mipLevels = info.mip_levels,
+          .arrayLayers = info.array_layers,
+          .samples = info.samples,
+          .tiling = VK_IMAGE_TILING_OPTIMAL,
+          .usage = info.usage,
+          .initialLayout = info.initial_layout};
+}
+VkImageCreateInfo img_create_info_2d(VkFormat format, uvec2 dims, bool mipmap,
+                                     VkImageUsageFlags usage, bool mapped) {
+  return img_create_info(
+      {.format = format,
+       .dims = {dims, 1},
+       .mip_levels = mipmap ? get_mip_levels({.width = dims.x, .height = dims.y}) : 1,
+       .usage = usage,
+       .mapped = mapped}
+
+  );
+}
+
+VkImageSubresourceRange subresource_range_whole(VkImageAspectFlags aspect) {
+  return {.aspectMask = aspect,
+          .baseMipLevel = 0,
+          .levelCount = VK_REMAINING_MIP_LEVELS,
+          .baseArrayLayer = 0,
+          .layerCount = VK_REMAINING_ARRAY_LAYERS};
 }
 
 }  // namespace vk2::init

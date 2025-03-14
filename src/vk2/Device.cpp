@@ -10,6 +10,7 @@
 #include "Logger.hpp"
 #include "VkBootstrap.h"
 #include "VkCommon.hpp"
+#include "vk2/Resource.hpp"
 
 namespace vk2 {
 namespace {
@@ -42,7 +43,8 @@ void Device::init_impl(const CreateInfo& info) {
   features12.descriptorIndexing = true;
   // features12.drawIndirectCount = true;
   phys_selector.set_minimum_version(min_api_version_major, min_api_version_minor)
-      .set_required_features_13(features13);
+      .set_required_features_13(features13)
+      .set_required_features_12(features12);
   auto phys_ret = phys_selector.select();
   if (!phys_ret) {
     LCRITICAL("Failed to select physical device: {}", phys_ret.error().message());
@@ -175,4 +177,42 @@ void Device::destroy_semaphore(VkSemaphore semaphore) const {
 void Device::destroy_command_pool(VkCommandPool pool) const {
   vkDestroyCommandPool(device(), pool, nullptr);
 }
+
+void Device::alloc_img(AllocatedImage& new_img, const VkImageCreateInfo& create_info,
+                       VkMemoryPropertyFlags req_flags, bool mapped) {
+  VmaAllocationCreateFlags alloc_flags{};
+  if (mapped) {
+    alloc_flags |= VMA_ALLOCATION_CREATE_MAPPED_BIT;
+  }
+  VmaAllocationCreateInfo alloc_create_info{
+      .flags = alloc_flags,
+      .usage = VMA_MEMORY_USAGE_AUTO,
+      .requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | req_flags,
+  };
+
+  new_img.extent = create_info.extent;
+  new_img.format = create_info.format;
+  VK_CHECK(vmaCreateImage(allocator_, &create_info, &alloc_create_info, &new_img.image,
+                          &new_img.allocation, nullptr));
+}
+
+AllocatedImage Device::alloc_img_with_view(const VkImageCreateInfo& create_info,
+                                           const VkImageSubresourceRange& range,
+                                           VkImageViewType type, VkMemoryPropertyFlags req_flags,
+                                           bool mapped) {
+  AllocatedImage new_img;
+  alloc_img(new_img, create_info, req_flags, mapped);
+  auto view_info = VkImageViewCreateInfo{.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                                         .image = new_img.image,
+                                         .viewType = type,
+                                         .format = new_img.format,
+                                         .subresourceRange = range};
+  VK_CHECK(vkCreateImageView(device(), &view_info, nullptr, &new_img.view));
+  return new_img;
+}
+
+void Device::destroy_img(AllocatedImage& img) {
+  vmaDestroyImage(allocator_, img.image, img.allocation);
+}
+
 }  // namespace vk2

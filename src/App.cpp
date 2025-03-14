@@ -247,3 +247,9 @@ void BaseRenderer::submit_single_command_buf_to_graphics(VkCommandBuffer cmd) {
     VK_CHECK(vkQueueSubmit2(queues_.graphics_queue, 1, &submit, curr_frame().render_fence));
   }
 }
+
+uvec2 BaseRenderer::window_dims() {
+  int x, y;
+  glfwGetFramebufferSize(window_, &x, &y);
+  return {x, y};
+}

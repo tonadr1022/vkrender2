@@ -5,14 +5,27 @@
 
 #include <algorithm>
 
+#include "vk2/Device.hpp"
 #include "vk2/Initializers.hpp"
 #include "vk2/VkCommon.hpp"
 
 // void new_compute_pipeline() {
 //   VkComputePipelineCreateInfo info{.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
 // }
+using namespace vk2;
 VkRender2::VkRender2(const InitInfo& info)
-    : BaseRenderer(info, BaseRenderer::BaseInitInfo{.frames_in_flight = 2}) {}
+    : BaseRenderer(info, BaseRenderer::BaseInitInfo{.frames_in_flight = 2}) {
+  {
+    auto dims = window_dims();
+    img = vk2::device().alloc_img_with_view(
+        vk2::init::img_create_info_2d(
+            VK_FORMAT_R8G8B8A8_UNORM, dims, false,
+            VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT),
+        init::subresource_range_whole(VK_IMAGE_ASPECT_COLOR_BIT), VK_IMAGE_VIEW_TYPE_2D);
+
+    main_del_q_.push([this]() { device().destroy_img(img); });
+  }
+}
 
 void VkRender2::on_update() {}
 

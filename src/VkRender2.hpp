@@ -1,6 +1,8 @@
 #pragma once
 
 #include "App.hpp"
+#include "vk2/DeletionQueue.hpp"
+#include "vk2/Resource.hpp"
 
 struct StateTracker {
   struct ImageState {
@@ -49,6 +51,7 @@ struct StateTracker {
     return tracked_imgs.end();
   }
 };
+
 class VkRender2 : public BaseRenderer {
  public:
   explicit VkRender2(const InitInfo& info);
@@ -56,4 +59,6 @@ class VkRender2 : public BaseRenderer {
   void on_draw() override;
   void on_gui() override;
   StateTracker state;
+  vk2::AllocatedImage img;
+  vk2::DeletionQueue main_del_q_;
 };

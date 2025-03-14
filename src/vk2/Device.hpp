@@ -8,6 +8,7 @@
 #include "Common.hpp"
 #include "VkBootstrap.h"
 #include "vk2/DeletionQueue.hpp"
+#include "vk2/Resource.hpp"
 
 namespace vk2 {
 
@@ -51,6 +52,17 @@ class Device {
   void destroy_fence(VkFence fence) const;
   void destroy_semaphore(VkSemaphore semaphore) const;
   void destroy_command_pool(VkCommandPool pool) const;
+
+  void alloc_img(AllocatedImage& img, const VkImageCreateInfo& create_info,
+                 VkMemoryPropertyFlags req_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                 bool mapped = false);
+  AllocatedImage alloc_img_with_view(
+      const VkImageCreateInfo& create_info, const VkImageSubresourceRange& range,
+      VkImageViewType type, VkMemoryPropertyFlags req_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+      bool mapped = false);
+
+  void destroy_img(AllocatedImage& img);
+  [[nodiscard]] VmaAllocator allocator() const { return allocator_; }
 
  private:
   void init_impl(const CreateInfo& info);

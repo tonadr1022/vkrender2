@@ -82,6 +82,8 @@ class BaseRenderer {
   [[nodiscard]] u32 curr_swapchain_img_idx() const { return curr_swapchain_img_idx_; }
   [[nodiscard]] u64 curr_frame_num() const { return curr_frame_num_; }
 
+  uvec2 window_dims();
+
  private:
   vk2::DeletionQueue app_del_queue_;
   vk2::Swapchain::Status curr_frame_swapchain_status_;
