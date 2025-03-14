@@ -1,6 +1,7 @@
 #include "Initializers.hpp"
 
 #include <volk.h>
+#include <vulkan/vulkan_core.h>
 
 #include "Common.hpp"
 
@@ -33,7 +34,7 @@ VkCommandBufferSubmitInfo command_buffer_submit_info(VkCommandBuffer buffer) {
 VkSemaphoreSubmitInfo semaphore_submit_info(VkSemaphore semaphore, VkPipelineStageFlags2 stage_mask,
                                             u32 value) {
   return {
-      .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+      .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
       .semaphore = semaphore,
       .value = value,
       .stageMask = stage_mask,

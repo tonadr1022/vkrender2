@@ -9,6 +9,11 @@
 
 struct GLFWwindow;
 
+#ifndef NDEBUG
+#define VALIDATION_LAYERS_ENABLED 1
+#define DEBUG_CALLBACK_ENABLED 1
+#endif
+
 struct QueueFamilies {
   VkQueue graphics_queue{};
   VkQueue compute_queue{};
@@ -80,9 +85,8 @@ class BaseRenderer {
 
  private:
   vk2::DeletionQueue app_del_queue_;
-  VkDebugUtilsMessengerEXT debug_messenger_;
   vk2::Swapchain::Status curr_frame_swapchain_status_;
-  u32 curr_swapchain_img_idx_;
+  u32 curr_swapchain_img_idx_{};
   bool initialized_{false};
   u64 curr_frame_num_{};
   void draw();

@@ -15,7 +15,7 @@
 
 namespace {
 
-#ifndef NDEBUG
+#ifdef DEBUG_CALLBACK_ENABLED
 VKAPI_ATTR VkBool32 VKAPI_CALL
 debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
                VkDebugUtilsMessageTypeFlagsEXT messageType,
@@ -47,22 +47,24 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info) 
     vkb::InstanceBuilder instance_builder;
     instance_builder
         .set_minimum_instance_version(vk2::min_api_version_major, vk2::min_api_version_minor, 0)
-        .set_app_name(info.name);
-#ifndef NDEBUG
+        .set_app_name(info.name)
+        .require_api_version(1, 3, 0);
+
+#ifdef DEBUG_CALLBACK_ENABLED
     instance_builder.set_debug_callback(debug_callback);
+#endif
+
+#ifdef VALIDATION_LAYERS_ENABLED
     instance_builder.request_validation_layers(true);
 #endif
+
     auto instance_ret = instance_builder.build();
     if (!instance_ret) {
       LCRITICAL("Failed to acquire Vulkan Instance: {}", instance_ret.error().message());
       exit(1);
     }
     instance_ = instance_ret.value();
-    debug_messenger_ = instance_.debug_messenger;
-    app_del_queue_.push([this]() {
-      vkb::destroy_debug_utils_messenger(instance_.instance, debug_messenger_);
-      vkb::destroy_instance(instance_);
-    });
+    app_del_queue_.push([this]() { vkb::destroy_instance(instance_); });
   }
 
   {
@@ -174,7 +176,10 @@ void BaseRenderer::run() {
   }
 }
 
-BaseRenderer::~BaseRenderer() { app_del_queue_.flush(); }
+BaseRenderer::~BaseRenderer() {
+  vkDeviceWaitIdle(device_);
+  app_del_queue_.flush();
+}
 void BaseRenderer::on_draw() {}
 void BaseRenderer::on_gui() {}
 void BaseRenderer::on_update() {}

@@ -32,7 +32,17 @@ void Device::init_impl(const CreateInfo& info) {
   ZoneScoped;
   surface_ = info.surface;
   vkb::PhysicalDeviceSelector phys_selector(info.instance, info.surface);
-  phys_selector.set_minimum_version(min_api_version_major, min_api_version_minor);
+  VkPhysicalDeviceVulkan13Features features13{
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
+  features13.dynamicRendering = true;
+  features13.synchronization2 = true;
+  VkPhysicalDeviceVulkan12Features features12{
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+  features12.bufferDeviceAddress = true;
+  features12.descriptorIndexing = true;
+  // features12.drawIndirectCount = true;
+  phys_selector.set_minimum_version(min_api_version_major, min_api_version_minor)
+      .set_required_features_13(features13);
   auto phys_ret = phys_selector.select();
   if (!phys_ret) {
     LCRITICAL("Failed to select physical device: {}", phys_ret.error().message());
