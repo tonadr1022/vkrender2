@@ -10,7 +10,6 @@
 #include "tracy/Tracy.hpp"
 #include "vk2/Device.hpp"
 #include "vk2/Initializers.hpp"
-#include "vk2/ShaderCompiler.hpp"
 #include "vk2/Swapchain.hpp"
 #include "vk2/VkCommon.hpp"
 
@@ -156,7 +155,6 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info) 
       d.destroy_command_pool(frame.cmd_pool);
     }
   });
-  vk2::ShaderManager::init(device_);
 
   initialized_ = true;
 }

@@ -16,6 +16,7 @@ namespace vk2 {
 
 struct Pipeline {
   VkPipeline pipeline;
+  VkPipelineLayout layout;
 };
 
 template <typename T>
@@ -99,8 +100,8 @@ class PipelineManager {
   void destroy_pipeline(PipelineHandle handle);
 
  private:
-  void shutdown_impl();
-  void init_impl(VkDevice device);
+  explicit PipelineManager(VkDevice device);
+  ~PipelineManager();
   VkPipeline load_compute_pipeline(ShaderManager::LoadShaderResult &result,
                                    const char *entry_point = "main");
 
@@ -108,12 +109,11 @@ class PipelineManager {
     Pipeline pipeline;
     std::vector<std::string> shader_paths;
   };
+
   std::unordered_map<std::string, std::vector<PipelineHandle>> shader_name_to_used_pipelines_;
   std::unordered_map<PipelineHandle, PipelineAndMetadata> pipelines_;
 
-  // FreeListPool<std::unique_ptr<PipelineAndMetadata>> pipelines_{30};
-  VkShaderModule get_module(const std::filesystem::path &path, VkShaderStageFlagBits stage);
-  std::unordered_map<std::string, VkShaderModule> module_cache_;
+  ShaderManager shader_manager_;
   VkDevice device_;
 };
 }  // namespace vk2

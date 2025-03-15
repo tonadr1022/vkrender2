@@ -53,6 +53,7 @@ void DescriptorSetLayoutCache::shutdown() {
 }
 
 void DescriptorSetLayoutCache::init(VkDevice device) {
+  ZoneScoped;
   device_ = device;
   VkDescriptorSetLayoutCreateInfo create_info{};
   create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
