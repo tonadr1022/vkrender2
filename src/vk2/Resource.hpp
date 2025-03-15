@@ -15,7 +15,6 @@ struct AllocatedImage {
 };
 
 struct UniqueImage {
-  UniqueImage() = default;
   ~UniqueImage();
   UniqueImage& operator=(const UniqueImage& other) = delete;
   UniqueImage(const UniqueImage& other) = delete;
@@ -27,6 +26,10 @@ struct UniqueImage {
   VmaAllocation allocation;
   VkExtent3D extent;
   VkFormat format;
+
+ private:
+  friend class Device;
+  UniqueImage();
 };
 
 uint32_t get_mip_levels(VkExtent2D size);

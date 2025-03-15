@@ -63,7 +63,15 @@ FetchContent_Declare(
     GIT_TAG         v0.11.1
 )
 
-FetchContent_MakeAvailable(glfw glslang glm fastgltf tracy volk vkbootstrap vma)
+set(SPIRV_REFLECT_EXECUTABLE OFF CACHE BOOL "" FORCE)
+set(SPIRV_REFLECT_STATIC_LIB ON CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    spirv-reflect
+    GIT_REPOSITORY https://github.com/KhronosGroup/SPIRV-Reflect
+    GIT_TAG vulkan-sdk-1.4.309.0
+)
+
+FetchContent_MakeAvailable(glfw glslang glm fastgltf tracy volk vkbootstrap vma spirv-reflect)
 
 FetchContent_MakeAvailable(imgui)
 FetchContent_GetProperties(imgui)

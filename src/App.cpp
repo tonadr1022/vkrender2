@@ -10,6 +10,7 @@
 #include "tracy/Tracy.hpp"
 #include "vk2/Device.hpp"
 #include "vk2/Initializers.hpp"
+#include "vk2/ShaderCompiler.hpp"
 #include "vk2/Swapchain.hpp"
 #include "vk2/VkCommon.hpp"
 
@@ -126,6 +127,7 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info) 
                      .device = vk2::device().device(),
                      .surface = surface_,
                      .present_mode = info.present_mode,
+                     .dims = window_dims(),
                      .queue_idx = queues_.graphics_queue_idx,
                      .requested_resize = false},
                     vk2::device().get_swapchain_format());
@@ -154,6 +156,7 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info) 
       d.destroy_command_pool(frame.cmd_pool);
     }
   });
+  vk2::ShaderManager::init(device_);
 
   initialized_ = true;
 }
@@ -178,6 +181,7 @@ void BaseRenderer::draw() {
                                                     .device = vk2::device().device(),
                                                     .surface = surface_,
                                                     .present_mode = swapchain_.present_mode,
+                                                    .dims = window_dims(),
                                                     .queue_idx = queues_.graphics_queue_idx,
                                                     .requested_resize = resize_swapchain_req_});
   resize_swapchain_req_ = false;

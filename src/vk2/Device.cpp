@@ -178,8 +178,8 @@ void Device::destroy_command_pool(VkCommandPool pool) const {
   vkDestroyCommandPool(device(), pool, nullptr);
 }
 
-void Device::alloc_img(AllocatedImage& new_img, const VkImageCreateInfo& create_info,
-                       VkMemoryPropertyFlags req_flags, bool mapped) {
+UniqueImage Device::alloc_img(const VkImageCreateInfo& create_info, VkMemoryPropertyFlags req_flags,
+                              bool mapped) {
   VmaAllocationCreateFlags alloc_flags{};
   if (mapped) {
     alloc_flags |= VMA_ALLOCATION_CREATE_MAPPED_BIT;
@@ -190,18 +190,18 @@ void Device::alloc_img(AllocatedImage& new_img, const VkImageCreateInfo& create_
       .requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | req_flags,
   };
 
+  UniqueImage new_img;
   new_img.extent = create_info.extent;
   new_img.format = create_info.format;
   VK_CHECK(vmaCreateImage(allocator_, &create_info, &alloc_create_info, &new_img.image,
                           &new_img.allocation, nullptr));
+  return new_img;
 }
 
-AllocatedImage Device::alloc_img_with_view(const VkImageCreateInfo& create_info,
-                                           const VkImageSubresourceRange& range,
-                                           VkImageViewType type, VkMemoryPropertyFlags req_flags,
-                                           bool mapped) {
-  AllocatedImage new_img;
-  alloc_img(new_img, create_info, req_flags, mapped);
+UniqueImage Device::alloc_img_with_view(const VkImageCreateInfo& create_info,
+                                        const VkImageSubresourceRange& range, VkImageViewType type,
+                                        VkMemoryPropertyFlags req_flags, bool mapped) {
+  UniqueImage new_img = alloc_img(create_info, req_flags, mapped);
   auto view_info = VkImageViewCreateInfo{.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
                                          .image = new_img.image,
                                          .viewType = type,

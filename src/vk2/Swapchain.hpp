@@ -13,6 +13,7 @@ struct UpdateSwapchainInfo {
   VkDevice device;
   VkSurfaceKHR surface;
   VkPresentModeKHR present_mode;
+  uvec2 dims;
   u32 queue_idx;
   bool requested_resize;
 };

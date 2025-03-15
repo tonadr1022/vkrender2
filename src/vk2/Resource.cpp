@@ -1,5 +1,7 @@
 #include "Resource.hpp"
 
+#include <volk.h>
+
 #include <cmath>
 #include <utility>
 
@@ -15,6 +17,9 @@ UniqueImage::~UniqueImage() {
     assert(allocation);
     vmaDestroyImage(vk2::device().allocator(), image, allocation);
   }
+  if (view) {
+    vkDestroyImageView(vk2::device().device(), view, nullptr);
+  }
 }
 
 UniqueImage::UniqueImage(UniqueImage&& other) noexcept {
@@ -24,6 +29,7 @@ UniqueImage::UniqueImage(UniqueImage&& other) noexcept {
   extent = std::exchange(other.extent, {});
   format = std::exchange(other.format, VK_FORMAT_UNDEFINED);
 }
+
 UniqueImage& UniqueImage::operator=(UniqueImage&& other) noexcept {
   image = std::exchange(other.image, nullptr);
   view = std::exchange(other.view, nullptr);
@@ -32,4 +38,7 @@ UniqueImage& UniqueImage::operator=(UniqueImage&& other) noexcept {
   format = std::exchange(other.format, VK_FORMAT_UNDEFINED);
   return *this;
 }
+
+UniqueImage::UniqueImage() = default;
+
 }  // namespace vk2

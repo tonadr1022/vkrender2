@@ -1,6 +1,7 @@
 #include "Swapchain.hpp"
 
 #include <volk.h>
+#include <vulkan/vk_enum_string_helper.h>
 #include <vulkan/vulkan_core.h>
 
 #include <tracy/Tracy.hpp>
@@ -24,6 +25,7 @@ VkSwapchainKHR create_swapchain(const UpdateSwapchainInfo& info, VkFormat format
           ? VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR
           : VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
   VkSwapchainKHR res;
+  VkExtent2D extent = {info.dims.x, info.dims.y};
   VK_CHECK(vkCreateSwapchainKHR(
       info.device,
       addr(VkSwapchainCreateInfoKHR{
@@ -32,7 +34,7 @@ VkSwapchainKHR create_swapchain(const UpdateSwapchainInfo& info, VkFormat format
           .minImageCount = std::max(2u, surface_caps.minImageCount),
           .imageFormat = format,
           .imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
-          .imageExtent = surface_caps.currentExtent,
+          .imageExtent = extent,
           .imageArrayLayers = 1,
           .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
           .queueFamilyIndexCount = 1,
@@ -64,22 +66,16 @@ void Swapchain::init(const UpdateSwapchainInfo& info, VkFormat format, VkSwapcha
   this->present_mode = info.present_mode;
   img_cnt = new_img_cnt;
   this->format = format;
+  this->dims = info.dims;
 }
 
 Swapchain::Status Swapchain::update(const UpdateSwapchainInfo& info) {
   ZoneScoped;
-  VkSurfaceCapabilitiesKHR surface_caps;
-  {
-    ZoneScopedN("get surface caps");
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vk2::device().phys_device(), info.surface,
-                                              &surface_caps);
-  }
-  if (surface_caps.currentExtent.width == 0 || surface_caps.currentExtent.height == 0) {
+  if (info.dims.x == 0 || info.dims.y == 0) {
     return Swapchain::Status::NotReady;
   }
 
-  if (dims.x == surface_caps.currentExtent.width && dims.y == surface_caps.currentExtent.height &&
-      !info.requested_resize) {
+  if (dims.x == info.dims.x && dims.y == info.dims.y && !info.requested_resize) {
     return Swapchain::Status::Ready;
   }
 

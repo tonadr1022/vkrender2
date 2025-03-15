@@ -6,7 +6,7 @@
 
 #include "Common.hpp"
 
-#define SPAN1(x) std::span(&x, 1)
+#define SPAN1(x) std::span(std::addressof(x), 1)
 
 namespace vk2 {
 

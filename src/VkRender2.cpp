@@ -4,26 +4,54 @@
 #include <vulkan/vulkan_core.h>
 
 #include <algorithm>
+#include <filesystem>
 
+#include "Logger.hpp"
 #include "vk2/Device.hpp"
 #include "vk2/Initializers.hpp"
+#include "vk2/PipelineManager.hpp"
 #include "vk2/VkCommon.hpp"
 
-// void new_compute_pipeline() {
-//   VkComputePipelineCreateInfo info{.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
-// }
+namespace {
+
+std::optional<std::filesystem::path> get_resource_dir() {
+  auto curr_path = std::filesystem::current_path();
+  while (curr_path.has_parent_path()) {
+    auto resource_path = curr_path / "resources";
+    if (std::filesystem::exists(resource_path)) {
+      return resource_path;
+    }
+    curr_path = curr_path.parent_path();
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
 using namespace vk2;
 VkRender2::VkRender2(const InitInfo& info)
     : BaseRenderer(info, BaseRenderer::BaseInitInfo{.frames_in_flight = 2}) {
   {
+    auto resource_dir_result = get_resource_dir();
+    if (!resource_dir_result.has_value()) {
+      LCRITICAL("unable to locate 'resources' directory from current path: {}",
+                std::filesystem::current_path().string());
+      exit(1);
+    }
+    resource_dir = resource_dir_result.value();
+    shader_dir = resource_dir / "shaders";
+
+    main_del_q.push([]() { vk2::PipelineManager::shutdown(); });
+
+    vk2::PipelineManager::init(device_);
+    PipelineManager::get().load_compute_pipeline(get_shader_path("debug/clear_img.comp"));
+
     auto dims = window_dims();
     img = vk2::device().alloc_img_with_view(
         vk2::init::img_create_info_2d(
             VK_FORMAT_R8G8B8A8_UNORM, dims, false,
             VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT),
         init::subresource_range_whole(VK_IMAGE_ASPECT_COLOR_BIT), VK_IMAGE_VIEW_TYPE_2D);
-
-    main_del_q_.push([this]() { device().destroy_img(img); });
   }
 }
 
@@ -116,3 +144,5 @@ void StateTracker::queue_transition(VkImage image, VkPipelineStageFlags2 dst_sta
   };
   img_barriers.push_back(barrier);
 }
+
+std::string VkRender2::get_shader_path(const std::string& path) const { return shader_dir / path; }

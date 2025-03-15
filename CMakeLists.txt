@@ -13,8 +13,11 @@ src/App.cpp
 src/vk2/Device.cpp
 src/vk2/Definitions.cpp
 src/vk2/DeletionQueue.cpp
+src/vk2/Descriptors.cpp
 src/vk2/Initializers.cpp
+src/vk2/PipelineManager.cpp
 src/vk2/Resource.cpp
+src/vk2/ShaderCompiler.cpp
 src/vk2/Swapchain.cpp
 src/vk2/VkCommon.cpp
 src/VkRender2.cpp
@@ -61,6 +64,9 @@ volk::volk
 vk-bootstrap::vk-bootstrap
 VulkanMemoryAllocator
 glslang
+glslang-default-resource-limits
+spirv-reflect-static
+SPIRV
 )
 
 target_compile_definitions(glm INTERFACE GLM_FORCE_DEPTH_ZERO_TO_ONE VK_NO_PROTOTYPES GLFW_INCLUDE_NONE)

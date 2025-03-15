@@ -1,5 +1,8 @@
 #pragma once
 
+#include <filesystem>
+#include <optional>
+
 #include "App.hpp"
 #include "vk2/DeletionQueue.hpp"
 #include "vk2/Resource.hpp"
@@ -52,13 +55,16 @@ struct StateTracker {
   }
 };
 
-class VkRender2 : public BaseRenderer {
- public:
+// yes everything is public, this is a wrapper for a main.cpp
+struct VkRender2 : public BaseRenderer {
   explicit VkRender2(const InitInfo& info);
   void on_update() override;
   void on_draw() override;
   void on_gui() override;
   StateTracker state;
-  vk2::AllocatedImage img;
-  vk2::DeletionQueue main_del_q_;
+  std::optional<vk2::UniqueImage> img;
+  vk2::DeletionQueue main_del_q;
+  std::filesystem::path resource_dir;
+  std::filesystem::path shader_dir;
+  [[nodiscard]] std::string get_shader_path(const std::string& path) const;
 };

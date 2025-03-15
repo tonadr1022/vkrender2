@@ -53,10 +53,10 @@ class Device {
   void destroy_semaphore(VkSemaphore semaphore) const;
   void destroy_command_pool(VkCommandPool pool) const;
 
-  void alloc_img(AllocatedImage& img, const VkImageCreateInfo& create_info,
-                 VkMemoryPropertyFlags req_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                 bool mapped = false);
-  AllocatedImage alloc_img_with_view(
+  UniqueImage alloc_img(const VkImageCreateInfo& create_info,
+                        VkMemoryPropertyFlags req_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                        bool mapped = false);
+  UniqueImage alloc_img_with_view(
       const VkImageCreateInfo& create_info, const VkImageSubresourceRange& range,
       VkImageViewType type, VkMemoryPropertyFlags req_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
       bool mapped = false);
