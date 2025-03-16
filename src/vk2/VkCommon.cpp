@@ -6,11 +6,13 @@
 
 namespace vk2 {
 
-void print_vk_error(size_t x) {
+void print_vk_error(size_t x, bool exit_prog) {
   auto err = static_cast<VkResult>(x);
   if (err) {
     LERROR("Detected Vulkan error: {}", string_VkResult(err));
-    exit(1);
+    if (exit_prog) {
+      exit(1);
+    }
   }
 }
 

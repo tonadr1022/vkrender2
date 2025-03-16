@@ -3,35 +3,22 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan_core.h>
 
+#include "Common.hpp"
+
 namespace vk2 {
 
-struct AllocatedImage {
-  VkImage image;
-  VkImageView view;
-  VmaAllocation allocation;
-  VkExtent3D extent;
-  VkFormat format;
-  void destroy();
+enum class ResourceType : u8 {
+  STORAGE_IMAGE,
+  STORAGE_BUFFER,
+  // TODO: need one or other?
+  SAMPLED_IMAGE,
+  COMBINED_IMAGE_SAMPLER,
+  SAMPLER,
 };
 
-struct UniqueImage {
-  ~UniqueImage();
-  UniqueImage& operator=(const UniqueImage& other) = delete;
-  UniqueImage(const UniqueImage& other) = delete;
-  UniqueImage(UniqueImage&& other) noexcept;
-  UniqueImage& operator=(UniqueImage&& other) noexcept;
-
-  VkImage image;
-  VkImageView view;
-  VmaAllocation allocation;
-  VkExtent3D extent;
-  VkFormat format;
-
- private:
-  friend class Device;
-  UniqueImage();
+struct BindlessResourceInfo {
+  ResourceType type;
+  u32 handle;
 };
-
-uint32_t get_mip_levels(VkExtent2D size);
 
 }  // namespace vk2

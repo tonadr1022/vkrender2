@@ -7,7 +7,7 @@ namespace vk2 {
 constexpr int min_api_version_major = 1;
 constexpr int min_api_version_minor = 3;
 
-void print_vk_error(size_t x);
+void print_vk_error(size_t x, bool exit_prog = false);
 
 template <class T>
 [[nodiscard]] T* addr(T&& v) {
@@ -17,13 +17,13 @@ template <class T>
 }  // namespace vk2
 
 #ifndef NDEBUG
-#define VK_CHECK(x)           \
-  do {                        \
-    ::vk2::print_vk_error(x); \
+#define VK_CHECK(x)                 \
+  do {                              \
+    ::vk2::print_vk_error(x, true); \
   } while (0)
 #else
-#define VK_CHECK(x)           \
-  do {                        \
-    ::vk2::print_vk_error(x); \
+#define VK_CHECK(x)                  \
+  do {                               \
+    ::vk2::print_vk_error(x, false); \
   } while (0)
 #endif

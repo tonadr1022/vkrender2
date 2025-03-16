@@ -41,6 +41,17 @@ void Device::init_impl(const CreateInfo& info) {
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
   features12.bufferDeviceAddress = true;
   features12.descriptorIndexing = true;
+  features12.runtimeDescriptorArray = true;
+  features12.shaderStorageImageArrayNonUniformIndexing = true;
+  features12.shaderUniformBufferArrayNonUniformIndexing = true;
+  features12.shaderSampledImageArrayNonUniformIndexing = true;
+  features12.shaderStorageBufferArrayNonUniformIndexing = true;
+  features12.shaderInputAttachmentArrayNonUniformIndexing = true;
+  features12.shaderUniformTexelBufferArrayNonUniformIndexing = true;
+  features12.descriptorBindingUniformBufferUpdateAfterBind = true;
+  features12.descriptorBindingStorageImageUpdateAfterBind = true;
+  features12.descriptorBindingSampledImageUpdateAfterBind = true;
+  features12.descriptorBindingStorageBufferUpdateAfterBind = true;
   // features12.drawIndirectCount = true;
   phys_selector.set_minimum_version(min_api_version_major, min_api_version_minor)
       .set_required_features_13(features13)
@@ -119,16 +130,6 @@ VkFormat Device::get_swapchain_format() {
   return formats[0].format;
 }
 
-VkImageView Device::create_image_view(const ImageViewCreateInfo& info) const {
-  VkImageView view;
-  VkImageViewCreateInfo i{.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-                          .image = info.image,
-                          .viewType = VK_IMAGE_VIEW_TYPE_2D,
-                          .format = info.format,
-                          .subresourceRange = info.subresource_range};
-  VK_CHECK(vkCreateImageView(device(), &i, nullptr, &view));
-  return view;
-}
 VkCommandPool Device::create_command_pool(u32 queue_idx, VkCommandPoolCreateFlags flags) const {
   VkCommandPoolCreateInfo info{.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
                                .flags = flags,
@@ -178,41 +179,8 @@ void Device::destroy_command_pool(VkCommandPool pool) const {
   vkDestroyCommandPool(device(), pool, nullptr);
 }
 
-UniqueImage Device::alloc_img(const VkImageCreateInfo& create_info, VkMemoryPropertyFlags req_flags,
-                              bool mapped) {
-  VmaAllocationCreateFlags alloc_flags{};
-  if (mapped) {
-    alloc_flags |= VMA_ALLOCATION_CREATE_MAPPED_BIT;
-  }
-  VmaAllocationCreateInfo alloc_create_info{
-      .flags = alloc_flags,
-      .usage = VMA_MEMORY_USAGE_AUTO,
-      .requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | req_flags,
-  };
-
-  UniqueImage new_img;
-  new_img.extent = create_info.extent;
-  new_img.format = create_info.format;
-  VK_CHECK(vmaCreateImage(allocator_, &create_info, &alloc_create_info, &new_img.image,
-                          &new_img.allocation, nullptr));
-  return new_img;
-}
-
-UniqueImage Device::alloc_img_with_view(const VkImageCreateInfo& create_info,
-                                        const VkImageSubresourceRange& range, VkImageViewType type,
-                                        VkMemoryPropertyFlags req_flags, bool mapped) {
-  UniqueImage new_img = alloc_img(create_info, req_flags, mapped);
-  auto view_info = VkImageViewCreateInfo{.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-                                         .image = new_img.image,
-                                         .viewType = type,
-                                         .format = new_img.format,
-                                         .subresourceRange = range};
-  VK_CHECK(vkCreateImageView(device(), &view_info, nullptr, &new_img.view));
-  return new_img;
-}
-
-void Device::destroy_img(AllocatedImage& img) {
-  vmaDestroyImage(allocator_, img.image, img.allocation);
-}
+// void Device::destroy_img(AllocatedImage& img) {
+//   vmaDestroyImage(allocator_, img.image, img.allocation);
+// }
 
 }  // namespace vk2

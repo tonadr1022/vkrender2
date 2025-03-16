@@ -1,70 +1,45 @@
 #pragma once
 
+#include <vulkan/vulkan_core.h>
+
 #include <filesystem>
-#include <optional>
 
 #include "App.hpp"
+#include "StateTracker.hpp"
 #include "vk2/DeletionQueue.hpp"
-#include "vk2/Resource.hpp"
+#include "vk2/PipelineManager.hpp"
+#include "vk2/Texture.hpp"
 
-struct StateTracker {
-  struct ImageState {
-    VkImage image;
-    VkAccessFlags2 curr_access;
-    VkPipelineStageFlags2 curr_stage;
-    VkImageLayout curr_layout;
-  };
+struct CmdEncoder {
+  explicit CmdEncoder(VkCommandBuffer cmd) : cmd_(cmd) {}
+  void reset_and_begin();
+  void dispatch_compute(u32 work_groups_x, u32 work_groups_y, u32 work_groups_z);
+  void bind_compute(VkPipeline pipeline);
+  void bind_descriptor_set(VkPipelineBindPoint bind_point, VkPipelineLayout layout,
+                           VkDescriptorSet* set, u32 idx);
 
-  struct BufferState {
-    VkBuffer buffer;
-    VkAccessFlags2 curr_access;
-    VkPipelineStageFlags2 curr_stage;
-  };
-  StateTracker() {
-    tracked_imgs.reserve(10);
-    img_barriers.reserve(10);
-    buffer_barriers.reserve(10);
-  }
-  std::vector<ImageState> tracked_imgs;
-  std::vector<BufferState> tracked_buffers;
-  std::vector<VkImageMemoryBarrier2> img_barriers;
-  std::vector<VkBufferMemoryBarrier2> buffer_barriers;
-
-  void flush(VkCommandBuffer cmd);
-
-  void add_image(VkImage image, VkAccessFlags2 access, VkPipelineStageFlags2 stage);
-
-  VkImageSubresourceRange default_image_subresource_range(
-      VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
-
-  void queue_transition(VkImage image, VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access,
-                        VkImageLayout new_layout,
-                        VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
-
-  void queue_transition(VkImage image, VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access,
-                        VkImageLayout new_layout, const VkImageSubresourceRange& range);
+  [[nodiscard]] VkCommandBuffer cmd() const { return cmd_; }
 
  private:
-  decltype(tracked_imgs.end()) get_img(VkImage image) {
-    for (auto it = tracked_imgs.begin(); it != tracked_imgs.end(); it++) {
-      if (it->image == image) {
-        return it;
-      }
-    }
-    return tracked_imgs.end();
-  }
+  VkCommandBuffer cmd_;
 };
 
 // yes everything is public, this is a wrapper for a main.cpp
-struct VkRender2 : public BaseRenderer {
+struct VkRender2 final : public BaseRenderer {
   explicit VkRender2(const InitInfo& info);
+  ~VkRender2() override;
   void on_update() override;
   void on_draw() override;
   void on_gui() override;
   StateTracker state;
-  std::optional<vk2::UniqueImage> img;
+  std::optional<vk2::Texture> img;
   vk2::DeletionQueue main_del_q;
   std::filesystem::path resource_dir;
   std::filesystem::path shader_dir;
   [[nodiscard]] std::string get_shader_path(const std::string& path) const;
+  vk2::PipelineHandle img_pipeline;
+  VkPipelineLayout default_pipeline_layout{};
+
+  // non owning
+  VkDescriptorSet main_set{};
 };

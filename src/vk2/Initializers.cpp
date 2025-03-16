@@ -94,6 +94,14 @@ VkImageCreateInfo img_create_info(const ImageCreateInfo& info) {
           .usage = info.usage,
           .initialLayout = info.initial_layout};
 }
+namespace {
+
+uint32_t get_mip_levels(VkExtent2D size) {
+  return static_cast<uint32_t>(std::floor(std::log2(std::max(size.width, size.height)))) + 1;
+}
+
+}  // namespace
+
 VkImageCreateInfo img_create_info_2d(VkFormat format, uvec2 dims, bool mipmap,
                                      VkImageUsageFlags usage, bool mapped) {
   return img_create_info(

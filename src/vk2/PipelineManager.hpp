@@ -17,6 +17,7 @@ namespace vk2 {
 struct Pipeline {
   VkPipeline pipeline;
   VkPipelineLayout layout;
+  bool owns_layout{};
 };
 
 template <typename T>
@@ -79,8 +80,16 @@ struct FreeListPool {
 };
 
 VK2_DEFINE_HANDLE_WITH_NAME(Pipeline, PipelineAndMetadata);
-template <typename T>
-using Ptr = std::shared_ptr<T>;
+
+struct ComputePipelineCreateInfo {
+  std::filesystem::path path;
+  VkPipelineLayout layout{};
+  const char *entry_point = "main";
+};
+
+// TODO: on start up, check last write times for shader dir files that are .h or glsl. compare them
+// with a cached list written to disk check whether any pipeline uses them and update if needed.
+// pass the dirty ones to pipelne compilation
 
 class PipelineManager {
  public:
@@ -90,8 +99,11 @@ class PipelineManager {
 
   void on_shader_update();
 
-  PipelineHandle load_compute_pipeline(const std::filesystem::path &path,
-                                       const char *entry_point = "main");
+  PipelineHandle load_graphics_pipeline(const std::filesystem::path &path,
+                                        const char *entry_point = "main");
+
+  // if layout is not provided, spirv is reflected to obtain layout info and create the layout.
+  [[nodiscard]] PipelineHandle load_compute_pipeline(const ComputePipelineCreateInfo &info);
 
   Pipeline *get(PipelineHandle handle);
 
@@ -102,8 +114,8 @@ class PipelineManager {
  private:
   explicit PipelineManager(VkDevice device);
   ~PipelineManager();
-  VkPipeline load_compute_pipeline(ShaderManager::LoadShaderResult &result,
-                                   const char *entry_point = "main");
+  VkPipeline create_compute_pipeline(ShaderManager::LoadProgramResult &result,
+                                     const char *entry_point = "main");
 
   struct PipelineAndMetadata {
     Pipeline pipeline;

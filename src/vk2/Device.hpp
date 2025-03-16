@@ -12,19 +12,6 @@
 
 namespace vk2 {
 
-constexpr VkImageSubresourceRange default_img_subresource_range{
-    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-    .baseMipLevel = 0,
-    .levelCount = 1,
-    .baseArrayLayer = 0,
-    .layerCount = 1,
-};
-struct ImageViewCreateInfo {
-  VkImage image;
-  VkImageViewType view_type;
-  VkFormat format;
-  VkImageSubresourceRange subresource_range{default_img_subresource_range};
-};
 class Device {
  public:
   struct CreateInfo {
@@ -40,7 +27,6 @@ class Device {
   [[nodiscard]] const vkb::Device& vkb_device() const { return vkb_device_; }
 
   VkFormat get_swapchain_format();
-  [[nodiscard]] VkImageView create_image_view(const ImageViewCreateInfo& info) const;
 
   [[nodiscard]] VkCommandPool create_command_pool(
       u32 queue_idx,
@@ -53,15 +39,7 @@ class Device {
   void destroy_semaphore(VkSemaphore semaphore) const;
   void destroy_command_pool(VkCommandPool pool) const;
 
-  UniqueImage alloc_img(const VkImageCreateInfo& create_info,
-                        VkMemoryPropertyFlags req_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                        bool mapped = false);
-  UniqueImage alloc_img_with_view(
-      const VkImageCreateInfo& create_info, const VkImageSubresourceRange& range,
-      VkImageViewType type, VkMemoryPropertyFlags req_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-      bool mapped = false);
-
-  void destroy_img(AllocatedImage& img);
+  // void destroy_img(AllocatedImage& img);
   [[nodiscard]] VmaAllocator allocator() const { return allocator_; }
 
  private:

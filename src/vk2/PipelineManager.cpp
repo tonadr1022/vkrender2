@@ -13,8 +13,8 @@
 
 namespace vk2 {
 
-VkPipeline PipelineManager::load_compute_pipeline(ShaderManager::LoadShaderResult& result,
-                                                  const char* entry_point) {
+VkPipeline PipelineManager::create_compute_pipeline(ShaderManager::LoadProgramResult& result,
+                                                    const char* entry_point) {
   ZoneScoped;
   assert(result.module_cnt == 1 && result.layout);
   VkPipelineShaderStageCreateInfo stage{
@@ -48,23 +48,33 @@ void PipelineManager::shutdown() {
   delete instance;
 }
 
-PipelineHandle PipelineManager::load_compute_pipeline(const std::filesystem::path& path,
-                                                      const char* entry_point) {
+// TODO: detach ownership of layouts from pipelines
+// TODO: multithread
+PipelineHandle PipelineManager::load_compute_pipeline(const ComputePipelineCreateInfo& info) {
   ZoneScoped;
-  ShaderManager::ShaderCreateInfo info = {.path = path, .stage = VK_SHADER_STAGE_COMPUTE_BIT};
-  ShaderManager::LoadShaderResult result = shader_manager_.load_shader(SPAN1(info));
-  if (result.module_cnt == 0) {
+  ShaderManager::ShaderCreateInfo shader_create_info = {.path = info.path,
+                                                        .stage = VK_SHADER_STAGE_COMPUTE_BIT};
+  ShaderManager::LoadProgramResult result =
+      shader_manager_.load_program(SPAN1(shader_create_info), info.layout == nullptr);
+  if (result.module_cnt != 1) {
+    LINFO("no modules generated during compute pipeline creation");
     return PipelineHandle{};
   }
+  if (info.layout) {
+    result.layout = info.layout;
+  }
 
-  VkPipeline pipeline = load_compute_pipeline(result, entry_point);
+  VkPipeline pipeline = create_compute_pipeline(result, info.entry_point);
   if (!pipeline) {
     return PipelineHandle{};
   }
-  auto handle = std::hash<std::string>{}(path.string());
-  pipelines_.emplace(
-      handle, PipelineAndMetadata{.pipeline = {.pipeline = pipeline, .layout = result.layout},
-                                  .shader_paths = {path.string()}});
+  auto handle = std::hash<std::string>{}(info.path.string());
+
+  pipelines_.emplace(handle,
+                     PipelineAndMetadata{.pipeline = {.pipeline = pipeline,
+                                                      .layout = result.layout,
+                                                      .owns_layout = info.layout == nullptr},
+                                         .shader_paths = {info.path.string()}});
   return PipelineHandle{handle};
 }
 
@@ -113,10 +123,11 @@ PipelineManager::~PipelineManager() {
     assert(metadata.pipeline.pipeline);
     if (metadata.pipeline.pipeline) {
       vkDestroyPipeline(device_, metadata.pipeline.pipeline, nullptr);
-      vkDestroyPipelineLayout(device_, metadata.pipeline.layout, nullptr);
+      if (metadata.pipeline.owns_layout) {
+        vkDestroyPipelineLayout(device_, metadata.pipeline.layout, nullptr);
+      }
     }
   }
-  // clear_module_cache();
 }
 
 PipelineManager::PipelineManager(VkDevice device) : shader_manager_(device), device_(device) {}

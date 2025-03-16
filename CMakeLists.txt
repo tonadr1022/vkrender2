@@ -8,19 +8,22 @@ project(vkrender2)
 add_subdirectory(third_party)
 
 add_executable(vkrender2
+
 src/main.cpp
 src/App.cpp
+src/StateTracker.cpp
+src/VkRender2.cpp
+
 src/vk2/Device.cpp
 src/vk2/Definitions.cpp
 src/vk2/DeletionQueue.cpp
 src/vk2/Descriptors.cpp
 src/vk2/Initializers.cpp
 src/vk2/PipelineManager.cpp
-src/vk2/Resource.cpp
+src/vk2/Texture.cpp
 src/vk2/ShaderCompiler.cpp
 src/vk2/Swapchain.cpp
 src/vk2/VkCommon.cpp
-src/VkRender2.cpp
 
 )
 

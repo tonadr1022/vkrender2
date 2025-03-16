@@ -11,6 +11,7 @@
 #include <cassert>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <print>
 #include <string>
 #include <tracy/Tracy.hpp>
@@ -223,27 +224,30 @@ bool ShaderManager::get_spirv_binary(const std::filesystem::path& path, VkShader
   return load_shader_bytes(spv_path, result.binary_data);
 }
 
-ShaderManager::LoadShaderResult ShaderManager::load_shader(
-    std::span<ShaderCreateInfo> shader_create_infos) {
+ShaderManager::LoadProgramResult ShaderManager::load_program(
+    std::span<ShaderCreateInfo> shader_create_infos, bool create_pipeline_layout) {
   ZoneScoped;
   // TODO: thread safe
-  LoadShaderResult result{};
+  LoadProgramResult result{};
   if (shader_create_infos.empty()) {
     LERROR("ShaderManager::load_shader: no shaders");
     return result;
   }
-  assert(shader_create_infos.size() < LoadShaderResult::max_stages);
-  std::array<bool, LoadShaderResult::max_stages> dirty_shader_stages;
-  std::array<bool, LoadShaderResult::max_stages> cached_shader_stages;
-  for (u64 i = 0; i < shader_create_infos.size(); i++) {
-    cached_shader_stages[i] = module_cache_.contains(shader_create_infos[i].path.string());
+  assert(shader_create_infos.size() < LoadProgramResult::max_stages);
+  std::array<bool, LoadProgramResult::max_stages> dirty_shader_stages;
+  std::array<bool, LoadProgramResult::max_stages> cached_shader_stages;
+  {
+    std::lock_guard<std::mutex> lock(mtx_);
+    for (u64 i = 0; i < shader_create_infos.size(); i++) {
+      cached_shader_stages[i] = module_cache_.contains(shader_create_infos[i].path.string());
+    }
   }
 
   if (!get_dirty_stages(shader_create_infos, dirty_shader_stages)) {
     return result;
   }
 
-  std::array<CompileToSpirvResult, LoadShaderResult::max_stages> spirv_binaries;
+  std::array<CompileToSpirvResult, LoadProgramResult::max_stages> spirv_binaries;
   for (u64 i = 0; i < shader_create_infos.size(); i++) {
     if (cached_shader_stages[i] && !dirty_shader_stages[i]) {
       continue;
@@ -259,51 +263,62 @@ ShaderManager::LoadShaderResult ShaderManager::load_shader(
   for (u64 i = 0; i < shader_create_infos.size(); i++) {
     const std::string& path = shader_create_infos[i].path.string();
     // if cached and not dirty, use the cache entry that has module and reflection data already
-    if (cached_shader_stages[i] && !dirty_shader_stages[i]) {
-      auto it = module_cache_.find(path);
-      assert(it != module_cache_.end());
-      result.modules[i] = it->second;
-      continue;
+    {
+      std::lock_guard<std::mutex> lock(mtx_);
+      if (cached_shader_stages[i] && !dirty_shader_stages[i]) {
+        auto it = module_cache_.find(path);
+        assert(it != module_cache_.end());
+        result.modules[i] = it->second;
+        continue;
+      }
     }
 
-    // reflect shader
-    if (!reflect_shader(spirv_binaries[i].binary_data, result.modules[i].refl_data)) {
-      LERROR("failed to reflect spirv binary: {}", path);
-      return result;
+    if (create_pipeline_layout) {
+      // reflect shader
+      if (!reflect_shader(spirv_binaries[i].binary_data, result.modules[i].refl_data)) {
+        LERROR("failed to reflect spirv binary: {}", path);
+        return result;
+      }
     }
 
-    // makem module
-    VkShaderModuleCreateInfo create_info{
-        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-        .codeSize = spirv_binaries[i].binary_data.size() * sizeof(u32),
-        .pCode = spirv_binaries[i].binary_data.data()};
-    VK_CHECK(vkCreateShaderModule(device_, &create_info, nullptr, &result.modules[i].module));
+    {
+      ZoneScopedN("make module");
+      VkShaderModuleCreateInfo create_info{
+          .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+          .codeSize = spirv_binaries[i].binary_data.size() * sizeof(u32),
+          .pCode = spirv_binaries[i].binary_data.data()};
+      VK_CHECK(vkCreateShaderModule(device_, &create_info, nullptr, &result.modules[i].module));
+    }
 
     // add to cache
-    module_cache_.emplace(path, result.modules[i]);
-  }
-
-  // merge individual module data for layout creation
-  PipelineLayoutCreateInfo data{};
-  data.shader_stage_cnt = result.module_cnt;
-  for (u64 i = 0; i < shader_create_infos.size(); i++) {
-    const auto& module = result.modules[i];
-    const auto& refl_data = module.refl_data;
-    data.shader_stage_flags |= refl_data.shader_stage;
-    if (refl_data.has_pc_range) {
-      data.pc_ranges[data.pc_range_cnt++] = refl_data.range;
-    }
-    for (u64 set_layout_idx = 0; set_layout_idx < refl_data.set_layout_cnt; set_layout_idx++) {
-      data.set_layouts[data.set_layout_cnt++] = refl_data.set_layouts[set_layout_idx];
+    {
+      std::lock_guard<std::mutex> lock(mtx_);
+      module_cache_.emplace(path, result.modules[i]);
     }
   }
 
-  result.layout = create_layout(device_, data, layout_cache_);
-  if (!result.layout) {
-    LERROR("Failed to create pipeline layout for pipeline with shader stage 0: {}",
-           shader_create_infos[0].path.string());
+  if (create_pipeline_layout) {
+    // merge individual module data for layout creation
+    PipelineLayoutCreateInfo data{};
+    data.shader_stage_cnt = result.module_cnt;
+    for (u64 i = 0; i < shader_create_infos.size(); i++) {
+      const auto& module = result.modules[i];
+      const auto& refl_data = module.refl_data;
+      data.shader_stage_flags |= refl_data.shader_stage;
+      if (refl_data.has_pc_range) {
+        data.pc_ranges[data.pc_range_cnt++] = refl_data.range;
+      }
+      for (u64 set_layout_idx = 0; set_layout_idx < refl_data.set_layout_cnt; set_layout_idx++) {
+        data.set_layouts[data.set_layout_cnt++] = refl_data.set_layouts[set_layout_idx];
+      }
+    }
+    result.layout = create_layout(device_, data, layout_cache_);
+    if (!result.layout) {
+      LERROR("Failed to create pipeline layout for pipeline with shader stage 0: {}",
+             shader_create_infos[0].path.string());
+    }
   }
-  LINFO("made layout");
+
   return result;
 }
 
@@ -315,11 +330,14 @@ u64 ShaderManager::hash(const std::filesystem::path& path, VkShaderStageFlagBits
 
 void ShaderManager::clear_module_cache() {
   ZoneScoped;
-  for (auto& [path, module] : module_cache_) {
-    assert(module.module);
-    vkDestroyShaderModule(device_, module.module, nullptr);
+  {
+    std::lock_guard lock(mtx_);
+    for (auto& [path, module] : module_cache_) {
+      assert(module.module);
+      vkDestroyShaderModule(device_, module.module, nullptr);
+    }
+    module_cache_.clear();
   }
-  module_cache_.clear();
 }
 
 ShaderManager::ShaderManager(VkDevice device) : device_(device) {
@@ -545,8 +563,10 @@ bool reflect_shader(std::vector<u32>& binary, vk2::ShaderReflectData& out_data) 
       binding.binding = refl_binding.binding;
       binding.descriptorType = static_cast<VkDescriptorType>(refl_binding.descriptor_type);
       binding.descriptorCount = 1;
-      for (uint32_t dim_idx = 0; dim_idx < refl_binding.array.dims_count; dim_idx++) {
-        binding.descriptorCount *= refl_binding.array.dims[dim_idx];
+      if (binding.descriptorCount > 1) {
+        for (uint32_t dim_idx = 0; dim_idx < refl_binding.array.dims_count; dim_idx++) {
+          binding.descriptorCount *= refl_binding.array.dims[dim_idx];
+        }
       }
       binding.stageFlags = static_cast<VkShaderStageFlagBits>(refl_module.GetShaderStage());
     }
