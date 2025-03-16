@@ -14,6 +14,7 @@ src/App.cpp
 src/StateTracker.cpp
 src/VkRender2.cpp
 
+src/vk2/BindlessResourceAllocator.cpp
 src/vk2/Device.cpp
 src/vk2/Definitions.cpp
 src/vk2/DeletionQueue.cpp

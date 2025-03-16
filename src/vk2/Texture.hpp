@@ -2,6 +2,7 @@
 
 #include <vulkan/vulkan_core.h>
 
+#include <functional>
 #include <optional>
 
 #include "vk2/Resource.hpp"
@@ -9,45 +10,105 @@
 
 namespace vk2 {
 
+// TODO: separate view class
+// view class owns the bindless resource info.
+// if the texture usage is layout general, only then should the storage resource info be allocated
+
+enum class TextureUsage : u8 {
+
+  // general computation, i.e. StorageImage
+  General,
+  // asset textures read from shader
+  ReadOnly,
+  // attachment textures like gbuffer
+  AttachmentReadOnly
+};
+
+struct TextureCreateInfo {
+  VkImageViewType view_type{};
+  VkFormat format{};
+  VkExtent3D extent{};
+  u32 mip_levels{1};
+  u32 array_layers{1};
+  VkSampleCountFlagBits samples{VK_SAMPLE_COUNT_1_BIT};
+  TextureUsage usage{TextureUsage::General};
+};
+
+struct TextureViewCreateInfo {
+  VkFormat format;
+  VkImageSubresourceRange range;
+  VkComponentMapping components{};
+};
+
+class Texture;
 class TextureView {
  public:
-  explicit TextureView(VkFormat format) {}
+  explicit TextureView(const Texture& texture, VkDevice device, const TextureViewCreateInfo& info);
+  ~TextureView();
+  TextureView(TextureView&& other) noexcept;
+  TextureView& operator=(TextureView&& other) noexcept;
+  TextureView(const TextureView&) = delete;
+  TextureView& operator=(const TextureView&) = delete;
 
  private:
   VkImageView view_;
+  TextureViewCreateInfo create_info_;
+  // TODO: make a bindless texture view class for this
   std::optional<BindlessResourceInfo> storage_image_resource_info_;
   std::optional<BindlessResourceInfo> sampled_image_resource_info_;
 };
 
-// TODO: separate view class
-// view class owns the bindless resource info.
-// if the texture usage is layout general, only then should the storage resource info be allocated
 class Texture {
  public:
+  static Texture create_2d(VmaAllocator allocator, VkDevice device, VkFormat format, uvec3 dims,
+                           TextureUsage usage);
+
+  explicit Texture(VmaAllocator allocator, VkDevice device, const TextureCreateInfo& create_info);
   ~Texture();
   Texture& operator=(const Texture& other) = delete;
   Texture(const Texture& other) = delete;
   Texture(Texture&& other) noexcept;
   Texture& operator=(Texture&& other) noexcept;
 
-  [[nodiscard]] VkExtent3D extent() const { return extent_; }
-  [[nodiscard]] VkImageView view() const { return view_; }
+  [[nodiscard]] VkExtent3D extent() const { return create_info_.extent; }
   [[nodiscard]] VkImage image() const { return image_; }
-  [[nodiscard]] VkFormat format() const { return format_; }
+  [[nodiscard]] VkFormat format() const { return create_info_.format; }
 
  private:
   friend class Device;
   friend class BindlessResourceAllocator;
-  Texture();
+  friend class TextureView;
 
+  TextureCreateInfo create_info_;
+  std::optional<TextureView> view_;
   VkImage image_;
-  VkImageView view_;
   VmaAllocation allocation_;
-  VkExtent3D extent_;
-  VkFormat format_;
-  std::optional<BindlessResourceInfo> storage_image_resource_info_;
-  std::optional<BindlessResourceInfo> sampled_image_resource_info_;
+  VmaAllocator allocator_;
+  VkDevice device_;
 };
 
+struct TextureDeleteInfo {
+  VkImage img;
+  VmaAllocation allocation;
+};
+
+struct TextureViewDeleteInfo {
+  std::optional<BindlessResourceInfo> storage_image_resource_info;
+  std::optional<BindlessResourceInfo> sampled_image_resource_info;
+  VkImageView view;
+};
+
+using TextureViewDeleteFunc = std::function<void(TextureViewDeleteInfo)>;
+using TextureDeleteFunc = std::function<void(TextureDeleteInfo)>;
+
+extern TextureDeleteFunc img_delete_func;
+extern TextureViewDeleteFunc texture_view_delete_func;
+
 uint32_t get_mip_levels(VkExtent2D size);
+VkImageType vkviewtype_to_img_type(VkImageViewType view_type);
+bool format_is_stencil(VkFormat format);
+bool format_is_depth(VkFormat format);
+bool format_is_srgb(VkFormat format);
+bool format_is_color(VkFormat format);
+
 }  // namespace vk2

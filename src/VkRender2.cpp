@@ -12,6 +12,8 @@
 #include "vk2/Device.hpp"
 #include "vk2/Initializers.hpp"
 #include "vk2/PipelineManager.hpp"
+#include "vk2/Resource.hpp"
+#include "vk2/Texture.hpp"
 #include "vk2/VkCommon.hpp"
 
 namespace {
@@ -69,14 +71,13 @@ VkRender2::VkRender2(const InitInfo& info)
       {get_shader_path("debug/clear_img.comp"), default_pipeline_layout});
 
   auto dims = window_dims();
-  img = vk2::BindlessResourceAllocator::get().alloc_img_with_view(
-      vk2::init::img_create_info_2d(
-          VK_FORMAT_R8G8B8A8_UNORM, dims, false,
-          VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT),
-      init::subresource_range_whole(VK_IMAGE_ASPECT_COLOR_BIT), VK_IMAGE_VIEW_TYPE_2D);
+  img = create_texture_2d(VK_FORMAT_R8G8B8A8_UNORM, uvec3{dims, 1}, TextureUsage::General);
 }
 
-void VkRender2::on_update() {}
+void VkRender2::on_update() {
+  BindlessResourceAllocator::get().set_frame_num(curr_frame_num());
+  BindlessResourceAllocator::get().flush_deletions();
+}
 
 void VkRender2::on_draw() {
   VkCommandBuffer cmd_buf = curr_frame().main_cmd_buffer;
@@ -135,4 +136,8 @@ void CmdEncoder::bind_compute(VkPipeline pipeline) {
 void CmdEncoder::bind_descriptor_set(VkPipelineBindPoint bind_point, VkPipelineLayout layout,
                                      VkDescriptorSet* set, u32 idx) {
   vkCmdBindDescriptorSets(cmd_, bind_point, layout, idx, 1, set, 0, nullptr);
+}
+
+vk2::Texture VkRender2::create_texture_2d(VkFormat format, uvec3 dims, TextureUsage usage) {
+  return vk2::Texture::create_2d(allocator_, device_, format, dims, usage);
 }

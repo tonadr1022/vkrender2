@@ -39,7 +39,9 @@ struct VkRender2 final : public BaseRenderer {
   [[nodiscard]] std::string get_shader_path(const std::string& path) const;
   vk2::PipelineHandle img_pipeline;
   VkPipelineLayout default_pipeline_layout{};
+  vk2::Texture create_texture_2d(VkFormat format, uvec3 dims, vk2::TextureUsage usage);
 
   // non owning
   VkDescriptorSet main_set{};
+  VmaAllocator allocator_;
 };

@@ -108,8 +108,18 @@ void Swapchain::recreate_img_views(VkDevice device) {
       vkDestroyImageView(device, img_view, nullptr);
       img_view = nullptr;
     }
-    img_views[i] = vk2::device().create_image_view(
-        {.image = imgs[i], .view_type = VK_IMAGE_VIEW_TYPE_2D, .format = format});
+
+    auto view_info = VkImageViewCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image = imgs[i],
+        .viewType = VK_IMAGE_VIEW_TYPE_2D,
+        .format = format,
+        .subresourceRange = VkImageSubresourceRange{.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                                    .baseMipLevel = 0,
+                                                    .levelCount = VK_REMAINING_MIP_LEVELS,
+                                                    .baseArrayLayer = 0,
+                                                    .layerCount = VK_REMAINING_ARRAY_LAYERS}};
+    VK_CHECK(vkCreateImageView(device, &view_info, nullptr, &img_views[i]));
   }
 }
 

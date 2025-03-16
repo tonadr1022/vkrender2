@@ -8,12 +8,12 @@
 namespace vk2 {
 
 enum class ResourceType : u8 {
-  STORAGE_IMAGE,
-  STORAGE_BUFFER,
+  StorageImage,
+  StorageBuffer,
   // TODO: need one or other?
-  SAMPLED_IMAGE,
-  COMBINED_IMAGE_SAMPLER,
-  SAMPLER,
+  SampledImage,
+  CombinedImageSampler,
+  Sampler,
 };
 
 struct BindlessResourceInfo {

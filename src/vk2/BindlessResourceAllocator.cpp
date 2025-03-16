@@ -1,12 +1,22 @@
 #include "BindlessResourceAllocator.hpp"
 
 #include <volk.h>
+#include <vulkan/vulkan_core.h>
 
 #include <tracy/Tracy.hpp>
 
 #include "vk2/Resource.hpp"
+#include "vk2/Texture.hpp"
 #include "vk2/VkCommon.hpp"
 namespace vk2 {
+
+TextureDeleteFunc img_delete_func = [](TextureDeleteInfo info) {
+  BindlessResourceAllocator::get().delete_texture(info);
+};
+
+TextureViewDeleteFunc texture_view_delete_func = [](TextureViewDeleteInfo info) {
+  BindlessResourceAllocator::get().telete_texture_view(info);
+};
 
 BindlessResourceAllocator::BindlessResourceAllocator(VkDevice device, VmaAllocator allocator)
     : device_(device), allocator_(allocator) {
@@ -95,53 +105,6 @@ VkImageView BindlessResourceAllocator::create_image_view(const ImageViewCreateIn
   return view;
 }
 
-Texture BindlessResourceAllocator::alloc_img(const VkImageCreateInfo& create_info,
-                                             VkMemoryPropertyFlags req_flags, bool mapped) {
-  VmaAllocationCreateFlags alloc_flags{};
-  if (mapped) {
-    alloc_flags |= VMA_ALLOCATION_CREATE_MAPPED_BIT;
-  }
-  VmaAllocationCreateInfo alloc_create_info{
-      .flags = alloc_flags,
-      .usage = VMA_MEMORY_USAGE_AUTO,
-      .requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | req_flags,
-  };
-
-  Texture new_img;
-  new_img.extent_ = create_info.extent;
-  new_img.format_ = create_info.format;
-  VK_CHECK(vmaCreateImage(allocator_, &create_info, &alloc_create_info, &new_img.image_,
-                          &new_img.allocation_, nullptr));
-
-  // TODO: also check for color only
-  if (create_info.usage & VK_IMAGE_USAGE_STORAGE_BIT) {
-    new_img.storage_image_resource_info_ = BindlessResourceInfo{
-        .type = ResourceType::STORAGE_IMAGE, .handle = storage_image_allocator_.alloc()};
-  }
-
-  new_img.sampled_image_resource_info_ = BindlessResourceInfo{
-      .type = ResourceType::SAMPLED_IMAGE,
-      .handle = sampled_image_allocator_.alloc(),
-  };
-
-  return new_img;
-}
-
-Texture BindlessResourceAllocator::alloc_img_with_view(const VkImageCreateInfo& create_info,
-                                                       const VkImageSubresourceRange& range,
-                                                       VkImageViewType type,
-                                                       VkMemoryPropertyFlags req_flags,
-                                                       bool mapped) {
-  Texture new_img = alloc_img(create_info, req_flags, mapped);
-  auto view_info = VkImageViewCreateInfo{.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-                                         .image = new_img.image_,
-                                         .viewType = type,
-                                         .format = new_img.format_,
-                                         .subresourceRange = range};
-  VK_CHECK(vkCreateImageView(device_, &view_info, nullptr, &new_img.view_));
-  return new_img;
-}
-
 void IndexAllocator::free(u32 idx) { free_list_.push_back(idx); }
 
 u32 IndexAllocator::alloc() {
@@ -160,25 +123,88 @@ IndexAllocator::IndexAllocator(u32 size) {
   }
 }
 
-void BindlessResourceAllocator::destroy_image(Texture& image) {
-  if (image.image_) {
-    assert(image.allocation_);
-    if (image.allocation_) {
-      vmaDestroyImage(allocator_, image.image_, image.allocation_);
-    }
-    if (image.sampled_image_resource_info_) {
-      sampled_image_allocator_.free(image.sampled_image_resource_info_->handle);
-    }
-    if (image.storage_image_resource_info_) {
-      storage_image_allocator_.free(image.storage_image_resource_info_->handle);
-    }
-  }
-  if (image.view_) {
-    vkDestroyImageView(device_, image.view_, nullptr);
-  }
-}
 BindlessResourceAllocator::~BindlessResourceAllocator() {
   vkDestroyDescriptorPool(device_, main_pool_, nullptr);
   vkDestroyDescriptorSetLayout(device_, main_set_layout_, nullptr);
 }
+
+BindlessResourceInfo BindlessResourceAllocator::allocate_sampled_img_descriptor(
+    VkImageView view, VkImageLayout layout) {
+  u32 handle = sampled_image_allocator_.alloc();
+  VkDescriptorImageInfo img{.sampler = nullptr, .imageView = view, .imageLayout = layout};
+  allocate_bindless_resource(&img, nullptr, handle, bindless_sampled_image_binding);
+  return {ResourceType::SampledImage, handle};
+}
+
+BindlessResourceInfo BindlessResourceAllocator::allocate_storage_img_descriptor(
+    VkImageView view, VkImageLayout layout) {
+  u32 handle = storage_image_allocator_.alloc();
+  VkDescriptorImageInfo img{.sampler = nullptr, .imageView = view, .imageLayout = layout};
+  allocate_bindless_resource(&img, nullptr, handle,
+                             resource_to_binding(ResourceType::StorageImage));
+  return {ResourceType::StorageImage, handle};
+}
+
+void BindlessResourceAllocator::allocate_bindless_resource(VkDescriptorImageInfo* img,
+                                                           VkDescriptorBufferInfo* buffer, u32 idx,
+                                                           u32 binding) {
+  VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                             .dstSet = main_set_,
+                             .dstBinding = binding,
+                             .dstArrayElement = idx,
+                             .descriptorCount = 1,
+                             .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
+                             .pImageInfo = img,
+                             .pBufferInfo = buffer};
+  vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+}
+
+u32 BindlessResourceAllocator::resource_to_binding(ResourceType type) {
+  switch (type) {
+    case ResourceType::StorageImage:
+      return bindless_storage_image_binding;
+    case ResourceType::StorageBuffer:
+      return bindless_storage_buffer_binding;
+    case ResourceType::SampledImage:
+      return bindless_sampled_image_binding;
+    case ResourceType::Sampler:
+      return bindless_sampler_binding;
+    case ResourceType::CombinedImageSampler:
+      return bindless_combined_image_sampler_binding;
+  }
+}
+void BindlessResourceAllocator::set_frame_num(u32 frame_num) { frame_num_ = frame_num; }
+
+void BindlessResourceAllocator::delete_texture(const TextureDeleteInfo& img) {
+  texture_delete_q_.emplace_back(img, frame_num_);
+}
+
+void BindlessResourceAllocator::flush_deletions() {
+  std::erase_if(texture_delete_q_, [this](const DeleteQEntry<TextureDeleteInfo>& entry) {
+    if (entry.frame < frame_num_) {
+      vmaDestroyImage(allocator_, entry.data.img, entry.data.allocation);
+      return true;
+    }
+    return false;
+  });
+
+  std::erase_if(texture_view_delete_q_, [this](const DeleteQEntry<TextureViewDeleteInfo>& entry) {
+    if (entry.frame < frame_num_) {
+      vkDestroyImageView(device_, entry.data.view, nullptr);
+      if (entry.data.sampled_image_resource_info.has_value()) {
+        sampled_image_allocator_.free(entry.data.sampled_image_resource_info->handle);
+      }
+      if (entry.data.storage_image_resource_info.has_value()) {
+        storage_image_allocator_.free(entry.data.storage_image_resource_info->handle);
+      }
+      return true;
+    }
+    return false;
+  });
+}
+
+void BindlessResourceAllocator::telete_texture_view(const TextureViewDeleteInfo& info) {
+  texture_view_delete_q_.emplace_back(info, frame_num_);
+}
+
 }  // namespace vk2

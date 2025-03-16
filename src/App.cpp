@@ -8,6 +8,7 @@
 #include "Logger.hpp"
 #include "VkBootstrap.h"
 #include "tracy/Tracy.hpp"
+#include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Device.hpp"
 #include "vk2/Initializers.hpp"
 #include "vk2/Swapchain.hpp"
@@ -168,6 +169,9 @@ void BaseRenderer::run() {
 
 BaseRenderer::~BaseRenderer() {
   vkDeviceWaitIdle(device_);
+  // delete all
+  vk2::BindlessResourceAllocator::get().set_frame_num(curr_frame_num() + 100);
+  vk2::BindlessResourceAllocator::get().flush_deletions();
   app_del_queue_.flush();
 }
 void BaseRenderer::on_draw() {}
@@ -194,6 +198,8 @@ void BaseRenderer::draw() {
   u64 timeout = 1000000000;
   vkWaitForFences(device_, 1, &curr_frame().render_fence, true, timeout);
 
+  vk2::BindlessResourceAllocator::get().set_frame_num(curr_frame_num());
+  vk2::BindlessResourceAllocator::get().flush_deletions();
   // acquire next image
   VkResult get_swapchain_img_res =
       vkAcquireNextImageKHR(device_, swapchain_.swapchain, timeout,
