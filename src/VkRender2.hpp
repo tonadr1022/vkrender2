@@ -39,6 +39,7 @@ struct VkRender2 final : public BaseRenderer {
   std::filesystem::path shader_dir;
   [[nodiscard]] std::string get_shader_path(const std::string& path) const;
   vk2::PipelineHandle img_pipeline;
+  vk2::PipelineHandle draw_pipeline;
   VkPipelineLayout default_pipeline_layout{};
 
   // non owning

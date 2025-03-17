@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "vk2/BindlessResourceAllocator.hpp"
+#include "vk2/Device.hpp"
 #include "vk2/Resource.hpp"
 #include "vk2/SamplerCache.hpp"
 #include "vk2/VkCommon.hpp"
@@ -42,7 +43,7 @@ Texture& Texture::operator=(Texture&& other) noexcept {
 }
 
 // TODO: need move constructor for this
-TextureView::TextureView(const Texture& texture, VkDevice device, const TextureViewCreateInfo& info)
+TextureView::TextureView(const Texture& texture, const TextureViewCreateInfo& info)
     : create_info_(info) {
   auto view_info = VkImageViewCreateInfo{.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
                                          .image = texture.image_,
@@ -50,7 +51,7 @@ TextureView::TextureView(const Texture& texture, VkDevice device, const TextureV
                                          .format = info.format,
                                          .components = info.components,
                                          .subresourceRange = info.range};
-  VK_CHECK(vkCreateImageView(device, &view_info, nullptr, &view_));
+  VK_CHECK(vkCreateImageView(vk2::get_device().device(), &view_info, nullptr, &view_));
 
   // can only be a storage image if color and general usage
   if (format_is_color(info.format) && texture.create_info_.usage == TextureUsage::General) {
@@ -61,7 +62,7 @@ TextureView::TextureView(const Texture& texture, VkDevice device, const TextureV
       view_, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
 }
 
-Texture::Texture(VmaAllocator allocator, VkDevice device, const TextureCreateInfo& create_info) {
+Texture::Texture(const TextureCreateInfo& create_info) {
   VmaAllocationCreateFlags alloc_flags{};
   VkImageUsageFlags usage{};
   auto attachment_usage = format_is_color(create_info.format)
@@ -103,7 +104,8 @@ Texture::Texture(VmaAllocator allocator, VkDevice device, const TextureCreateInf
                          .tiling = VK_IMAGE_TILING_OPTIMAL,
                          .usage = usage,
                          .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
-  VK_CHECK(vmaCreateImage(allocator, &info, &alloc_create_info, &image_, &allocation_, nullptr));
+  VK_CHECK(vmaCreateImage(vk2::get_device().allocator(), &info, &alloc_create_info, &image_,
+                          &allocation_, nullptr));
 
   VkImageAspectFlags aspect = VK_IMAGE_ASPECT_NONE;
   if (format_is_color(create_info.format)) {
@@ -117,17 +119,16 @@ Texture::Texture(VmaAllocator allocator, VkDevice device, const TextureCreateInf
   }
 
   create_info_ = create_info;
-  view_ = TextureView{*this, device,
-                      TextureViewCreateInfo{.format = create_info.format,
-                                            .range =
-                                                {
-                                                    .aspectMask = aspect,
-                                                    .baseMipLevel = 0,
-                                                    .levelCount = VK_REMAINING_MIP_LEVELS,
-                                                    .baseArrayLayer = 0,
-                                                    .layerCount = VK_REMAINING_ARRAY_LAYERS,
-                                                },
-                                            .components = {}}};
+  view_ = TextureView{*this, TextureViewCreateInfo{.format = create_info.format,
+                                                   .range =
+                                                       {
+                                                           .aspectMask = aspect,
+                                                           .baseMipLevel = 0,
+                                                           .levelCount = VK_REMAINING_MIP_LEVELS,
+                                                           .baseArrayLayer = 0,
+                                                           .layerCount = VK_REMAINING_ARRAY_LAYERS,
+                                                       },
+                                                   .components = {}}};
 }
 
 bool format_is_color(VkFormat format) {
@@ -215,10 +216,8 @@ TextureView::~TextureView() {
   texture_view_delete_func({storage_image_resource_info_, sampled_image_resource_info_, view_});
 }
 
-Texture create_2d(VmaAllocator allocator, VkDevice device, VkFormat format, uvec3 dims,
-                  TextureUsage usage) {
-  return Texture{allocator, device,
-                 TextureCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
+Texture create_2d(VkFormat format, uvec3 dims, TextureUsage usage) {
+  return Texture{TextureCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
                                    .format = format,
                                    .extent = VkExtent3D{dims.x, dims.y, dims.z},
                                    .usage = usage}};

@@ -69,6 +69,7 @@ class BindlessResourceAllocator {
   [[nodiscard]] VkImageView create_image_view(const ImageViewCreateInfo& info) const;
   void set_frame_num(u32 frame_num);
 
+  BindlessResourceInfo allocate_storage_buffer_descriptor(VkBuffer buffer);
   BindlessResourceInfo allocate_storage_img_descriptor(VkImageView view, VkImageLayout layout);
   BindlessResourceInfo allocate_sampled_img_descriptor(VkImageView view, VkImageLayout layout);
   BindlessResourceInfo allocate_sampler_descriptor(VkSampler sampler);
@@ -96,6 +97,7 @@ class BindlessResourceAllocator {
   VkDevice device_;
   VmaAllocator allocator_;
   IndexAllocator storage_image_allocator_{max_resource_descriptors};
+  IndexAllocator storage_buffer_allocator_{max_resource_descriptors};
   IndexAllocator sampled_image_allocator_{max_resource_descriptors};
   IndexAllocator sampler_allocator_{max_sampler_descriptors};
   VkDescriptorPool main_pool_{};

@@ -223,4 +223,12 @@ void BindlessResourceAllocator::telete_texture_view(const TextureViewDeleteInfo&
   texture_view_delete_q_.emplace_back(info, frame_num_);
 }
 
+BindlessResourceInfo BindlessResourceAllocator::allocate_storage_buffer_descriptor(
+    VkBuffer buffer) {
+  u32 handle = storage_buffer_allocator_.alloc();
+  VkDescriptorBufferInfo buf{.buffer = buffer, .offset = 0, .range = VK_WHOLE_SIZE};
+  allocate_bindless_resource(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &buf, handle,
+                             resource_to_binding(ResourceType::StorageBuffer));
+  return {ResourceType::StorageBuffer, handle};
+}
 }  // namespace vk2

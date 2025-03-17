@@ -51,10 +51,14 @@ void Device::init_impl(const CreateInfo& info) {
   features12.descriptorBindingStorageImageUpdateAfterBind = true;
   features12.descriptorBindingSampledImageUpdateAfterBind = true;
   features12.descriptorBindingStorageBufferUpdateAfterBind = true;
+  VkPhysicalDeviceFeatures features{};
+  features.depthClamp = true;
+
   // features12.drawIndirectCount = true;
   phys_selector.set_minimum_version(min_api_version_major, min_api_version_minor)
       .set_required_features_13(features13)
-      .set_required_features_12(features12);
+      .set_required_features_12(features12)
+      .set_required_features(features);
   auto phys_ret = phys_selector.select();
   if (!phys_ret) {
     LCRITICAL("Failed to select physical device: {}", phys_ret.error().message());

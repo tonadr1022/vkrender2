@@ -2,10 +2,15 @@
 
 #include <vulkan/vulkan_core.h>
 
+#include <fastgltf/core.hpp>
+#include <fastgltf/glm_element_traits.hpp>
+#include <fastgltf/tools.hpp>
+#include <fastgltf/types.hpp>
 #include <tracy/Tracy.hpp>
 
 #include "Logger.hpp"
-#include "fastgltf/core.hpp"
+#include "vk2/Buffer.hpp"
+#include "vk2/Device.hpp"
 #include "vk2/Texture.hpp"
 
 namespace gfx {
@@ -52,6 +57,51 @@ VkSamplerAddressMode gltf_to_vk_wrap_mode(fastgltf::Wrap wrap) {
   }
 }
 
+void populate_indices(const fastgltf::Primitive& primitive, const fastgltf::Asset& gltf,
+                      std::vector<uint32_t>& indices) {
+  if (!primitive.indicesAccessor.has_value()) {
+    return;
+  }
+  const auto& index_accessor = gltf.accessors[primitive.indicesAccessor.value()];
+  indices.resize(indices.size() + index_accessor.count);
+  size_t i = 0;
+  fastgltf::iterateAccessor<u32>(gltf, index_accessor,
+                                 [&](uint32_t index) { indices[i++] = index; });
+}
+
+void populate_vertices(const fastgltf::Primitive& primitive, const fastgltf::Asset& gltf,
+                       std::vector<Vertex>& vertices) {
+  const auto* pos_attrib = primitive.findAttribute("POSITION");
+  if (pos_attrib == primitive.attributes.end()) {
+    return;
+  }
+  const auto& pos_accessor = gltf.accessors[pos_attrib->accessorIndex];
+  vertices.resize(vertices.size() + pos_accessor.count);
+  size_t i = 0;
+  for (glm::vec3 pos : fastgltf::iterateAccessor<glm::vec3>(gltf, pos_accessor)) {
+    vertices[i++].pos = pos;
+  }
+
+  const auto* uv_attrib = primitive.findAttribute("TEXCOORD_0");
+  if (uv_attrib != primitive.attributes.end()) {
+    const auto& accessor = gltf.accessors[uv_attrib->accessorIndex];
+    i = 0;
+    for (glm::vec2 uv : fastgltf::iterateAccessor<glm::vec2>(gltf, accessor)) {
+      vertices[i++].uv_x = uv.x;
+      vertices[i++].uv_y = uv.y;
+    }
+  }
+
+  const auto* normal_attrib = primitive.findAttribute("NORMAL");
+  if (normal_attrib != primitive.attributes.end()) {
+    const auto& normal_accessor = gltf.accessors[normal_attrib->accessorIndex];
+    i = 0;
+    for (glm::vec3 normal : fastgltf::iterateAccessor<glm::vec3>(gltf, normal_accessor)) {
+      vertices[i++].normal = normal;
+    }
+  }
+}
+
 }  // namespace
 
 std::optional<LoadedSceneData> load_gltf(const std::filesystem::path& path) {
@@ -81,7 +131,7 @@ std::optional<LoadedSceneData> load_gltf(const std::filesystem::path& path) {
   }
 
   fastgltf::Asset gltf = std::move(load_ret.get());
-
+  LoadedSceneData result;
   {
     ZoneScopedN("gltf load samplers");
     std::vector<vk2::Sampler> samplers;
@@ -102,6 +152,15 @@ std::optional<LoadedSceneData> load_gltf(const std::filesystem::path& path) {
       });
     }
   }
+
+  // meshes
+  for (const auto& gltf_mesh : gltf.meshes) {
+    for (const auto& gltf_prim : gltf_mesh.primitives) {
+      populate_indices(gltf_prim, gltf, result.indices);
+      populate_vertices(gltf_prim, gltf, result.vertices);
+    }
+  }
+  // get a staging buffer (for now create, later: reuse)
 
   return std::nullopt;
 }

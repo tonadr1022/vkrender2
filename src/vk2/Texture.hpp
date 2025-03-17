@@ -52,7 +52,7 @@ struct TextureViewCreateInfo {
 class Texture;
 class TextureView {
  public:
-  explicit TextureView(const Texture& texture, VkDevice device, const TextureViewCreateInfo& info);
+  explicit TextureView(const Texture& texture, const TextureViewCreateInfo& info);
   ~TextureView();
   TextureView(TextureView&& other) noexcept;
   TextureView& operator=(TextureView&& other) noexcept;
@@ -77,7 +77,7 @@ class TextureView {
 
 class Texture {
  public:
-  explicit Texture(VmaAllocator allocator, VkDevice device, const TextureCreateInfo& create_info);
+  explicit Texture(const TextureCreateInfo& create_info);
   ~Texture();
   Texture& operator=(const Texture& other) = delete;
   Texture(const Texture& other) = delete;
@@ -117,8 +117,7 @@ struct TextureViewDeleteInfo {
   VkImageView view;
 };
 
-Texture create_2d(VmaAllocator allocator, VkDevice device, VkFormat format, uvec3 dims,
-                  TextureUsage usage);
+Texture create_2d(VkFormat format, uvec3 dims, TextureUsage usage);
 
 using TextureViewDeleteFunc = std::function<void(TextureViewDeleteInfo)>;
 using TextureDeleteFunc = std::function<void(TextureDeleteInfo)>;

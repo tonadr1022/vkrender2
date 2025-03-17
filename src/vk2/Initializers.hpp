@@ -7,6 +7,7 @@
 #include "Common.hpp"
 
 #define SPAN1(x) std::span(std::addressof(x), 1)
+#define ARR_SPAN(x) std::span(x, COUNTOF(x))
 
 namespace vk2 {
 

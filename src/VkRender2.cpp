@@ -71,6 +71,13 @@ VkRender2::VkRender2(const InitInfo& info)
   img_pipeline = PipelineManager::get().load_compute_pipeline(
       {get_shader_path("debug/clear_img.comp"), default_pipeline_layout});
 
+  draw_pipeline = PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
+      .vertex_path = get_shader_path("debug/basic.vert"),
+      .fragment_path = get_shader_path("debug/basic.frag"),
+      .layout = default_pipeline_layout,
+      .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::Less),
+  });
+
   auto dims = window_dims();
   img = get_device().create_texture_2d(VK_FORMAT_R8G8B8A8_UNORM, uvec3{dims, 1},
                                        TextureUsage::General);
@@ -90,15 +97,13 @@ void VkRender2::on_draw() {
   state.barrier();
 
   {
-    ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_COMPUTE, default_pipeline_layout, &main_set, 0);
-
     struct {
       uint idx;
       float t;
     } pc{img->view().storage_img_resource().handle, static_cast<f32>(glfwGetTime())};
     ctx.push_constants(default_pipeline_layout, sizeof(pc), &pc);
-
     ctx.bind_compute_pipeline(PipelineManager::get().get(img_pipeline)->pipeline);
+    ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_COMPUTE, default_pipeline_layout, &main_set, 0);
     ctx.dispatch((img->extent().width + 16) / 16, (img->extent().height + 16) / 16, 1);
   }
 
