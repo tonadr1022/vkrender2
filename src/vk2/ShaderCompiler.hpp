@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <mutex>
+#include <span>
 #include <unordered_map>
 #include <vector>
 

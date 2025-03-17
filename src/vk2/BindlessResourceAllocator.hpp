@@ -52,7 +52,7 @@ struct IndexAllocator {
 class BindlessResourceAllocator {
  public:
   static constexpr u32 max_resource_descriptors{100'000};
-  static constexpr u32 max_sampler_descriptors{1000};
+  static constexpr u32 max_sampler_descriptors{128};
 
   static constexpr u32 bindless_storage_image_binding{0};
   static constexpr u32 bindless_storage_buffer_binding{1};

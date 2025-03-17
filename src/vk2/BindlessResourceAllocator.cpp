@@ -25,7 +25,7 @@ BindlessResourceAllocator::BindlessResourceAllocator(VkDevice device, VmaAllocat
       VkDescriptorSetLayoutBinding{
           .binding = bindless_combined_image_sampler_binding,
           .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-          .descriptorCount = max_resource_descriptors,
+          .descriptorCount = max_sampler_descriptors,
           .stageFlags = VK_SHADER_STAGE_ALL,
       },
       VkDescriptorSetLayoutBinding{
@@ -56,9 +56,10 @@ BindlessResourceAllocator::BindlessResourceAllocator(VkDevice device, VmaAllocat
 
   VkDescriptorPoolSize sizes[] = {
       VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, max_resource_descriptors},
-      VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, max_resource_descriptors},
       VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, max_resource_descriptors},
       VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLER, max_sampler_descriptors},
+      VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, max_resource_descriptors},
+      VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, max_sampler_descriptors},
   };
   VkDescriptorPoolCreateInfo info{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
                                   .flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT,
@@ -67,12 +68,15 @@ BindlessResourceAllocator::BindlessResourceAllocator(VkDevice device, VmaAllocat
                                   .poolSizeCount = COUNTOF(sizes),
                                   .pPoolSizes = sizes};
   VK_CHECK(vkCreateDescriptorPool(device_, &info, nullptr, &main_pool_));
+  assert(main_pool_);
+  assert(main_set_layout_);
   VkDescriptorSetAllocateInfo set_layout_info{
       .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
       .descriptorPool = main_pool_,
       .descriptorSetCount = 1,
       .pSetLayouts = &main_set_layout_};
   VK_CHECK(vkAllocateDescriptorSets(device_, &set_layout_info, &main_set_));
+  assert(main_set_);
 }
 
 namespace {

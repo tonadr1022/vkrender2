@@ -2,6 +2,8 @@
 
 #include <volk.h>
 
+#include <algorithm>
+
 #include "Common.hpp"
 
 void StateTracker::barrier() {

@@ -4,7 +4,6 @@
 #include <vulkan/vulkan_core.h>
 
 #include "Common.hpp"
-#include "vk2/Resource.hpp"
 
 namespace vk2::init {
 
@@ -97,7 +96,7 @@ VkImageCreateInfo img_create_info(const ImageCreateInfo& info) {
 namespace {
 
 uint32_t get_mip_levels(VkExtent2D size) {
-  return static_cast<uint32_t>(std::floor(std::log2(std::max(size.width, size.height)))) + 1;
+  return static_cast<uint32_t>(std::floor(std::log2(glm::max(size.width, size.height)))) + 1;
 }
 
 }  // namespace

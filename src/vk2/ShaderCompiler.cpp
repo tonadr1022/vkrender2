@@ -3,7 +3,6 @@
 #include <glslang/Public/ResourceLimits.h>
 #include <glslang/Public/ShaderLang.h>
 #include <glslang/SPIRV/GlslangToSpv.h>
-#include <spirv-reflect/spirv_reflect.h>
 #include <volk.h>
 #include <vulkan/vk_enum_string_helper.h>
 #include <vulkan/vulkan_core.h>
@@ -19,6 +18,7 @@
 
 #include "Common.hpp"
 #include "Logger.hpp"
+#include "spirv_reflect.h"
 #include "vk2/Hash.hpp"
 #include "vk2/VkCommon.hpp"
 
@@ -472,8 +472,8 @@ bool compile_glsl_to_spirv(std::string path, VkShaderStageFlagBits stage,
   int ss = strlen(shader_source);
   shader.setStringsWithLengths(&shader_source, &ss, 1);
   shader.setEnvInput(glslang::EShSourceGlsl, glslang_stage, glslang::EShClientVulkan, 100);
-  shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_3);
-  shader.setEnvTarget(glslang::EShTargetLanguage::EShTargetSpv, glslang::EShTargetSpv_1_6);
+  shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_2);
+  shader.setEnvTarget(glslang::EShTargetLanguage::EShTargetSpv, glslang::EShTargetSpv_1_5);
   std::string preamble = "#extension GL_GOOGLE_include_directive : enable\n";
   shader.setPreamble(preamble.c_str());
   shader.setOverrideVersion(460);

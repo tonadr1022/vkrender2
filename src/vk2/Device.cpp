@@ -32,10 +32,6 @@ void Device::init_impl(const CreateInfo& info) {
   ZoneScoped;
   surface_ = info.surface;
   vkb::PhysicalDeviceSelector phys_selector(info.instance, info.surface);
-  VkPhysicalDeviceVulkan13Features features13{
-      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
-  features13.dynamicRendering = true;
-  features13.synchronization2 = true;
   VkPhysicalDeviceVulkan12Features features12{
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
   features12.bufferDeviceAddress = true;
@@ -51,13 +47,29 @@ void Device::init_impl(const CreateInfo& info) {
   features12.descriptorBindingStorageImageUpdateAfterBind = true;
   features12.descriptorBindingSampledImageUpdateAfterBind = true;
   features12.descriptorBindingStorageBufferUpdateAfterBind = true;
+
   VkPhysicalDeviceFeatures features{};
+  features.shaderStorageImageWriteWithoutFormat = true;
   features.depthClamp = true;
 
+  // VkPhysicalDeviceVulkan13Features features13{
+  //     .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
+  // features13.dynamicRendering = true;
+  // features13.synchronization2 = true;
+  VkPhysicalDeviceDynamicRenderingFeatures dynamic_rendering_features{};
+  dynamic_rendering_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES;
+  dynamic_rendering_features.dynamicRendering = VK_TRUE;
+  VkPhysicalDeviceSynchronization2Features sync2_features{};
+  sync2_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
+  sync2_features.synchronization2 = VK_TRUE;
+  dynamic_rendering_features.pNext = &sync2_features;
+  std::vector<const char*> extensions{{"VK_KHR_dynamic_rendering", "VK_KHR_synchronization2"}};
   // features12.drawIndirectCount = true;
+  features12.pNext = &dynamic_rendering_features;
+
   phys_selector.set_minimum_version(min_api_version_major, min_api_version_minor)
-      .set_required_features_13(features13)
       .set_required_features_12(features12)
+      .add_required_extensions(extensions)
       .set_required_features(features);
   auto phys_ret = phys_selector.select();
   if (!phys_ret) {

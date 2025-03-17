@@ -29,6 +29,7 @@ debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
   } else {
     LERROR("[{}: {}]\n{}\n", ms, mt, pCallbackData->pMessage);
   }
+  exit(1);
 
   return VK_FALSE;
 }
@@ -50,7 +51,7 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info) 
     instance_builder
         .set_minimum_instance_version(vk2::min_api_version_major, vk2::min_api_version_minor, 0)
         .set_app_name(info.name)
-        .require_api_version(1, 3, 0);
+        .require_api_version(vk2::min_api_version_major, vk2::min_api_version_minor, 0);
 
 #ifdef DEBUG_CALLBACK_ENABLED
     instance_builder.set_debug_callback(debug_callback);

@@ -10,7 +10,7 @@
 namespace {
 
 uint64_t hash_descriptor_set_layout_create_info(const VkDescriptorSetLayoutCreateInfo& info) {
-  uint64_t hash = 0;
+  size_t hash = 0;
   vk2::detail::hashing::hash_combine(hash, info.flags);
   for (uint32_t i = 0; i < info.bindingCount; i++) {
     const auto& binding = info.pBindings[i];
