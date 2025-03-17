@@ -13,10 +13,11 @@
 struct CmdEncoder {
   explicit CmdEncoder(VkCommandBuffer cmd) : cmd_(cmd) {}
   void reset_and_begin();
-  void dispatch_compute(u32 work_groups_x, u32 work_groups_y, u32 work_groups_z);
-  void bind_compute(VkPipeline pipeline);
+  void dispatch(u32 work_groups_x, u32 work_groups_y, u32 work_groups_z);
+  void bind_compute_pipeline(VkPipeline pipeline);
   void bind_descriptor_set(VkPipelineBindPoint bind_point, VkPipelineLayout layout,
                            VkDescriptorSet* set, u32 idx);
+  void push_constants(VkPipelineLayout layout, u32 size, void* data);
 
   [[nodiscard]] VkCommandBuffer cmd() const { return cmd_; }
 
@@ -39,11 +40,8 @@ struct VkRender2 final : public BaseRenderer {
   [[nodiscard]] std::string get_shader_path(const std::string& path) const;
   vk2::PipelineHandle img_pipeline;
   VkPipelineLayout default_pipeline_layout{};
-  vk2::Texture create_texture_2d(VkFormat format, uvec3 dims, vk2::TextureUsage usage);
 
   // non owning
   VkDescriptorSet main_set{};
   VmaAllocator allocator_;
 };
-
-VkOffset3D e2o(VkExtent3D extent);

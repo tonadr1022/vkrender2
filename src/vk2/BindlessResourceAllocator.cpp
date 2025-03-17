@@ -152,6 +152,14 @@ BindlessResourceInfo BindlessResourceAllocator::allocate_storage_img_descriptor(
   return {ResourceType::StorageImage, handle};
 }
 
+BindlessResourceInfo BindlessResourceAllocator::allocate_sampler_descriptor(VkSampler sampler) {
+  u32 handle = sampler_allocator_.alloc();
+  VkDescriptorImageInfo info{.sampler = sampler};
+  allocate_bindless_resource(VK_DESCRIPTOR_TYPE_SAMPLER, &info, nullptr, handle,
+                             bindless_sampler_binding);
+  return {ResourceType::Sampler, handle};
+}
+
 void BindlessResourceAllocator::allocate_bindless_resource(VkDescriptorType descriptor_type,
                                                            VkDescriptorImageInfo* img,
                                                            VkDescriptorBufferInfo* buffer, u32 idx,

@@ -107,9 +107,9 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info) 
 
   vk2::Device::init({.instance = instance_, .surface = surface_});
   app_del_queue_.push([]() { vk2::Device::destroy(); });
-  device_ = vk2::device().device();
+  device_ = vk2::get_device().device();
 
-  auto graphics_queue_result = vk2::device().vkb_device().get_queue(vkb::QueueType::graphics);
+  auto graphics_queue_result = vk2::get_device().vkb_device().get_queue(vkb::QueueType::graphics);
   if (!graphics_queue_result.value()) {
     LCRITICAL("graphics queue unavailable");
     exit(1);
@@ -117,7 +117,7 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info) 
   queues_.graphics_queue = graphics_queue_result.value();
 
   auto graphics_queue_idx_res =
-      vk2::device().vkb_device().get_queue_index(vkb::QueueType::graphics);
+      vk2::get_device().vkb_device().get_queue_index(vkb::QueueType::graphics);
   if (!graphics_queue_idx_res) {
     LCRITICAL("graphics queue idx unavailable");
     exit(1);
@@ -126,33 +126,33 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info) 
 
   {
     ZoneScopedN("init swapchain");
-    swapchain_.init({.phys_device = vk2::device().phys_device(),
-                     .device = vk2::device().device(),
+    swapchain_.init({.phys_device = vk2::get_device().phys_device(),
+                     .device = vk2::get_device().device(),
                      .surface = surface_,
                      .present_mode = info.present_mode,
                      .dims = window_dims(),
                      .queue_idx = queues_.graphics_queue_idx,
                      .requested_resize = false},
-                    vk2::device().get_swapchain_format());
-    swapchain_.recreate_img_views(vk2::device().device());
+                    vk2::get_device().get_swapchain_format());
+    swapchain_.recreate_img_views(vk2::get_device().device());
   }
-  app_del_queue_.push([this]() { swapchain_.destroy(vk2::device().device()); });
+  app_del_queue_.push([this]() { swapchain_.destroy(vk2::get_device().device()); });
 
   {
     ZoneScopedN("init per frame");
     per_frame_data_.resize(frames_in_flight_);
     for (auto& frame : per_frame_data_) {
-      frame.cmd_pool = vk2::device().create_command_pool(queues_.graphics_queue_idx);
-      frame.main_cmd_buffer = vk2::device().create_command_buffer(frame.cmd_pool);
-      frame.render_fence = vk2::device().create_fence();
-      frame.swapchain_semaphore = vk2::device().create_semaphore();
-      frame.render_semaphore = vk2::device().create_semaphore();
+      frame.cmd_pool = vk2::get_device().create_command_pool(queues_.graphics_queue_idx);
+      frame.main_cmd_buffer = vk2::get_device().create_command_buffer(frame.cmd_pool);
+      frame.render_fence = vk2::get_device().create_fence();
+      frame.swapchain_semaphore = vk2::get_device().create_semaphore();
+      frame.render_semaphore = vk2::get_device().create_semaphore();
     }
   }
 
   app_del_queue_.push([this]() {
     for (const auto& frame : per_frame_data_) {
-      auto& d = vk2::device();
+      auto& d = vk2::get_device();
       d.destroy_fence(frame.render_fence);
       d.destroy_semaphore(frame.render_semaphore);
       d.destroy_semaphore(frame.swapchain_semaphore);
@@ -182,8 +182,8 @@ void BaseRenderer::on_gui() {}
 void BaseRenderer::on_update() {}
 
 void BaseRenderer::draw() {
-  curr_frame_swapchain_status_ = swapchain_.update({.phys_device = vk2::device().phys_device(),
-                                                    .device = vk2::device().device(),
+  curr_frame_swapchain_status_ = swapchain_.update({.phys_device = vk2::get_device().phys_device(),
+                                                    .device = vk2::get_device().device(),
                                                     .surface = surface_,
                                                     .present_mode = swapchain_.present_mode,
                                                     .dims = window_dims(),

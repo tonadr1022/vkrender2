@@ -10,7 +10,6 @@
 #include "Logger.hpp"
 #include "VkBootstrap.h"
 #include "VkCommon.hpp"
-#include "vk2/Resource.hpp"
 
 namespace vk2 {
 namespace {
@@ -70,6 +69,7 @@ void Device::init_impl(const CreateInfo& info) {
     exit(1);
   }
   vkb_device_ = std::move(dev_ret.value());
+  device_ = vkb_device_.device;
   main_del_queue_.push([this]() { vkb::destroy_device(vkb_device_); });
 
   {
@@ -114,7 +114,7 @@ void Device::init_impl(const CreateInfo& info) {
 
 void Device::destroy_impl() { vkb::destroy_device(vkb_device_); }
 
-Device& device() { return Device::get(); }
+Device& get_device() { return Device::get(); }
 
 VkFormat Device::get_swapchain_format() {
   u32 cnt;
@@ -135,7 +135,7 @@ VkCommandPool Device::create_command_pool(u32 queue_idx, VkCommandPoolCreateFlag
                                .flags = flags,
                                .queueFamilyIndex = queue_idx};
   VkCommandPool pool;
-  VK_CHECK(vkCreateCommandPool(device(), &info, nullptr, &pool));
+  VK_CHECK(vkCreateCommandPool(device_, &info, nullptr, &pool));
   return pool;
 }
 
@@ -145,7 +145,7 @@ VkCommandBuffer Device::create_command_buffer(VkCommandPool pool) const {
                                        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
                                        .commandBufferCount = 1};
   VkCommandBuffer buffer;
-  VK_CHECK(vkAllocateCommandBuffers(device(), &all_info, &buffer));
+  VK_CHECK(vkAllocateCommandBuffers(device_, &all_info, &buffer));
   return buffer;
 }
 
@@ -154,33 +154,37 @@ void Device::create_command_buffers(VkCommandPool pool, std::span<VkCommandBuffe
                                        .commandPool = pool,
                                        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
                                        .commandBufferCount = static_cast<uint32_t>(buffers.size())};
-  VK_CHECK(vkAllocateCommandBuffers(device(), &all_info, buffers.data()));
+  VK_CHECK(vkAllocateCommandBuffers(device_, &all_info, buffers.data()));
 }
 
 VkFence Device::create_fence(VkFenceCreateFlags flags) const {
   VkFenceCreateInfo info{.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, .flags = flags};
   VkFence fence;
-  VK_CHECK(vkCreateFence(device(), &info, nullptr, &fence));
+  VK_CHECK(vkCreateFence(device_, &info, nullptr, &fence));
   return fence;
 }
 
 VkSemaphore Device::create_semaphore() const {
   VkSemaphoreCreateInfo info{.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
   VkSemaphore semaphore;
-  VK_CHECK(vkCreateSemaphore(device(), &info, nullptr, &semaphore));
+  VK_CHECK(vkCreateSemaphore(device_, &info, nullptr, &semaphore));
   return semaphore;
 }
 
-void Device::destroy_fence(VkFence fence) const { vkDestroyFence(device(), fence, nullptr); }
+void Device::destroy_fence(VkFence fence) const { vkDestroyFence(device_, fence, nullptr); }
 void Device::destroy_semaphore(VkSemaphore semaphore) const {
-  vkDestroySemaphore(device(), semaphore, nullptr);
+  vkDestroySemaphore(device_, semaphore, nullptr);
 }
 void Device::destroy_command_pool(VkCommandPool pool) const {
-  vkDestroyCommandPool(device(), pool, nullptr);
+  vkDestroyCommandPool(device_, pool, nullptr);
 }
 
 // void Device::destroy_img(AllocatedImage& img) {
 //   vmaDestroyImage(allocator_, img.image, img.allocation);
 // }
+
+vk2::Texture Device::create_texture_2d(VkFormat format, uvec3 dims, vk2::TextureUsage usage) {
+  return vk2::create_2d(allocator_, device_, format, dims, usage);
+}
 
 }  // namespace vk2

@@ -8,7 +8,7 @@
 #include "Common.hpp"
 #include "VkBootstrap.h"
 #include "vk2/DeletionQueue.hpp"
-#include "vk2/Resource.hpp"
+#include "vk2/Texture.hpp"
 
 namespace vk2 {
 
@@ -42,12 +42,15 @@ class Device {
   // void destroy_img(AllocatedImage& img);
   [[nodiscard]] VmaAllocator allocator() const { return allocator_; }
 
+  vk2::Texture create_texture_2d(VkFormat format, uvec3 dims, vk2::TextureUsage usage);
+
  private:
   void init_impl(const CreateInfo& info);
   void destroy_impl();
 
   // non owning
   VkSurfaceKHR surface_;
+  VkDevice device_;
 
   // owning
   DeletionQueue main_del_queue_;
@@ -56,6 +59,6 @@ class Device {
   VmaAllocator allocator_;
 };
 
-Device& device();
+Device& get_device();
 
 }  // namespace vk2

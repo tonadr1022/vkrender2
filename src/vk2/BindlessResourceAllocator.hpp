@@ -71,6 +71,7 @@ class BindlessResourceAllocator {
 
   BindlessResourceInfo allocate_storage_img_descriptor(VkImageView view, VkImageLayout layout);
   BindlessResourceInfo allocate_sampled_img_descriptor(VkImageView view, VkImageLayout layout);
+  BindlessResourceInfo allocate_sampler_descriptor(VkSampler sampler);
   void allocate_bindless_resource(VkDescriptorType descriptor_type, VkDescriptorImageInfo* img,
                                   VkDescriptorBufferInfo* buffer, u32 idx, u32 binding);
 
@@ -96,6 +97,7 @@ class BindlessResourceAllocator {
   VmaAllocator allocator_;
   IndexAllocator storage_image_allocator_{max_resource_descriptors};
   IndexAllocator sampled_image_allocator_{max_resource_descriptors};
+  IndexAllocator sampler_allocator_{max_sampler_descriptors};
   VkDescriptorPool main_pool_{};
   VkDescriptorSet main_set_{};
   VkDescriptorSetLayout main_set_layout_{};

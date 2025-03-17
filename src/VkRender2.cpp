@@ -44,9 +44,9 @@ VkRender2::VkRender2(const InitInfo& info)
   }
   resource_dir = resource_dir_result.value();
   shader_dir = resource_dir / "shaders";
-  allocator_ = vk2::device().allocator();
+  allocator_ = vk2::get_device().allocator();
 
-  vk2::BindlessResourceAllocator::init(device_, vk2::device().allocator());
+  vk2::BindlessResourceAllocator::init(device_, vk2::get_device().allocator());
 
   main_del_q.push([]() {
     vk2::PipelineManager::shutdown();
@@ -72,7 +72,8 @@ VkRender2::VkRender2(const InitInfo& info)
       {get_shader_path("debug/clear_img.comp"), default_pipeline_layout});
 
   auto dims = window_dims();
-  img = create_texture_2d(VK_FORMAT_R8G8B8A8_UNORM, uvec3{dims, 1}, TextureUsage::General);
+  img = get_device().create_texture_2d(VK_FORMAT_R8G8B8A8_UNORM, uvec3{dims, 1},
+                                       TextureUsage::General);
 }
 
 void VkRender2::on_update() {}
@@ -88,16 +89,17 @@ void VkRender2::on_draw() {
                          VK_ACCESS_2_MEMORY_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
   state.barrier();
 
-  struct {
-    uint idx;
-    float t;
-  } pc{img->view().storage_img_resource().handle, static_cast<f32>(glfwGetTime())};
-
   {
     ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_COMPUTE, default_pipeline_layout, &main_set, 0);
-    vkCmdPushConstants(cmd, default_pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(pc), &pc);
-    ctx.bind_compute(PipelineManager::get().get(img_pipeline)->pipeline);
-    ctx.dispatch_compute((img->extent().width + 16) / 16, (img->extent().height + 16) / 16, 1);
+
+    struct {
+      uint idx;
+      float t;
+    } pc{img->view().storage_img_resource().handle, static_cast<f32>(glfwGetTime())};
+    ctx.push_constants(default_pipeline_layout, sizeof(pc), &pc);
+
+    ctx.bind_compute_pipeline(PipelineManager::get().get(img_pipeline)->pipeline);
+    ctx.dispatch((img->extent().width + 16) / 16, (img->extent().height + 16) / 16, 1);
   }
 
   state.queue_transition(img->image(), VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_MEMORY_READ_BIT,
@@ -130,11 +132,11 @@ void CmdEncoder::reset_and_begin() {
   VK_CHECK(vkBeginCommandBuffer(cmd_, &info));
 }
 
-void CmdEncoder::dispatch_compute(u32 work_groups_x, u32 work_groups_y, u32 work_groups_z) {
+void CmdEncoder::dispatch(u32 work_groups_x, u32 work_groups_y, u32 work_groups_z) {
   vkCmdDispatch(cmd_, work_groups_x, work_groups_y, work_groups_z);
 }
 
-void CmdEncoder::bind_compute(VkPipeline pipeline) {
+void CmdEncoder::bind_compute_pipeline(VkPipeline pipeline) {
   vkCmdBindPipeline(cmd_, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
 }
 void CmdEncoder::bind_descriptor_set(VkPipelineBindPoint bind_point, VkPipelineLayout layout,
@@ -142,10 +144,6 @@ void CmdEncoder::bind_descriptor_set(VkPipelineBindPoint bind_point, VkPipelineL
   vkCmdBindDescriptorSets(cmd_, bind_point, layout, idx, 1, set, 0, nullptr);
 }
 
-vk2::Texture VkRender2::create_texture_2d(VkFormat format, uvec3 dims, TextureUsage usage) {
-  return vk2::create_2d(allocator_, device_, format, dims, usage);
-}
-VkOffset3D e2o(VkExtent3D extent) {
-  return {static_cast<int32_t>(extent.width), static_cast<int32_t>(extent.height),
-          static_cast<int32_t>(extent.depth)};
+void CmdEncoder::push_constants(VkPipelineLayout layout, u32 size, void* data) {
+  vkCmdPushConstants(cmd_, layout, VK_SHADER_STAGE_ALL, 0, size, data);
 }

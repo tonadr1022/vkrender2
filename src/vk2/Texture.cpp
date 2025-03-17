@@ -8,6 +8,7 @@
 
 #include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Resource.hpp"
+#include "vk2/SamplerCache.hpp"
 #include "vk2/VkCommon.hpp"
 
 namespace vk2 {
@@ -246,4 +247,11 @@ void blit_img(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent3D extent,
                              .filter = VK_FILTER_NEAREST};
   vkCmdBlitImage2(cmd, &blit_info);
 };
+
+Sampler::Sampler(const VkSamplerCreateInfo& info) {
+  sampler_ = SamplerCache::get().get_or_create_sampler(info);
+  assert(sampler_);
+  resource_info_ = BindlessResourceAllocator::get().allocate_sampler_descriptor(sampler_);
+}
+
 }  // namespace vk2
