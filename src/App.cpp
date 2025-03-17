@@ -75,15 +75,18 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info) 
 
   {
     ZoneScopedN("glfw init");
+    glfwSetErrorCallback([](int error_code, const char* description) {
+      LERROR("glfw error: {}, {}", error_code, description);
+    });
     if (!glfwInit()) {
       LCRITICAL("Failed to initialize GLFW");
       exit(1);
     }
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-    glfwWindowHint(GLFW_DECORATED, info.decorate);
-    glfwWindowHint(GLFW_MAXIMIZED, info.maximize);
-    glfwWindowHint(GLFW_FOCUSED, GLFW_FALSE);
+    // glfwWindowHint(GLFW_DECORATED, info.decorate);
+    // glfwWindowHint(GLFW_MAXIMIZED, info.maximize);
+    // glfwWindowHint(GLFW_FOCUSED, GLFW_FALSE);
     window_ = glfwCreateWindow(info.width, info.height, info.name, nullptr, nullptr);
     if (!window_) {
       LCRITICAL("Failed to create window");

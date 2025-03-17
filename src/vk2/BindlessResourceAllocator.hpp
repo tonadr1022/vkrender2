@@ -71,8 +71,8 @@ class BindlessResourceAllocator {
 
   BindlessResourceInfo allocate_storage_img_descriptor(VkImageView view, VkImageLayout layout);
   BindlessResourceInfo allocate_sampled_img_descriptor(VkImageView view, VkImageLayout layout);
-  void allocate_bindless_resource(VkDescriptorImageInfo* img, VkDescriptorBufferInfo* buffer,
-                                  u32 idx, u32 binding);
+  void allocate_bindless_resource(VkDescriptorType descriptor_type, VkDescriptorImageInfo* img,
+                                  VkDescriptorBufferInfo* buffer, u32 idx, u32 binding);
 
   void delete_texture(const TextureDeleteInfo& img);
   void telete_texture_view(const TextureViewDeleteInfo& info);

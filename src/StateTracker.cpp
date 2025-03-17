@@ -4,20 +4,20 @@
 
 #include "Common.hpp"
 
-void StateTracker::flush(VkCommandBuffer cmd) {
+void StateTracker::barrier() {
   VkDependencyInfo info{
       .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-      .bufferMemoryBarrierCount = static_cast<u32>(buffer_barriers.size()),
-      .pBufferMemoryBarriers = buffer_barriers.size() ? buffer_barriers.data() : nullptr,
-      .imageMemoryBarrierCount = static_cast<u32>(img_barriers.size()),
-      .pImageMemoryBarriers = img_barriers.size() ? img_barriers.data() : nullptr};
-  vkCmdPipelineBarrier2(cmd, &info);
-  buffer_barriers.clear();
-  img_barriers.clear();
+      .bufferMemoryBarrierCount = static_cast<u32>(buffer_barriers_.size()),
+      .pBufferMemoryBarriers = buffer_barriers_.size() ? buffer_barriers_.data() : nullptr,
+      .imageMemoryBarrierCount = static_cast<u32>(img_barriers_.size()),
+      .pImageMemoryBarriers = img_barriers_.size() ? img_barriers_.data() : nullptr};
+  vkCmdPipelineBarrier2(cmd_, &info);
+  buffer_barriers_.clear();
+  img_barriers_.clear();
 }
 
 void StateTracker::add_image(VkImage image, VkAccessFlags2 access, VkPipelineStageFlags2 stage) {
-  tracked_imgs.push_back(ImageState{image, access, stage});
+  tracked_imgs_.push_back(ImageState{image, access, stage});
 }
 
 VkImageSubresourceRange StateTracker::default_image_subresource_range(VkImageAspectFlags aspect) {
@@ -38,12 +38,12 @@ void StateTracker::queue_transition(VkImage image, VkPipelineStageFlags2 dst_sta
 void StateTracker::queue_transition(VkImage image, VkPipelineStageFlags2 dst_stage,
                                     VkAccessFlags2 dst_access, VkImageLayout new_layout,
                                     const VkImageSubresourceRange& range) {
-  auto it = std::ranges::find_if(tracked_imgs,
+  auto it = std::ranges::find_if(tracked_imgs_,
                                  [image](const ImageState& img) { return img.image == image; });
-  if (it == tracked_imgs.end()) {
-    tracked_imgs.push_back(
+  if (it == tracked_imgs_.end()) {
+    tracked_imgs_.push_back(
         ImageState{image, 0, VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT, VK_IMAGE_LAYOUT_UNDEFINED});
-    it = std::prev(tracked_imgs.end());
+    it = std::prev(tracked_imgs_.end());
   }
   VkImageMemoryBarrier2 barrier{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
                                 .srcStageMask = it->curr_stage,
@@ -58,5 +58,5 @@ void StateTracker::queue_transition(VkImage image, VkPipelineStageFlags2 dst_sta
                                 .subresourceRange = range
 
   };
-  img_barriers.push_back(barrier);
+  img_barriers_.push_back(barrier);
 }

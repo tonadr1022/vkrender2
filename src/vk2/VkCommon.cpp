@@ -11,7 +11,7 @@ void print_vk_error(size_t x, bool exit_prog) {
   if (err) {
     LERROR("Detected Vulkan error: {}", string_VkResult(err));
     if (exit_prog) {
-      exit(1);
+      // exit(1);
     }
   }
 }

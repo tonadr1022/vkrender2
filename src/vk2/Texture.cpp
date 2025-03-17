@@ -73,8 +73,8 @@ Texture::Texture(VmaAllocator allocator, VkDevice device, const TextureCreateInf
         (format_is_color(create_info.format) && !format_is_srgb(create_info.format))
             ? VK_IMAGE_USAGE_STORAGE_BIT
             : 0;
-    usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | storage_usage |
-            attachment_usage;
+    usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+            VK_IMAGE_USAGE_SAMPLED_BIT | storage_usage | attachment_usage;
 
   } else if (create_info.usage == TextureUsage::AttachmentReadOnly) {
     // dedicated memory for attachment textures
@@ -115,6 +115,7 @@ Texture::Texture(VmaAllocator allocator, VkDevice device, const TextureCreateInf
     aspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
   }
 
+  create_info_ = create_info;
   view_ = TextureView{*this, device,
                       TextureViewCreateInfo{.format = create_info.format,
                                             .range =
@@ -213,12 +214,36 @@ TextureView::~TextureView() {
   texture_view_delete_func({storage_image_resource_info_, sampled_image_resource_info_, view_});
 }
 
-Texture Texture::create_2d(VmaAllocator allocator, VkDevice device, VkFormat format, uvec3 dims,
-                           TextureUsage usage) {
+Texture create_2d(VmaAllocator allocator, VkDevice device, VkFormat format, uvec3 dims,
+                  TextureUsage usage) {
   return Texture{allocator, device,
                  TextureCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
                                    .format = format,
                                    .extent = VkExtent3D{dims.x, dims.y, dims.z},
                                    .usage = usage}};
 }
+void blit_img(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent3D extent,
+              VkImageAspectFlags aspect) {
+  VkImageBlit2 region{
+      .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2,
+      .srcSubresource = {.aspectMask = aspect, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1},
+      .srcOffsets = {{},
+                     {static_cast<i32>(extent.width), static_cast<i32>(extent.height),
+                      static_cast<i32>(extent.depth)}},
+      .dstSubresource = {.aspectMask = aspect, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1},
+      .dstOffsets = {{},
+                     {static_cast<i32>(extent.width), static_cast<i32>(extent.height),
+                      static_cast<i32>(extent.depth)}}
+
+  };
+  VkBlitImageInfo2 blit_info{.sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2,
+                             .srcImage = src,
+                             .srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                             .dstImage = dst,
+                             .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                             .regionCount = 1,
+                             .pRegions = &region,
+                             .filter = VK_FILTER_NEAREST};
+  vkCmdBlitImage2(cmd, &blit_info);
+};
 }  // namespace vk2

@@ -21,6 +21,45 @@ TextureViewDeleteFunc texture_view_delete_func = [](TextureViewDeleteInfo info) 
 BindlessResourceAllocator::BindlessResourceAllocator(VkDevice device, VmaAllocator allocator)
     : device_(device), allocator_(allocator) {
   ZoneScoped;
+  VkDescriptorSetLayoutBinding bindings[] = {
+      VkDescriptorSetLayoutBinding{
+          .binding = bindless_storage_image_binding,
+          .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+          .descriptorCount = max_resource_descriptors,
+          .stageFlags = VK_SHADER_STAGE_ALL,
+      },
+      VkDescriptorSetLayoutBinding{
+          .binding = bindless_combined_image_sampler_binding,
+          .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+          .descriptorCount = max_resource_descriptors,
+          .stageFlags = VK_SHADER_STAGE_ALL,
+      },
+      VkDescriptorSetLayoutBinding{
+          .binding = bindless_storage_buffer_binding,
+          .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+          .descriptorCount = max_resource_descriptors,
+          .stageFlags = VK_SHADER_STAGE_ALL,
+      },
+      VkDescriptorSetLayoutBinding{
+          .binding = bindless_sampled_image_binding,
+          .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+          .descriptorCount = max_resource_descriptors,
+          .stageFlags = VK_SHADER_STAGE_ALL,
+      },
+      VkDescriptorSetLayoutBinding{
+          .binding = bindless_sampler_binding,
+          .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
+          .descriptorCount = max_sampler_descriptors,
+          .stageFlags = VK_SHADER_STAGE_ALL,
+      },
+  };
+  VkDescriptorSetLayoutCreateInfo set_info{
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+      .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
+      .bindingCount = COUNTOF(bindings),
+      .pBindings = bindings};
+  VK_CHECK(vkCreateDescriptorSetLayout(device_, &set_info, nullptr, &main_set_layout_));
+
   VkDescriptorPoolSize sizes[] = {
       VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, max_resource_descriptors},
       VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, max_resource_descriptors},
@@ -40,39 +79,6 @@ BindlessResourceAllocator::BindlessResourceAllocator(VkDevice device, VmaAllocat
       .descriptorSetCount = 1,
       .pSetLayouts = &main_set_layout_};
   VK_CHECK(vkAllocateDescriptorSets(device_, &set_layout_info, &main_set_));
-
-  VkDescriptorSetLayoutBinding bindings[] = {
-      VkDescriptorSetLayoutBinding{
-          .binding = 0,
-          .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-          .descriptorCount = max_resource_descriptors,
-          .stageFlags = VK_SHADER_STAGE_ALL,
-      },
-      VkDescriptorSetLayoutBinding{
-          .binding = 1,
-          .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-          .descriptorCount = max_resource_descriptors,
-          .stageFlags = VK_SHADER_STAGE_ALL,
-      },
-      VkDescriptorSetLayoutBinding{
-          .binding = 2,
-          .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-          .descriptorCount = max_resource_descriptors,
-          .stageFlags = VK_SHADER_STAGE_ALL,
-      },
-      VkDescriptorSetLayoutBinding{
-          .binding = 3,
-          .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
-          .descriptorCount = max_sampler_descriptors,
-          .stageFlags = VK_SHADER_STAGE_ALL,
-      },
-  };
-  VkDescriptorSetLayoutCreateInfo set_info{
-      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-      .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
-      .bindingCount = COUNTOF(bindings),
-      .pBindings = bindings};
-  VK_CHECK(vkCreateDescriptorSetLayout(device_, &set_info, nullptr, &main_set_layout_));
 }
 
 namespace {
@@ -132,7 +138,8 @@ BindlessResourceInfo BindlessResourceAllocator::allocate_sampled_img_descriptor(
     VkImageView view, VkImageLayout layout) {
   u32 handle = sampled_image_allocator_.alloc();
   VkDescriptorImageInfo img{.sampler = nullptr, .imageView = view, .imageLayout = layout};
-  allocate_bindless_resource(&img, nullptr, handle, bindless_sampled_image_binding);
+  allocate_bindless_resource(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &img, nullptr, handle,
+                             bindless_sampled_image_binding);
   return {ResourceType::SampledImage, handle};
 }
 
@@ -140,12 +147,13 @@ BindlessResourceInfo BindlessResourceAllocator::allocate_storage_img_descriptor(
     VkImageView view, VkImageLayout layout) {
   u32 handle = storage_image_allocator_.alloc();
   VkDescriptorImageInfo img{.sampler = nullptr, .imageView = view, .imageLayout = layout};
-  allocate_bindless_resource(&img, nullptr, handle,
+  allocate_bindless_resource(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &img, nullptr, handle,
                              resource_to_binding(ResourceType::StorageImage));
   return {ResourceType::StorageImage, handle};
 }
 
-void BindlessResourceAllocator::allocate_bindless_resource(VkDescriptorImageInfo* img,
+void BindlessResourceAllocator::allocate_bindless_resource(VkDescriptorType descriptor_type,
+                                                           VkDescriptorImageInfo* img,
                                                            VkDescriptorBufferInfo* buffer, u32 idx,
                                                            u32 binding) {
   VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -153,7 +161,7 @@ void BindlessResourceAllocator::allocate_bindless_resource(VkDescriptorImageInfo
                              .dstBinding = binding,
                              .dstArrayElement = idx,
                              .descriptorCount = 1,
-                             .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
+                             .descriptorType = descriptor_type,
                              .pImageInfo = img,
                              .pBufferInfo = buffer};
   vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);

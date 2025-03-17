@@ -50,6 +50,14 @@ class TextureView {
   TextureView(const TextureView&) = delete;
   TextureView& operator=(const TextureView&) = delete;
 
+  // TODO: use pointers or optionals?
+  const BindlessResourceInfo& storage_img_resource() {
+    return storage_image_resource_info_.value();
+  }
+  const BindlessResourceInfo& sampled_img_resource() {
+    return sampled_image_resource_info_.value();
+  }
+
  private:
   VkImageView view_;
   TextureViewCreateInfo create_info_;
@@ -60,9 +68,6 @@ class TextureView {
 
 class Texture {
  public:
-  static Texture create_2d(VmaAllocator allocator, VkDevice device, VkFormat format, uvec3 dims,
-                           TextureUsage usage);
-
   explicit Texture(VmaAllocator allocator, VkDevice device, const TextureCreateInfo& create_info);
   ~Texture();
   Texture& operator=(const Texture& other) = delete;
@@ -73,6 +78,8 @@ class Texture {
   [[nodiscard]] VkExtent3D extent() const { return create_info_.extent; }
   [[nodiscard]] VkImage image() const { return image_; }
   [[nodiscard]] VkFormat format() const { return create_info_.format; }
+
+  [[nodiscard]] TextureView& view() { return view_.value(); }
 
  private:
   friend class Device;
@@ -87,6 +94,9 @@ class Texture {
   VkDevice device_;
 };
 
+void blit_img(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent3D extent,
+              VkImageAspectFlags aspect);
+
 struct TextureDeleteInfo {
   VkImage img;
   VmaAllocation allocation;
@@ -97,6 +107,9 @@ struct TextureViewDeleteInfo {
   std::optional<BindlessResourceInfo> sampled_image_resource_info;
   VkImageView view;
 };
+
+Texture create_2d(VmaAllocator allocator, VkDevice device, VkFormat format, uvec3 dims,
+                  TextureUsage usage);
 
 using TextureViewDeleteFunc = std::function<void(TextureViewDeleteInfo)>;
 using TextureDeleteFunc = std::function<void(TextureDeleteInfo)>;

@@ -177,6 +177,7 @@ bool ShaderManager::get_spirv_binary(const std::filesystem::path& path, VkShader
       LERROR("glsl file does not exist for shader: {}", glsl_path.string());
       return false;
     }
+    LINFO("glsl compile {}", path.string());
     bool success = compile_glsl_to_spirv(glsl_path, stage, result.binary_data);
     if (!success) {
       return false;

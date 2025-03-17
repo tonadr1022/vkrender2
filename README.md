@@ -13,3 +13,7 @@ Some goals:
 ## Building
 
 ## Dependencies
+
+## Resources/Notes
+
+- https://developer.nvidia.com/blog/vulkan-dos-donts/

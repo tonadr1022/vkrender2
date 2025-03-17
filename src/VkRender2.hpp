@@ -45,3 +45,5 @@ struct VkRender2 final : public BaseRenderer {
   VkDescriptorSet main_set{};
   VmaAllocator allocator_;
 };
+
+VkOffset3D e2o(VkExtent3D extent);
