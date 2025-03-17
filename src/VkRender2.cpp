@@ -9,6 +9,7 @@
 
 #include "GLFW/glfw3.h"
 #include "Logger.hpp"
+#include "SceneLoader.hpp"
 #include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Device.hpp"
 #include "vk2/Initializers.hpp"
@@ -79,8 +80,8 @@ VkRender2::VkRender2(const InitInfo& info)
   });
 
   auto dims = window_dims();
-  img = get_device().create_texture_2d(VK_FORMAT_R8G8B8A8_UNORM, uvec3{dims, 1},
-                                       TextureUsage::General);
+  img = create_texture_2d(VK_FORMAT_R8G8B8A8_UNORM, uvec3{dims, 1}, TextureUsage::General);
+  gfx::load_gltf(resource_dir / "models/Cube/glTF/Cube.gltf");
 }
 
 void VkRender2::on_update() {}
@@ -92,6 +93,8 @@ void VkRender2::on_draw() {
   CmdEncoder ctx{cmd};
   // TODO: refactor
   ctx.reset_and_begin();
+  vk2::BindlessResourceAllocator::get().set_frame_num(curr_frame_num());
+  vk2::BindlessResourceAllocator::get().flush_deletions();
   state.queue_transition(img->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                          VK_ACCESS_2_MEMORY_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
   state.barrier();

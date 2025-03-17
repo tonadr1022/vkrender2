@@ -117,13 +117,7 @@ struct TextureViewDeleteInfo {
   VkImageView view;
 };
 
-Texture create_2d(VkFormat format, uvec3 dims, TextureUsage usage);
-
-using TextureViewDeleteFunc = std::function<void(TextureViewDeleteInfo)>;
-using TextureDeleteFunc = std::function<void(TextureDeleteInfo)>;
-
-extern TextureDeleteFunc img_delete_func;
-extern TextureViewDeleteFunc texture_view_delete_func;
+Texture create_texture_2d(VkFormat format, uvec3 dims, TextureUsage usage);
 
 uint32_t get_mip_levels(VkExtent2D size);
 VkImageType vkviewtype_to_img_type(VkImageViewType view_type);

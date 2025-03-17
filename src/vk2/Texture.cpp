@@ -20,7 +20,7 @@ uint32_t get_mip_levels(VkExtent2D size) {
 Texture::~Texture() {
   if (image_) {
     assert(allocation_);
-    img_delete_func({image_, allocation_});
+    BindlessResourceAllocator::get().delete_texture({image_, allocation_});
   }
 }
 
@@ -213,15 +213,19 @@ TextureView& TextureView::operator=(TextureView&& other) noexcept {
 }
 
 TextureView::~TextureView() {
-  texture_view_delete_func({storage_image_resource_info_, sampled_image_resource_info_, view_});
+  if (view_) {
+    BindlessResourceAllocator::get().delete_texture_view(
+        {storage_image_resource_info_, sampled_image_resource_info_, view_});
+  }
 }
 
-Texture create_2d(VkFormat format, uvec3 dims, TextureUsage usage) {
+Texture create_texture_2d(VkFormat format, uvec3 dims, TextureUsage usage) {
   return Texture{TextureCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
                                    .format = format,
                                    .extent = VkExtent3D{dims.x, dims.y, dims.z},
                                    .usage = usage}};
 }
+
 void blit_img(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent3D extent,
               VkImageAspectFlags aspect) {
   VkImageBlit2 region{

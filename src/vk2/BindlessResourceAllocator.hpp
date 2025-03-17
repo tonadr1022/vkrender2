@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "Common.hpp"
+#include "vk2/Buffer.hpp"
 #include "vk2/Resource.hpp"
 #include "vk2/Texture.hpp"
 
@@ -77,7 +78,8 @@ class BindlessResourceAllocator {
                                   VkDescriptorBufferInfo* buffer, u32 idx, u32 binding);
 
   void delete_texture(const TextureDeleteInfo& img);
-  void telete_texture_view(const TextureViewDeleteInfo& info);
+  void delete_texture_view(const TextureViewDeleteInfo& info);
+  void delete_buffer(const BufferDeleteInfo& info);
 
   void flush_deletions();
 
@@ -90,6 +92,7 @@ class BindlessResourceAllocator {
 
   std::deque<DeleteQEntry<TextureDeleteInfo>> texture_delete_q_;
   std::deque<DeleteQEntry<TextureViewDeleteInfo>> texture_view_delete_q_;
+  std::deque<DeleteQEntry<BufferDeleteInfo>> storage_buffer_delete_q_;
 
   ~BindlessResourceAllocator();
   BindlessResourceAllocator(VkDevice device, VmaAllocator allocator);

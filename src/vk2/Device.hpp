@@ -38,11 +38,12 @@ class Device {
   void destroy_fence(VkFence fence) const;
   void destroy_semaphore(VkSemaphore semaphore) const;
   void destroy_command_pool(VkCommandPool pool) const;
+  void create_buffer(const VkBufferCreateInfo* info, const VmaAllocationCreateInfo* alloc_info,
+                     VkBuffer& buffer, VmaAllocation& allocation,
+                     VmaAllocationInfo& out_alloc_info);
 
   // void destroy_img(AllocatedImage& img);
   [[nodiscard]] VmaAllocator allocator() const { return allocator_; }
-
-  vk2::Texture create_texture_2d(VkFormat format, uvec3 dims, vk2::TextureUsage usage);
 
  private:
   void init_impl(const CreateInfo& info);

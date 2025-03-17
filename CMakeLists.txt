@@ -15,15 +15,17 @@ src/StateTracker.cpp
 src/VkRender2.cpp
 
 src/vk2/BindlessResourceAllocator.cpp
-src/vk2/Device.cpp
+src/vk2/Buffer.cpp
 src/vk2/Definitions.cpp
 src/vk2/DeletionQueue.cpp
 src/vk2/Descriptors.cpp
+src/vk2/Device.cpp
 src/vk2/Initializers.cpp
 src/vk2/PipelineManager.cpp
-src/vk2/Texture.cpp
 src/vk2/SamplerCache.cpp
 src/vk2/ShaderCompiler.cpp
+src/vk2/Texture.cpp
+src/SceneLoader.cpp
 src/vk2/Swapchain.cpp
 src/vk2/VkCommon.cpp
 

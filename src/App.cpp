@@ -11,6 +11,7 @@
 #include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Device.hpp"
 #include "vk2/Initializers.hpp"
+#include "vk2/SamplerCache.hpp"
 #include "vk2/Swapchain.hpp"
 #include "vk2/VkCommon.hpp"
 
@@ -159,6 +160,8 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info) 
       d.destroy_command_pool(frame.cmd_pool);
     }
   });
+  vk2::SamplerCache::init(device_);
+  app_del_queue_.push([]() { vk2::SamplerCache::destroy(); });
 
   initialized_ = true;
 }
@@ -203,6 +206,7 @@ void BaseRenderer::draw() {
 
   vk2::BindlessResourceAllocator::get().set_frame_num(curr_frame_num());
   vk2::BindlessResourceAllocator::get().flush_deletions();
+
   // acquire next image
   VkResult get_swapchain_img_res =
       vkAcquireNextImageKHR(device_, swapchain_.swapchain, timeout,
@@ -213,6 +217,7 @@ void BaseRenderer::draw() {
 
   // reset fence once drawing, else return
   VK_CHECK(vkResetFences(device_, 1, &curr_frame().render_fence));
+
   on_draw();
 
   {

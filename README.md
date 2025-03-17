@@ -16,4 +16,5 @@ Some goals:
 
 ## Resources/Notes
 
-- https://developer.nvidia.com/blog/vulkan-dos-donts/
+- <https://developer.nvidia.com/blog/vulkan-dos-donts/>
+- <https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/usage_patterns.html>

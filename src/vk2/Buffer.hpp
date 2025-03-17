@@ -11,9 +11,9 @@ namespace vk2 {
 
 struct BufferCreateInfo {
   u64 size{};
-  u32 queue_idx{};
-  VkBufferUsageFlagBits usage{};
-  VmaMemoryUsage mem_usage{};
+  VkBufferUsageFlags usage{};
+  VmaMemoryUsage mem_usage{VMA_MEMORY_USAGE_AUTO};
+  VmaAllocationCreateFlags alloc_flags{};
 };
 
 class Buffer {
@@ -24,13 +24,23 @@ class Buffer {
   Buffer &operator=(Buffer &&) noexcept;
   ~Buffer();
   explicit Buffer(const BufferCreateInfo &cinfo);
+  [[nodiscard]] void *mapped_data() const { return info_.pMappedData; }
+
+  [[nodiscard]] VkBuffer buffer() const { return buffer_; }
 
  private:
-  VkBuffer buffer_;
-  VmaAllocation allocation_;
-  std::optional<BindlessResourceInfo> storage_image_resource_info_;
+  VmaAllocationInfo info_{};
+  VkBuffer buffer_{};
+  VmaAllocation allocation_{};
+  std::optional<BindlessResourceInfo> resource_info_;
 };
 
-Buffer new_staging_buffer();
+struct BufferDeleteInfo {
+  VkBuffer buffer{};
+  VmaAllocation allocation{};
+  std::optional<BindlessResourceInfo> resource_info;
+};
+
+Buffer create_staging_buffer(u64 size);
 
 }  // namespace vk2

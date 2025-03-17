@@ -22,7 +22,6 @@ struct QueueFamilies {
   u32 compute_queue_idx{};
   u32 transfer_queue_idx{};
 };
-
 struct PerFrameData {
   VkCommandPool cmd_pool;
   VkCommandBuffer main_cmd_buffer;

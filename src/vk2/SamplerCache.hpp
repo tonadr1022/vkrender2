@@ -11,7 +11,7 @@ struct SamplerCache {
   [[nodiscard]] VkSampler get_or_create_sampler(const VkSamplerCreateInfo& info);
   static void init(VkDevice device);
   void clear();
-  static void shutdown();
+  static void destroy();
 
  private:
   VkDevice device_;

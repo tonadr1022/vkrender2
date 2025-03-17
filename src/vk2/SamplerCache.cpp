@@ -47,7 +47,7 @@ void SamplerCache::init(VkDevice device) {
 
 SamplerCache& SamplerCache::get() { return *instance; }
 
-void SamplerCache::shutdown() {
+void SamplerCache::destroy() {
   assert(instance);
   instance->clear();
   delete instance;

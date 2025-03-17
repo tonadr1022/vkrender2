@@ -186,9 +186,9 @@ void Device::destroy_command_pool(VkCommandPool pool) const {
 // void Device::destroy_img(AllocatedImage& img) {
 //   vmaDestroyImage(allocator_, img.image, img.allocation);
 // }
-
-vk2::Texture Device::create_texture_2d(VkFormat format, uvec3 dims, vk2::TextureUsage usage) {
-  return vk2::create_2d(allocator_, device_, format, dims, usage);
+void Device::create_buffer(const VkBufferCreateInfo* info,
+                           const VmaAllocationCreateInfo* alloc_info, VkBuffer& buffer,
+                           VmaAllocation& allocation, VmaAllocationInfo& out_alloc_info) {
+  VK_CHECK(vmaCreateBuffer(allocator_, info, alloc_info, &buffer, &allocation, &out_alloc_info));
 }
-
 }  // namespace vk2

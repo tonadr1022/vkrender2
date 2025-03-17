@@ -5,18 +5,12 @@
 
 #include <tracy/Tracy.hpp>
 
+#include "Logger.hpp"
+#include "vk2/Buffer.hpp"
 #include "vk2/Resource.hpp"
 #include "vk2/Texture.hpp"
 #include "vk2/VkCommon.hpp"
 namespace vk2 {
-
-TextureDeleteFunc img_delete_func = [](TextureDeleteInfo info) {
-  BindlessResourceAllocator::get().delete_texture(info);
-};
-
-TextureViewDeleteFunc texture_view_delete_func = [](TextureViewDeleteInfo info) {
-  BindlessResourceAllocator::get().telete_texture_view(info);
-};
 
 BindlessResourceAllocator::BindlessResourceAllocator(VkDevice device, VmaAllocator allocator)
     : device_(device), allocator_(allocator) {
@@ -130,6 +124,7 @@ IndexAllocator::IndexAllocator(u32 size) {
 }
 
 BindlessResourceAllocator::~BindlessResourceAllocator() {
+  flush_deletions();
   vkDestroyDescriptorPool(device_, main_pool_, nullptr);
   vkDestroyDescriptorSetLayout(device_, main_set_layout_, nullptr);
 }
@@ -206,21 +201,46 @@ void BindlessResourceAllocator::flush_deletions() {
 
   std::erase_if(texture_view_delete_q_, [this](const DeleteQEntry<TextureViewDeleteInfo>& entry) {
     if (entry.frame < frame_num_) {
-      vkDestroyImageView(device_, entry.data.view, nullptr);
       if (entry.data.sampled_image_resource_info.has_value()) {
         sampled_image_allocator_.free(entry.data.sampled_image_resource_info->handle);
       }
       if (entry.data.storage_image_resource_info.has_value()) {
         storage_image_allocator_.free(entry.data.storage_image_resource_info->handle);
       }
+      vkDestroyImageView(device_, entry.data.view, nullptr);
+      return true;
+    }
+    return false;
+  });
+
+  std::erase_if(storage_buffer_delete_q_, [this](const DeleteQEntry<BufferDeleteInfo>& entry) {
+    if (entry.frame < frame_num_) {
+      assert(entry.data.buffer);
+      if (entry.data.resource_info.has_value()) {
+        storage_buffer_allocator_.free(entry.data.resource_info->handle);
+
+        // VkDescriptorBufferInfo buffer{.buffer = nullptr};
+        // VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        //                            .dstSet = main_set_,
+        //                            .dstBinding = bindless_storage_buffer_binding,
+        //                            .dstArrayElement = entry.data.resource_info->handle,
+        //                            .descriptorCount = 1,
+        //                            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        //                            .pBufferInfo = &buffer};
+        // vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+      }
+      vmaDestroyBuffer(allocator_, entry.data.buffer, entry.data.allocation);
       return true;
     }
     return false;
   });
 }
 
-void BindlessResourceAllocator::telete_texture_view(const TextureViewDeleteInfo& info) {
+void BindlessResourceAllocator::delete_texture_view(const TextureViewDeleteInfo& info) {
   texture_view_delete_q_.emplace_back(info, frame_num_);
+}
+void BindlessResourceAllocator::delete_buffer(const BufferDeleteInfo& info) {
+  storage_buffer_delete_q_.emplace_back(info, frame_num_);
 }
 
 BindlessResourceInfo BindlessResourceAllocator::allocate_storage_buffer_descriptor(

@@ -10,8 +10,6 @@
 
 #include "Logger.hpp"
 #include "vk2/Buffer.hpp"
-#include "vk2/Device.hpp"
-#include "vk2/Texture.hpp"
 
 namespace gfx {
 
@@ -104,10 +102,11 @@ void populate_vertices(const fastgltf::Primitive& primitive, const fastgltf::Ass
 
 }  // namespace
 
-std::optional<LoadedSceneData> load_gltf(const std::filesystem::path& path) {
+std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& path) {
+  std::optional<LoadedSceneBaseData> result = std::nullopt;
   if (!std::filesystem::exists(path)) {
     LINFO("Failed to load glTF: directory {} does not exist", path.string());
-    return std::nullopt;
+    return result;
   }
 
   constexpr auto supported_extensions = fastgltf::Extensions::KHR_mesh_quantization |
@@ -127,17 +126,17 @@ std::optional<LoadedSceneData> load_gltf(const std::filesystem::path& path) {
   if (!load_ret) {
     LINFO("Failed to load glTF\n\tpath: {}\n\terror: {}\n", path.string(),
           fastgltf::getErrorMessage(load_ret.error()));
-    return std::nullopt;
+    return result;
   }
 
   fastgltf::Asset gltf = std::move(load_ret.get());
-  LoadedSceneData result;
+  result = LoadedSceneBaseData{};
+
   {
     ZoneScopedN("gltf load samplers");
-    std::vector<vk2::Sampler> samplers;
-    samplers.reserve(gltf.samplers.size());
+    result->samplers.reserve(gltf.samplers.size());
     for (auto& sampler : gltf.samplers) {
-      samplers.emplace_back(VkSamplerCreateInfo{
+      result->samplers.emplace_back(VkSamplerCreateInfo{
           .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
           .magFilter = gltf_to_vk_filter(sampler.magFilter.value_or(fastgltf::Filter::Linear)),
           .minFilter = gltf_to_vk_filter(sampler.magFilter.value_or(fastgltf::Filter::Linear)),
@@ -156,13 +155,41 @@ std::optional<LoadedSceneData> load_gltf(const std::filesystem::path& path) {
   // meshes
   for (const auto& gltf_mesh : gltf.meshes) {
     for (const auto& gltf_prim : gltf_mesh.primitives) {
-      populate_indices(gltf_prim, gltf, result.indices);
-      populate_vertices(gltf_prim, gltf, result.vertices);
+      populate_indices(gltf_prim, gltf, result->indices);
+      populate_vertices(gltf_prim, gltf, result->vertices);
     }
   }
+
   // get a staging buffer (for now create, later: reuse)
 
-  return std::nullopt;
+  return result;
+}
+
+std::optional<LoadedSceneData> load_gltf(const std::filesystem::path& path) {
+  auto base_scene_data_ret = load_gltf_base(path);
+  if (!base_scene_data_ret.has_value()) {
+    return {};
+  }
+  LoadedSceneBaseData& base_scene_data = base_scene_data_ret.value();
+  u64 vertices_size = base_scene_data.vertices.size() * sizeof(Vertex);
+  u64 indices_size = base_scene_data.indices.size() * sizeof(u32);
+  vk2::Buffer staging_buf = vk2::create_staging_buffer(vertices_size + indices_size);
+  assert(staging_buf.mapped_data());
+  memcpy(staging_buf.mapped_data(), base_scene_data.vertices.data(), vertices_size);
+  memcpy((char*)staging_buf.mapped_data() + vertices_size, base_scene_data.indices.data(),
+         indices_size);
+  vk2::Buffer vertex_buffer = vk2::Buffer{vk2::BufferCreateInfo{
+      .size = vertices_size,
+      .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+      .alloc_flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT}};
+  vk2::Buffer index_buffer = vk2::Buffer{vk2::BufferCreateInfo{
+      .size = indices_size,
+      .usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+  }};
+
+  return LoadedSceneData{.vertex_buffer = std::move(vertex_buffer),
+                         .index_buffer = std::move(index_buffer),
+                         .samplers = std::move(base_scene_data.samplers)};
 }
 
 }  // namespace gfx
