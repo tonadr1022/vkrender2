@@ -12,7 +12,6 @@
 
 struct CmdEncoder {
   explicit CmdEncoder(VkCommandBuffer cmd) : cmd_(cmd) {}
-  void reset_and_begin();
   void dispatch(u32 work_groups_x, u32 work_groups_y, u32 work_groups_z);
   void bind_compute_pipeline(VkPipeline pipeline);
   void bind_descriptor_set(VkPipelineBindPoint bind_point, VkPipelineLayout layout,

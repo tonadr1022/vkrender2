@@ -5,11 +5,7 @@
 #include <algorithm>
 
 #include "Common.hpp"
-#include "vk2/Device.hpp"
 
-namespace {
-PFN_vkVoidFunction p_vk_cmd_pipeline_barrier2_khr = nullptr;
-}
 void StateTracker::barrier() {
   VkDependencyInfo info{
       .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
@@ -18,11 +14,7 @@ void StateTracker::barrier() {
       .imageMemoryBarrierCount = static_cast<u32>(img_barriers_.size()),
       .pImageMemoryBarriers = img_barriers_.size() ? img_barriers_.data() : nullptr};
 
-  if (p_vk_cmd_pipeline_barrier2_khr == nullptr) {
-    p_vk_cmd_pipeline_barrier2_khr =
-        vkGetDeviceProcAddr(vk2::get_device().device(), "vkCmdPipelineBarrier2KHR");
-  }
-  ((PFN_vkCmdPipelineBarrier2KHR)(p_vk_cmd_pipeline_barrier2_khr))(cmd_, &info);
+  vkCmdPipelineBarrier2KHR(cmd_, &info);
   // vkCmdPipelineBarrier2(cmd_, &info);
   buffer_barriers_.clear();
   img_barriers_.clear();
@@ -35,9 +27,9 @@ void StateTracker::add_image(VkImage image, VkAccessFlags2 access, VkPipelineSta
 VkImageSubresourceRange StateTracker::default_image_subresource_range(VkImageAspectFlags aspect) {
   return {.aspectMask = aspect,
           .baseMipLevel = 0,
-          .levelCount = VK_REMAINING_MIP_LEVELS,
+          .levelCount = 1,
           .baseArrayLayer = 0,
-          .layerCount = VK_REMAINING_ARRAY_LAYERS};
+          .layerCount = 1};
 }
 
 void StateTracker::queue_transition(VkImage image, VkPipelineStageFlags2 dst_stage,
@@ -70,5 +62,8 @@ void StateTracker::queue_transition(VkImage image, VkPipelineStageFlags2 dst_sta
                                 .subresourceRange = range
 
   };
+  it->curr_access = dst_access;
+  it->curr_stage = dst_stage;
+  it->curr_layout = new_layout;
   img_barriers_.push_back(barrier);
 }

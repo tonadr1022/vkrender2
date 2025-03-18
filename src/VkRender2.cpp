@@ -87,8 +87,10 @@ void VkRender2::on_draw() {
   state.reset(cmd);
 
   CmdEncoder ctx{cmd};
-  // TODO: refactor
-  ctx.reset_and_begin();
+  auto info = vk2::init::command_buffer_begin_info();
+  VK_CHECK(vkResetCommandBuffer(cmd, 0));
+  VK_CHECK(vkBeginCommandBuffer(cmd, &info));
+
   vk2::BindlessResourceAllocator::get().set_frame_num(curr_frame_num());
   vk2::BindlessResourceAllocator::get().flush_deletions();
   state.queue_transition(img->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
@@ -106,18 +108,19 @@ void VkRender2::on_draw() {
     ctx.dispatch((img->extent().width + 16) / 16, (img->extent().height + 16) / 16, 1);
   }
 
-  state.queue_transition(img->image(), VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_MEMORY_READ_BIT,
+  state.queue_transition(img->image(), VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
                          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
 
   auto& swapchain_img = swapchain_.imgs[curr_swapchain_img_idx()];
-  state.queue_transition(swapchain_img, VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
-                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
+  state.queue_transition(swapchain_img, VK_PIPELINE_STAGE_2_BLIT_BIT,
+                         VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         VK_IMAGE_ASPECT_COLOR_BIT);
   state.barrier();
 
   blit_img(cmd, img->image(), swapchain_img, img->extent(), VK_IMAGE_ASPECT_COLOR_BIT);
 
-  state.queue_transition(swapchain_img, 0, VK_ACCESS_2_MEMORY_READ_BIT,
-                         VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+  state.queue_transition(swapchain_img, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR,
+                         VK_ACCESS_2_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
   state.barrier();
   VK_CHECK(vkEndCommandBuffer(cmd));
 
@@ -129,12 +132,6 @@ void VkRender2::on_gui() {}
 std::string VkRender2::get_shader_path(const std::string& path) const { return shader_dir / path; }
 
 VkRender2::~VkRender2() { vkDeviceWaitIdle(device_); }
-
-void CmdEncoder::reset_and_begin() {
-  auto info = vk2::init::command_buffer_begin_info();
-  VK_CHECK(vkResetCommandBuffer(cmd_, 0));
-  VK_CHECK(vkBeginCommandBuffer(cmd_, &info));
-}
 
 void CmdEncoder::dispatch(u32 work_groups_x, u32 work_groups_y, u32 work_groups_z) {
   vkCmdDispatch(cmd_, work_groups_x, work_groups_y, work_groups_z);
@@ -156,6 +153,5 @@ void VkRender2::on_resize() { create_attachment_imgs(); }
 
 void VkRender2::create_attachment_imgs() {
   auto dims = window_dims();
-  LINFO("make img");
   img = create_texture_2d(VK_FORMAT_R8G8B8A8_UNORM, uvec3{dims, 1}, TextureUsage::General);
 }

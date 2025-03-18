@@ -18,3 +18,4 @@ Some goals:
 
 - <https://developer.nvidia.com/blog/vulkan-dos-donts/>
 - <https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/usage_patterns.html>
+- https://tellusim.com/mesh-shader-emulation/

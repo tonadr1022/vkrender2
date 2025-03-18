@@ -73,6 +73,7 @@ VulkanMemoryAllocator
 glslang
 glslang-default-resource-limits
 spirv-reflect-static
+BS_thread_pool
 SPIRV
 )
 
