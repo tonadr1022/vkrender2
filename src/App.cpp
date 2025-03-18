@@ -179,6 +179,7 @@ BaseRenderer::~BaseRenderer() {
   // delete all
   vk2::BindlessResourceAllocator::get().set_frame_num(curr_frame_num() + 100);
   vk2::BindlessResourceAllocator::get().flush_deletions();
+  vk2::BindlessResourceAllocator::shutdown();
   app_del_queue_.flush();
 }
 void BaseRenderer::on_draw() {}
@@ -199,6 +200,7 @@ void BaseRenderer::draw() {
   }
   if (curr_frame_swapchain_status_ == vk2::Swapchain::Status::Resized) {
     swapchain_.recreate_img_views(device_);
+    on_resize();
   }
 
   // wait for fence
@@ -236,7 +238,6 @@ void BaseRenderer::draw() {
     } else {
       VK_CHECK(present_result);
     }
-
     curr_frame_num_++;
   }
 }
@@ -261,7 +262,7 @@ void BaseRenderer::submit_single_command_buf_to_graphics(VkCommandBuffer cmd) {
     auto cmd_buf_submit_info = vk2::init::command_buffer_submit_info(cmd);
     auto submit = vk2::init::queue_submit_info(SPAN1(cmd_buf_submit_info), SPAN1(wait_info),
                                                SPAN1(signal_info));
-    VK_CHECK(vkQueueSubmit2(queues_.graphics_queue, 1, &submit, curr_frame().render_fence));
+    VK_CHECK(vkQueueSubmit2KHR(queues_.graphics_queue, 1, &submit, curr_frame().render_fence));
   }
 }
 
@@ -270,3 +271,4 @@ uvec2 BaseRenderer::window_dims() {
   glfwGetFramebufferSize(window_, &x, &y);
   return {x, y};
 }
+void BaseRenderer::on_resize() {}

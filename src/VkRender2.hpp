@@ -32,6 +32,8 @@ struct VkRender2 final : public BaseRenderer {
   void on_update() override;
   void on_draw() override;
   void on_gui() override;
+  void on_resize() override;
+  void create_attachment_imgs();
   StateTracker state;
   std::optional<vk2::Texture> img;
   vk2::DeletionQueue main_del_q;

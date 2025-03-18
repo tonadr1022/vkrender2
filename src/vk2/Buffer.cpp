@@ -5,6 +5,7 @@
 #include <cassert>
 #include <utility>
 
+#include "Logger.hpp"
 #include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Device.hpp"
 
@@ -18,6 +19,7 @@ Buffer::Buffer(const BufferCreateInfo &cinfo) {
   vk2::get_device().create_buffer(&buffer_create_info, &alloc_info, buffer_, allocation_, info_);
   assert(info_.size);
   if (cinfo.usage & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) {
+    LINFO("making descriptor");
     resource_info_ = BindlessResourceAllocator::get().allocate_storage_buffer_descriptor(buffer_);
   }
 }
@@ -45,6 +47,7 @@ Buffer::~Buffer() {
     assert(allocation_);
     BindlessResourceAllocator::get().delete_buffer(
         BufferDeleteInfo{buffer_, allocation_, resource_info_});
+    buffer_ = nullptr;
   }
 }
 

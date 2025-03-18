@@ -8,6 +8,7 @@
 #include "vk2/Device.hpp"
 
 namespace {
+
 PFN_vkVoidFunction p_vk_cmd_pipeline_barrier2_khr = nullptr;
 }
 void StateTracker::barrier() {
@@ -22,8 +23,8 @@ void StateTracker::barrier() {
     p_vk_cmd_pipeline_barrier2_khr =
         vkGetDeviceProcAddr(vk2::get_device().device(), "vkCmdPipelineBarrier2KHR");
   }
-  ((PFN_vkCmdPipelineBarrier2KHR)(p_vk_cmd_pipeline_barrier2_khr))(cmd_, &info);
-  // vkCmdPipelineBarrier2(cmd_, &info);
+  ((PFN_vkCmdPipelineBarrier2KHR)(p_vk_cmd_pipeline_barrier2_khr))(commandBuffer, &depInfo);
+  vkCmdPipelineBarrier2(cmd_, &info);
   buffer_barriers_.clear();
   img_barriers_.clear();
 }

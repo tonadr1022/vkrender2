@@ -49,10 +49,7 @@ VkRender2::VkRender2(const InitInfo& info)
 
   vk2::BindlessResourceAllocator::init(device_, vk2::get_device().allocator());
 
-  main_del_q.push([]() {
-    vk2::PipelineManager::shutdown();
-    vk2::BindlessResourceAllocator::shutdown();
-  });
+  main_del_q.push([]() { vk2::PipelineManager::shutdown(); });
 
   vk2::PipelineManager::init(device_);
 
@@ -79,9 +76,8 @@ VkRender2::VkRender2(const InitInfo& info)
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::Less),
   });
 
-  auto dims = window_dims();
-  img = create_texture_2d(VK_FORMAT_R8G8B8A8_UNORM, uvec3{dims, 1}, TextureUsage::General);
   gfx::load_gltf(resource_dir / "models/Cube/glTF/Cube.gltf");
+  create_attachment_imgs();
 }
 
 void VkRender2::on_update() {}
@@ -154,4 +150,12 @@ void CmdEncoder::bind_descriptor_set(VkPipelineBindPoint bind_point, VkPipelineL
 
 void CmdEncoder::push_constants(VkPipelineLayout layout, u32 size, void* data) {
   vkCmdPushConstants(cmd_, layout, VK_SHADER_STAGE_ALL, 0, size, data);
+}
+
+void VkRender2::on_resize() { create_attachment_imgs(); }
+
+void VkRender2::create_attachment_imgs() {
+  auto dims = window_dims();
+  LINFO("make img");
+  img = create_texture_2d(VK_FORMAT_R8G8B8A8_UNORM, uvec3{dims, 1}, TextureUsage::General);
 }

@@ -47,7 +47,9 @@ void Device::init_impl(const CreateInfo& info) {
   features12.descriptorBindingStorageImageUpdateAfterBind = true;
   features12.descriptorBindingSampledImageUpdateAfterBind = true;
   features12.descriptorBindingStorageBufferUpdateAfterBind = true;
-
+  features12.descriptorBindingPartiallyBound = true;
+  features12.descriptorBindingVariableDescriptorCount = true;
+  features12.runtimeDescriptorArray = true;
   VkPhysicalDeviceFeatures features{};
   features.shaderStorageImageWriteWithoutFormat = true;
   features.depthClamp = true;
@@ -63,10 +65,11 @@ void Device::init_impl(const CreateInfo& info) {
   sync2_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
   sync2_features.synchronization2 = VK_TRUE;
   dynamic_rendering_features.pNext = &sync2_features;
-  std::vector<const char*> extensions{{"VK_KHR_dynamic_rendering", "VK_KHR_synchronization2"}};
+  std::vector<const char*> extensions{{VK_KHR_COPY_COMMANDS_2_EXTENSION_NAME,
+                                       VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
+                                       VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME}};
   // features12.drawIndirectCount = true;
   features12.pNext = &dynamic_rendering_features;
-
   phys_selector.set_minimum_version(min_api_version_major, min_api_version_minor)
       .set_required_features_12(features12)
       .add_required_extensions(extensions)

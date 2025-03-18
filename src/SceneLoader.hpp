@@ -16,6 +16,9 @@ struct Vertex {
   float uv_y;
 };
 
+struct RawMesh {
+  std::vector<Vertex> vertices;
+};
 struct LoadedSceneData {
   vk2::Buffer vertex_buffer;
   vk2::Buffer index_buffer;

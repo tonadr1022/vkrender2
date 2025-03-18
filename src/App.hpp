@@ -33,8 +33,8 @@ class BaseRenderer {
  public:
   struct InitInfo {
     const char* name = "App";
-    u32 width{1600};
-    u32 height{900};
+    u32 width{800};
+    u32 height{800};
     bool maximize{false};
     bool decorate{true};
     bool vsync{true};
@@ -59,6 +59,7 @@ class BaseRenderer {
   virtual void on_update();
   virtual void on_draw();
   virtual void on_gui();
+  virtual void on_resize();
 
   QueueFamilies queues_;
   vkb::Instance instance_;

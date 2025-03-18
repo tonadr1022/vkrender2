@@ -21,6 +21,7 @@ Texture::~Texture() {
   if (image_) {
     assert(allocation_);
     BindlessResourceAllocator::get().delete_texture({image_, allocation_});
+    image_ = nullptr;
   }
 }
 
@@ -194,6 +195,7 @@ VkImageType vkviewtype_to_img_type(VkImageViewType view_type) {
 }
 TextureView::TextureView(TextureView&& other) noexcept
     : view_(std::exchange(other.view_, nullptr)),
+      create_info_(std::exchange(other.create_info_, {})),
       storage_image_resource_info_(std::exchange(other.storage_image_resource_info_, std::nullopt)),
       sampled_image_resource_info_(
           std::exchange(other.sampled_image_resource_info_, std::nullopt)) {}
@@ -216,6 +218,7 @@ TextureView::~TextureView() {
   if (view_) {
     BindlessResourceAllocator::get().delete_texture_view(
         {storage_image_resource_info_, sampled_image_resource_info_, view_});
+    view_ = nullptr;
   }
 }
 
@@ -248,7 +251,7 @@ void blit_img(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent3D extent,
                              .regionCount = 1,
                              .pRegions = &region,
                              .filter = VK_FILTER_NEAREST};
-  vkCmdBlitImage2(cmd, &blit_info);
+  vkCmdBlitImage2KHR(cmd, &blit_info);
 };
 
 Sampler::Sampler(const VkSamplerCreateInfo& info) {

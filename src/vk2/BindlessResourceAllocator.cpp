@@ -5,7 +5,6 @@
 
 #include <tracy/Tracy.hpp>
 
-#include "Logger.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/Resource.hpp"
 #include "vk2/Texture.hpp"
@@ -47,8 +46,19 @@ BindlessResourceAllocator::BindlessResourceAllocator(VkDevice device, VmaAllocat
           .stageFlags = VK_SHADER_STAGE_ALL,
       },
   };
+
+  std::array<VkDescriptorBindingFlags, COUNTOF(bindings)> flags;
+  for (auto& f : flags) {
+    f = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
+  }
+
+  VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags{
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
+      .bindingCount = flags.size(),
+      .pBindingFlags = flags.data()};
   VkDescriptorSetLayoutCreateInfo set_info{
       .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+      .pNext = &binding_flags,
       .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
       .bindingCount = COUNTOF(bindings),
       .pBindings = bindings};
@@ -61,6 +71,7 @@ BindlessResourceAllocator::BindlessResourceAllocator(VkDevice device, VmaAllocat
       VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, max_resource_descriptors},
       VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, max_sampler_descriptors},
   };
+
   VkDescriptorPoolCreateInfo info{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
                                   .flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT,
                                   // TODO: fine tune this? just one?
@@ -222,16 +233,6 @@ void BindlessResourceAllocator::flush_deletions() {
       assert(entry.data.buffer);
       if (entry.data.resource_info.has_value()) {
         storage_buffer_allocator_.free(entry.data.resource_info->handle);
-
-        // VkDescriptorBufferInfo buffer{.buffer = nullptr};
-        // VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        //                            .dstSet = main_set_,
-        //                            .dstBinding = bindless_storage_buffer_binding,
-        //                            .dstArrayElement = entry.data.resource_info->handle,
-        //                            .descriptorCount = 1,
-        //                            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-        //                            .pBufferInfo = &buffer};
-        // vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
       }
       vmaDestroyBuffer(allocator_, entry.data.buffer, entry.data.allocation);
       return true;
@@ -243,8 +244,9 @@ void BindlessResourceAllocator::flush_deletions() {
 void BindlessResourceAllocator::delete_texture_view(const TextureViewDeleteInfo& info) {
   texture_view_delete_q_.emplace_back(info, frame_num_);
 }
+
 void BindlessResourceAllocator::delete_buffer(const BufferDeleteInfo& info) {
-  storage_buffer_delete_q_.emplace_back(info, frame_num_);
+  storage_buffer_delete_q_.emplace_back(info, frame_num_ + 10);
 }
 
 BindlessResourceInfo BindlessResourceAllocator::allocate_storage_buffer_descriptor(
