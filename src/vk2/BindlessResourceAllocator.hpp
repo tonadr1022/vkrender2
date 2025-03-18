@@ -3,9 +3,9 @@
 #include <vulkan/vulkan_core.h>
 
 #include <deque>
-#include <vector>
 
 #include "Common.hpp"
+#include "util/IndexAllocator.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/Resource.hpp"
 #include "vk2/Texture.hpp"
@@ -26,14 +26,6 @@ struct ImageViewCreateInfo {
   VkImageSubresourceRange subresource_range{default_img_subresource_range};
 };
 
-struct IndexAllocator {
-  explicit IndexAllocator(u32 size);
-  [[nodiscard]] u32 alloc();
-  void free(u32 idx);
-
- private:
-  std::vector<u32> free_list_;
-};
 // template <typename T>
 // struct ResourceDeleteQueue {
 //   ResourceDeleteQueue(const ResourceDeleteQueue&) = delete;
@@ -99,10 +91,10 @@ class BindlessResourceAllocator {
 
   VkDevice device_;
   VmaAllocator allocator_;
-  IndexAllocator storage_image_allocator_{max_resource_descriptors};
-  IndexAllocator storage_buffer_allocator_{max_resource_descriptors};
-  IndexAllocator sampled_image_allocator_{max_resource_descriptors};
-  IndexAllocator sampler_allocator_{max_sampler_descriptors};
+  util::IndexAllocator storage_image_allocator_{max_resource_descriptors};
+  util::IndexAllocator storage_buffer_allocator_{max_resource_descriptors};
+  util::IndexAllocator sampled_image_allocator_{max_resource_descriptors};
+  util::IndexAllocator sampler_allocator_{max_sampler_descriptors};
   VkDescriptorPool main_pool_{};
   VkDescriptorSet main_set_{};
   VkDescriptorSetLayout main_set_layout_{};

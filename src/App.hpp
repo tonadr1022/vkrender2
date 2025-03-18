@@ -3,6 +3,7 @@
 #include <vulkan/vulkan_core.h>
 
 #include "Common.hpp"
+#include "StateTracker.hpp"
 #include "VkBootstrap.h"
 #include "vk2/DeletionQueue.hpp"
 #include "vk2/Swapchain.hpp"
@@ -18,15 +19,52 @@ struct QueueFamilies {
   VkQueue graphics_queue{};
   VkQueue compute_queue{};
   VkQueue transfer_queue{};
-  u32 graphics_queue_idx{};
-  u32 compute_queue_idx{};
-  u32 transfer_queue_idx{};
+  u32 graphics_queue_idx{UINT32_MAX};
+  u32 compute_queue_idx{UINT32_MAX};
+  u32 transfer_queue_idx{UINT32_MAX};
+  bool is_unified_graphics_transfer{};
 };
+
+struct CmdPool {
+  explicit CmdPool(VkCommandPool pool) : pool_(pool) {}
+  ~CmdPool();
+
+  CmdPool& operator=(const CmdPool&) = delete;
+  CmdPool(const CmdPool&) = delete;
+  CmdPool(CmdPool&& old) noexcept;
+  CmdPool& operator=(CmdPool&& old) noexcept;
+
+  [[nodiscard]] VkCommandPool pool() const { return pool_; }
+
+ private:
+  VkCommandPool pool_;
+};
+
 struct PerFrameData {
   VkCommandPool cmd_pool;
   VkCommandBuffer main_cmd_buffer;
   VkSemaphore swapchain_semaphore, render_semaphore;
   VkFence render_fence;
+};
+
+struct QueueManager {
+  explicit QueueManager(u32 queue_idx, u32 cmd_buffer_cnt = 1);
+  QueueManager() = delete;
+  ~QueueManager();
+
+  QueueManager(QueueManager&&) = delete;
+  QueueManager& operator=(QueueManager&&) = delete;
+  QueueManager(const QueueManager&) = delete;
+  QueueManager& operator=(const QueueManager&) = delete;
+
+  VkCommandBuffer get_cmd_buffer();
+
+ private:
+  std::vector<VkCommandBuffer> active_cmd_buffers_;
+  std::vector<VkCommandBuffer> free_cmd_buffers_;
+  StateTracker state_tracker_;
+  CmdPool cmd_pool_;
+  u32 queue_idx_{UINT32_MAX};
 };
 
 class BaseRenderer {
@@ -71,6 +109,7 @@ class BaseRenderer {
   std::vector<PerFrameData> per_frame_data_;
   PerFrameData& curr_frame();
   void quit();
+  std::unique_ptr<QueueManager> transfer_queue_manager_;
 
   // begin non owning
   VkDevice device_;

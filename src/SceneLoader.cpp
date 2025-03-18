@@ -1,11 +1,15 @@
 #include "SceneLoader.hpp"
 
+#include <volk.h>
 #include <vulkan/vulkan_core.h>
 
 #include <fastgltf/core.hpp>
 #include <fastgltf/glm_element_traits.hpp>
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
+
+#include "ThreadPool.hpp"
+
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/quaternion.hpp>
 #include <tracy/Tracy.hpp>
@@ -239,35 +243,41 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
 
   fastgltf::Asset gltf = std::move(load_ret.get());
   result = LoadedSceneBaseData{};
-
   load_samplers(gltf, result->samplers);
 
-  size_t total_num_gltf_primitives = 0;
-  for (const auto& m : gltf.meshes) {
-    total_num_gltf_primitives += m.primitives.size();
-  }
-  result->primitive_draw_infos.resize(total_num_gltf_primitives);
-
-  // meshes
-  u32 primitive_idx{0};
-  u32 mesh_idx{0};
-  for (const auto& gltf_mesh : gltf.meshes) {
-    for (const auto& gltf_prim : gltf_mesh.primitives) {
-      u32 first_index = result->indices.size();
-      u32 index_count = populate_indices(gltf_prim, gltf, result->indices);
-      u32 first_vertex = result->vertices.size();
-      u32 vertex_count = populate_vertices(gltf_prim, gltf, result->vertices);
-      result->primitive_draw_infos[primitive_idx] = {.first_index = first_index,
-                                                     .index_count = index_count,
-                                                     .first_vertex = first_vertex,
-                                                     .vertex_count = vertex_count,
-                                                     .mesh_idx = mesh_idx};
-      primitive_idx++;
+  std::array<std::future<void>, 2> scene_load_futures;
+  u32 scene_load_future_idx = 0;
+  scene_load_futures[scene_load_future_idx++] = threads::pool.submit_task([&]() {
+    size_t total_num_gltf_primitives = 0;
+    for (const auto& m : gltf.meshes) {
+      total_num_gltf_primitives += m.primitives.size();
     }
-    mesh_idx++;
-  }
+    result->primitive_draw_infos.resize(total_num_gltf_primitives);
 
-  load_scene_graph_data(result->scene_graph_data, gltf);
+    u32 primitive_idx{0};
+    u32 mesh_idx{0};
+    for (const auto& gltf_mesh : gltf.meshes) {
+      for (const auto& gltf_prim : gltf_mesh.primitives) {
+        u32 first_index = result->indices.size();
+        u32 index_count = populate_indices(gltf_prim, gltf, result->indices);
+        u32 first_vertex = result->vertices.size();
+        u32 vertex_count = populate_vertices(gltf_prim, gltf, result->vertices);
+        result->primitive_draw_infos[primitive_idx] = {.first_index = first_index,
+                                                       .index_count = index_count,
+                                                       .first_vertex = first_vertex,
+                                                       .vertex_count = vertex_count,
+                                                       .mesh_idx = mesh_idx};
+        primitive_idx++;
+      }
+      mesh_idx++;
+    }
+  });
+  scene_load_futures[scene_load_future_idx++] =
+      threads::pool.submit_task([&]() { load_scene_graph_data(result->scene_graph_data, gltf); });
+
+  for (auto& f : scene_load_futures) {
+    f.get();
+  }
 
   return result;
 }
@@ -280,22 +290,14 @@ std::optional<LoadedSceneData> load_gltf(const std::filesystem::path& path) {
   LoadedSceneBaseData& base_scene_data = base_scene_data_ret.value();
   u64 vertices_size = base_scene_data.vertices.size() * sizeof(Vertex);
   u64 indices_size = base_scene_data.indices.size() * sizeof(u32);
-  vk2::Buffer staging_buf = vk2::create_staging_buffer(vertices_size + indices_size);
-  vk2::Buffer index_buf = vk2::create_staging_buffer(vertices_size + indices_size);
-  memcpy(staging_buf.mapped_data(), base_scene_data.vertices.data(), vertices_size);
-  memcpy((char*)staging_buf.mapped_data() + vertices_size, base_scene_data.indices.data(),
+  vk2::Buffer vertex_staging = vk2::create_staging_buffer(vertices_size + indices_size);
+  vk2::Buffer index_staging = vk2::create_staging_buffer(vertices_size + indices_size);
+  memcpy(vertex_staging.mapped_data(), base_scene_data.vertices.data(), vertices_size);
+  memcpy((char*)vertex_staging.mapped_data() + vertices_size, base_scene_data.indices.data(),
          indices_size);
-  vk2::Buffer vertex_buffer = vk2::Buffer{vk2::BufferCreateInfo{
-      .size = vertices_size,
-      .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-      .alloc_flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT}};
-  vk2::Buffer index_buffer = vk2::Buffer{vk2::BufferCreateInfo{
-      .size = indices_size,
-      .usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-  }};
 
-  return LoadedSceneData{.vertex_buffer = std::move(vertex_buffer),
-                         .index_buffer = std::move(index_buffer),
+  return LoadedSceneData{.vertex_staging = std::move(vertex_staging),
+                         .index_staging = std::move(index_staging),
                          .samplers = std::move(base_scene_data.samplers)};
   return std::nullopt;
 }

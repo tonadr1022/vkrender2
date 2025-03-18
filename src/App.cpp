@@ -10,6 +10,7 @@
 #include "tracy/Tracy.hpp"
 #include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Device.hpp"
+#include "vk2/Fence.hpp"
 #include "vk2/Initializers.hpp"
 #include "vk2/SamplerCache.hpp"
 #include "vk2/Swapchain.hpp"
@@ -111,20 +112,26 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info) 
   app_del_queue_.push([]() { vk2::Device::destroy(); });
   device_ = vk2::get_device().device();
 
-  auto graphics_queue_result = vk2::get_device().vkb_device().get_queue(vkb::QueueType::graphics);
-  if (!graphics_queue_result.value()) {
-    LCRITICAL("graphics queue unavailable");
-    exit(1);
+  const auto& phys = vk2::get_device().vkb_device();
+  for (u64 i = 0; i < phys.queue_families.size(); i++) {
+    if (phys.queue_families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+      vkGetDeviceQueue(device_, i, 0, &queues_.graphics_queue);
+      queues_.graphics_queue_idx = i;
+      break;
+    }
   }
-  queues_.graphics_queue = graphics_queue_result.value();
 
-  auto graphics_queue_idx_res =
-      vk2::get_device().vkb_device().get_queue_index(vkb::QueueType::graphics);
-  if (!graphics_queue_idx_res) {
-    LCRITICAL("graphics queue idx unavailable");
-    exit(1);
+  for (u64 i = 0; i < phys.queue_families.size(); i++) {
+    if (i == queues_.graphics_queue_idx) continue;
+    if (phys.queue_families[i].queueFlags & VK_QUEUE_TRANSFER_BIT) {
+      vkGetDeviceQueue(device_, i, 0, &queues_.transfer_queue);
+      queues_.transfer_queue_idx = i;
+      break;
+    }
   }
-  queues_.graphics_queue_idx = graphics_queue_idx_res.value();
+
+  queues_.is_unified_graphics_transfer = queues_.graphics_queue_idx == queues_.transfer_queue_idx;
+  LINFO("{} {}", queues_.graphics_queue_idx, queues_.transfer_queue_idx);
 
   {
     ZoneScopedN("init swapchain");
@@ -139,6 +146,9 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info) 
     swapchain_.recreate_img_views(vk2::get_device().device());
   }
   app_del_queue_.push([this]() { swapchain_.destroy(vk2::get_device().device()); });
+
+  vk2::FencePool::init(device_);
+  app_del_queue_.push([]() { vk2::FencePool::destroy(); });
 
   {
     ZoneScopedN("init per frame");
@@ -162,7 +172,11 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info) 
     }
   });
   vk2::SamplerCache::init(device_);
-  app_del_queue_.push([]() { vk2::SamplerCache::destroy(); });
+  transfer_queue_manager_ = std::make_unique<QueueManager>(queues_.transfer_queue_idx, 1);
+  app_del_queue_.push([this]() {
+    vk2::SamplerCache::destroy();
+    transfer_queue_manager_ = nullptr;
+  });
 
   initialized_ = true;
 }
@@ -272,3 +286,60 @@ uvec2 BaseRenderer::window_dims() {
   return {x, y};
 }
 void BaseRenderer::on_resize() {}
+
+QueueManager::QueueManager(u32 queue_idx, u32 cmd_buffer_cnt)
+    : cmd_pool_(vk2::get_device().create_command_pool(queue_idx)), queue_idx_(queue_idx) {
+  free_cmd_buffers_.resize(cmd_buffer_cnt);
+  vk2::get_device().create_command_buffers(cmd_pool_.pool(), free_cmd_buffers_);
+}
+
+QueueManager::~QueueManager() = default;
+
+VkCommandBuffer QueueManager::get_cmd_buffer() {
+  VkCommandBuffer buf;
+  if (free_cmd_buffers_.size()) {
+    buf = free_cmd_buffers_.back();
+    free_cmd_buffers_.pop_back();
+  } else {
+    buf = vk2::get_device().create_command_buffer(cmd_pool_.pool());
+  }
+  return buf;
+}
+
+// QueueManager& QueueManager::operator=(QueueManager&& old) noexcept {
+//   if (&old == this) {
+//     return *this;
+//   }
+//   destroy();
+//
+//   cmd_pool_ = std::exchange(old.cmd_pool_, nullptr);
+//   active_cmd_buffers_ = std::move(old.active_cmd_buffers_);
+//   free_cmd_buffers_ = std::move(old.free_cmd_buffers_);
+//   queue_idx_ = std::exchange(old.queue_idx_, 0);
+//
+//   return *this;
+// }
+//
+// QueueManager::QueueManager(QueueManager&& old) noexcept
+//     : active_cmd_buffers_(std::move(old.active_cmd_buffers_)),
+//       free_cmd_buffers_(std::move(old.free_cmd_buffers_)),
+//       cmd_pool_(std::exchange(old.cmd_pool_, nullptr)),
+//       queue_idx_(std::exchange(old.queue_idx_, 0)) {}
+
+CmdPool::~CmdPool() {
+  if (pool_) {
+    vk2::get_device().destroy_command_pool(pool_);
+    pool_ = nullptr;
+  }
+}
+
+CmdPool::CmdPool(CmdPool&& old) noexcept : pool_(std::exchange(old.pool_, nullptr)) {}
+
+CmdPool& CmdPool::operator=(CmdPool&& old) noexcept {
+  if (&old == this) {
+    return *this;
+  }
+  this->~CmdPool();
+  pool_ = std::exchange(old.pool_, nullptr);
+  return *this;
+}

@@ -12,6 +12,7 @@
 #include "SceneLoader.hpp"
 #include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Device.hpp"
+#include "vk2/Fence.hpp"
 #include "vk2/Initializers.hpp"
 #include "vk2/PipelineManager.hpp"
 #include "vk2/Texture.hpp"
@@ -76,13 +77,75 @@ VkRender2::VkRender2(const InitInfo& info)
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::Less),
   });
 
-  gfx::load_gltf(resource_dir / "models/Cube/glTF/Cube.gltf");
+  auto res = std::move(gfx::load_gltf(resource_dir / "models/Cube/glTF/Cube.gltf").value());
+
+  cube = LoadedScene{
+      std::move(res.scene_graph_data),
+      vk2::Buffer{vk2::BufferCreateInfo{
+          .size = res.vertex_staging.size(),
+          .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+          .alloc_flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT}},
+      vk2::Buffer{vk2::BufferCreateInfo{
+          .size = res.index_staging.size(),
+          .usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+      }},
+      std::move(res.samplers)};
+
+  {
+    VkCommandBuffer cmd = transfer_queue_manager_->get_cmd_buffer();
+    {
+      auto info = vk2::init::command_buffer_begin_info();
+      VK_CHECK(vkResetCommandBuffer(cmd, 0));
+      VK_CHECK(vkBeginCommandBuffer(cmd, &info));
+
+      {
+        VkBufferCopy2KHR copy{.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2_KHR,
+                              .srcOffset = 0,
+                              .dstOffset = 0,
+                              .size = res.vertex_staging.size()};
+        VkCopyBufferInfo2KHR copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+                                       .srcBuffer = res.vertex_staging.buffer(),
+                                       .dstBuffer = cube->vertex_buffer.buffer(),
+                                       .regionCount = 1,
+                                       .pRegions = &copy};
+        vkCmdCopyBuffer2KHR(cmd, &copy_info);
+        // TODO: extract
+        VkBufferMemoryBarrier2 barrier{.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+                                       .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                                       .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+                                       .srcQueueFamilyIndex = queues_.transfer_queue_idx,
+                                       .dstQueueFamilyIndex = queues_.graphics_queue_idx,
+                                       .buffer = cube->vertex_buffer.buffer(),
+                                       .offset = 0,
+                                       .size = VK_WHOLE_SIZE};
+      }
+      VK_CHECK(vkEndCommandBuffer(cmd));
+
+      VkFence transfer_fence = vk2::FencePool::get().allocate(true);
+      auto cmd_buf_submit_info = vk2::init::command_buffer_submit_info(cmd);
+      auto submit = init::queue_submit_info(SPAN1(cmd_buf_submit_info), {}, {});
+      VK_CHECK(vkQueueSubmit2KHR(queues_.transfer_queue, 1, &submit, transfer_fence));
+      in_flight_vertex_index_staging_buffers_.emplace(
+          std::make_pair(std::move(res.vertex_staging), std::move(res.index_staging)),
+          transfer_fence);
+    }
+    // staging buffer deleted here but too early
+  }
   create_attachment_imgs();
 }
 
 void VkRender2::on_update() {}
 
 void VkRender2::on_draw() {
+  while (!in_flight_vertex_index_staging_buffers_.empty()) {
+    auto& f = in_flight_vertex_index_staging_buffers_.front();
+    if (vkGetFenceStatus(device_, f.fence) == VK_SUCCESS) {
+      in_flight_vertex_index_staging_buffers_.pop();
+      FencePool::get().free(f.fence);
+    } else {
+      break;
+    }
+  }
   VkCommandBuffer cmd = curr_frame().main_cmd_buffer;
   state.reset(cmd);
 

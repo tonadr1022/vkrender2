@@ -27,9 +27,11 @@ class Buffer {
   [[nodiscard]] void *mapped_data() const { return info_.pMappedData; }
 
   [[nodiscard]] VkBuffer buffer() const { return buffer_; }
+  [[nodiscard]] u64 size() const { return cinfo_.size; }
 
  private:
-  VmaAllocationInfo info_{};
+  BufferCreateInfo cinfo_;
+  VmaAllocationInfo info_;
   VkBuffer buffer_{};
   VmaAllocation allocation_{};
   std::optional<BindlessResourceInfo> resource_info_;

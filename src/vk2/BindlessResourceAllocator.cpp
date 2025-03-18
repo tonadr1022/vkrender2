@@ -120,24 +120,6 @@ VkImageView BindlessResourceAllocator::create_image_view(const ImageViewCreateIn
   return view;
 }
 
-void IndexAllocator::free(u32 idx) { free_list_.push_back(idx); }
-
-u32 IndexAllocator::alloc() {
-  assert(free_list_.size());
-  if (free_list_.empty()) {
-    return UINT32_MAX;
-  }
-  auto ret = free_list_.front();
-  free_list_.pop_back();
-  return ret;
-}
-
-IndexAllocator::IndexAllocator(u32 size) {
-  for (u32 i = 0; i < size; i++) {
-    free_list_.push_back(i);
-  }
-}
-
 BindlessResourceAllocator::~BindlessResourceAllocator() {
   flush_deletions();
   vkDestroyDescriptorPool(device_, main_pool_, nullptr);

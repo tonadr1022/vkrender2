@@ -13,7 +13,10 @@ src/main.cpp
 src/App.cpp
 src/StateTracker.cpp
 src/VkRender2.cpp
+src/ThreadPool.cpp
+src/util/IndexAllocator.cpp
 
+src/vk2/Fence.cpp
 src/vk2/BindlessResourceAllocator.cpp
 src/vk2/Buffer.cpp
 src/vk2/Definitions.cpp

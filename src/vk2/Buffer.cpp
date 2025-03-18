@@ -22,10 +22,12 @@ Buffer::Buffer(const BufferCreateInfo &cinfo) {
     LINFO("making descriptor");
     resource_info_ = BindlessResourceAllocator::get().allocate_storage_buffer_descriptor(buffer_);
   }
+  cinfo_ = cinfo;
 }
 
 Buffer::Buffer(Buffer &&other) noexcept
-    : info_(std::exchange(other.info_, {})),
+    : cinfo_(std::exchange(other.cinfo_, {})),
+      info_(std::exchange(other.info_, {})),
       buffer_(std::exchange(other.buffer_, nullptr)),
       allocation_(std::exchange(other.allocation_, nullptr)),
       resource_info_(std::exchange(other.resource_info_, std::nullopt)) {}
@@ -36,6 +38,7 @@ Buffer &Buffer::operator=(Buffer &&other) noexcept {
   }
   this->~Buffer();
   info_ = std::exchange(other.info_, {});
+  cinfo_ = std::exchange(other.cinfo_, {});
   buffer_ = std::exchange(other.buffer_, nullptr);
   allocation_ = std::exchange(other.allocation_, nullptr);
   resource_info_ = std::exchange(other.resource_info_, std::nullopt);
