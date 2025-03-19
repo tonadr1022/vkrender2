@@ -38,9 +38,10 @@ struct PrimitiveDrawInfo {
 
 struct LoadedSceneData {
   SceneGraphData scene_graph_data;
-  vk2::Buffer vertex_staging;
-  vk2::Buffer index_staging;
   std::vector<vk2::Sampler> samplers;
+  vk2::Buffer* vert_idx_staging;
+  u64 vertices_size;
+  u64 indices_size;
 };
 
 struct LoadedSceneBaseData {

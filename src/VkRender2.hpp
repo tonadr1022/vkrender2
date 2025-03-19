@@ -72,8 +72,7 @@ struct VkRender2 final : public BaseRenderer {
   vk2::PipelineHandle img_pipeline;
   vk2::PipelineHandle draw_pipeline;
   VkPipelineLayout default_pipeline_layout{};
-  std::queue<InFlightResource<std::pair<vk2::Buffer, vk2::Buffer>>>
-      in_flight_vertex_index_staging_buffers_;
+  std::queue<InFlightResource<vk2::Buffer*>> in_flight_staging_buffers_;
 
   std::vector<vk2::Buffer> free_staging_buffers_;
 

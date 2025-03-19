@@ -17,6 +17,7 @@
 #include "vk2/Fence.hpp"
 #include "vk2/Initializers.hpp"
 #include "vk2/PipelineManager.hpp"
+#include "vk2/StagingBufferPool.hpp"
 #include "vk2/Texture.hpp"
 #include "vk2/VkCommon.hpp"
 
@@ -61,8 +62,12 @@ VkRender2::VkRender2(const InitInfo& info)
   allocator_ = vk2::get_device().allocator();
 
   vk2::BindlessResourceAllocator::init(device_, vk2::get_device().allocator());
+  vk2::StagingBufferPool::init();
 
-  main_del_q.push([]() { vk2::PipelineManager::shutdown(); });
+  main_del_q.push([]() {
+    vk2::PipelineManager::shutdown();
+    vk2::StagingBufferPool::destroy();
+  });
 
   vk2::PipelineManager::init(device_);
 
@@ -94,18 +99,19 @@ VkRender2::VkRender2(const InitInfo& info)
       // .depth_stencil = GraphicsPipelineCreateInfo::depth_disable(),
   });
 
-  auto res = std::move(gfx::load_gltf("/home/tony/models/Models/Sponza/glTF/Sponza.gltf").value());
-  // auto res = std::move(gfx::load_gltf(resource_dir / "models/Cube/glTF/Cube.gltf").value());
+  // auto res =
+  // std::move(gfx::load_gltf("/home/tony/models/Models/Sponza/glTF/Sponza.gltf").value());
+  auto res = std::move(gfx::load_gltf(resource_dir / "models/Cube/glTF/Cube.gltf").value());
   cube = LoadedScene{
       std::move(res.scene_graph_data),
       vk2::Buffer{vk2::BufferCreateInfo{
-          .size = res.vertex_staging.size(),
+          .size = res.vertices_size,
           .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
           .alloc_flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
           .buffer_device_address = true,
       }},
       vk2::Buffer{vk2::BufferCreateInfo{
-          .size = res.index_staging.size(),
+          .size = res.indices_size,
           .usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
       }},
       std::move(res.samplers)};
@@ -120,20 +126,20 @@ VkRender2::VkRender2(const InitInfo& info)
         VkBufferCopy2KHR copy{.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2_KHR,
                               .srcOffset = 0,
                               .dstOffset = 0,
-                              .size = res.vertex_staging.size()};
+                              .size = res.vertices_size};
         VkCopyBufferInfo2KHR copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
-                                       .srcBuffer = res.vertex_staging.buffer(),
+                                       .srcBuffer = res.vert_idx_staging->buffer(),
                                        .dstBuffer = cube->vertex_buffer.buffer(),
                                        .regionCount = 1,
                                        .pRegions = &copy};
         vkCmdCopyBuffer2KHR(cmd, &copy_info);
         {
           VkBufferCopy2KHR copy{.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2_KHR,
-                                .srcOffset = 0,
+                                .srcOffset = res.vertices_size,
                                 .dstOffset = 0,
-                                .size = res.index_staging.size()};
+                                .size = res.indices_size};
           VkCopyBufferInfo2KHR copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
-                                         .srcBuffer = res.index_staging.buffer(),
+                                         .srcBuffer = res.vert_idx_staging->buffer(),
                                          .dstBuffer = cube->index_buffer.buffer(),
                                          .regionCount = 1,
                                          .pRegions = &copy};
@@ -159,9 +165,7 @@ VkRender2::VkRender2(const InitInfo& info)
       auto submit = init::queue_submit_info(SPAN1(cmd_buf_submit_info), {}, SPAN1(wait_info));
       VK_CHECK(vkQueueSubmit2KHR(queues_.transfer_queue, 1, &submit, transfer_fence));
       transfer_queue_manager_->submit_signaled_ = true;
-      in_flight_vertex_index_staging_buffers_.emplace(
-          std::make_pair(std::move(res.vertex_staging), std::move(res.index_staging)),
-          transfer_fence);
+      in_flight_staging_buffers_.emplace(res.vert_idx_staging, transfer_fence);
     }
     // staging buffer deleted here but too early
   }
@@ -179,11 +183,12 @@ void VkRender2::on_update() {
 }
 
 void VkRender2::on_draw() {
-  while (!in_flight_vertex_index_staging_buffers_.empty()) {
-    auto& f = in_flight_vertex_index_staging_buffers_.front();
+  while (!in_flight_staging_buffers_.empty()) {
+    auto& f = in_flight_staging_buffers_.front();
     if (vkGetFenceStatus(device_, f.fence) == VK_SUCCESS) {
-      in_flight_vertex_index_staging_buffers_.pop();
+      StagingBufferPool::get().free(f.data);
       FencePool::get().free(f.fence);
+      in_flight_staging_buffers_.pop();
     } else {
       break;
     }

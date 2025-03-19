@@ -121,7 +121,7 @@ StateTracker& StateTracker::queue_transfer_buffer(StateTracker& dst_tracker,
                                                   u32 src_queue, u32 dst_queue, u64 offset,
                                                   u64 size) {
   VkBufferMemoryBarrier2 barrier{
-      .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+      .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
       .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
       .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
       .srcQueueFamilyIndex = src_queue,
