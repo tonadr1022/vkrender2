@@ -1,5 +1,7 @@
 #pragma once
 
+#include <filesystem>
+
 #include "Camera.hpp"
 #include "Common.hpp"
 struct GLFWwindow;
@@ -25,6 +27,7 @@ struct App {
   CameraController cam;
   GLFWwindow* window{};
   bool hide_mouse{false};
+  std::filesystem::path resource_dir;
 
  private:
   void shutdown() const;

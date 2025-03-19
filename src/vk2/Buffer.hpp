@@ -39,6 +39,9 @@ class Buffer {
   VkBuffer buffer_{};
   VkDeviceAddress buffer_address_{};
   VmaAllocation allocation_{};
+
+  // TODO: private
+ public:
   std::optional<BindlessResourceInfo> resource_info_;
 };
 

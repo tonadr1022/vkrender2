@@ -4,7 +4,30 @@
 #include "Logger.hpp"
 #include "VkRender2.hpp"
 
+namespace {
+
+std::optional<std::filesystem::path> get_resource_dir() {
+  auto curr_path = std::filesystem::current_path();
+  while (curr_path.has_parent_path()) {
+    auto resource_path = curr_path / "resources";
+    if (std::filesystem::exists(resource_path)) {
+      return resource_path;
+    }
+    curr_path = curr_path.parent_path();
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
 App::App(const InitInfo& info) : cam(cam_data, .1) {
+  auto resource_dir_ret = get_resource_dir();
+  if (!resource_dir_ret.has_value()) {
+    LCRITICAL("failed to find resource directory");
+    exit(1);
+  }
+  resource_dir = resource_dir_ret.value();
+
   if (!glfwInit()) {
     LCRITICAL("glfwInit failed");
     exit(1);
@@ -22,20 +45,28 @@ App::App(const InitInfo& info) : cam(cam_data, .1) {
     LCRITICAL("Failed to create window");
     exit(1);
   }
+
   glfwSetWindowUserPointer(window, this);
   glfwSetKeyCallback(window, []([[maybe_unused]] GLFWwindow* win, [[maybe_unused]] int key,
                                 [[maybe_unused]] int scancode, [[maybe_unused]] int action,
                                 [[maybe_unused]] int mods) {
     ((App*)glfwGetWindowUserPointer(win))->on_key_event(key, scancode, action, mods);
   });
+
   glfwSetCursorPosCallback(window, [](GLFWwindow* win, double xpos, double ypos) {
     ((App*)glfwGetWindowUserPointer(win))->on_cursor_event({xpos, ypos});
   });
 
-  VkRender2::init(VkRender2::InitInfo{.window = window, .name = info.name, .vsync = info.vsync});
+  VkRender2::init(VkRender2::InitInfo{
+      .window = window, .resource_dir = resource_dir, .name = info.name, .vsync = info.vsync});
 }
 void App::run() {
   float last_time{};
+  // VkRender2::get().load_scene("/home/tony/models/Models/Sponza/glTF/Sponza.gltf");
+  VkRender2::get().load_scene(
+      "/home/tony/models/Models/MetalRoughSpheres/glTF/MetalRoughSpheres.gltf");
+  // VkRender2::get().load_scene("/home/tony/models/Models/ABeautifulGame/glTF/ABeautifulGame.gltf");
+  // VkRender2::get().load_scene(resource_dir / "models/Cube/glTF/Cube.gltf");
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
     float curr_t = glfwGetTime();

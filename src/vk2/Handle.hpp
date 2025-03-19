@@ -11,6 +11,7 @@ struct Handle {
   friend constexpr bool operator!=(Handle a, Handle b) { return a.value_ != b.value_; }
   friend constexpr bool operator<(Handle a, Handle b) { return a.value_ < b.value_; }
   constexpr HandleT operator()() const { return value_; }
+  [[nodiscard]] constexpr HandleT get() const { return value_; }
   explicit operator bool() { return value_ != 0; }
 
  private:

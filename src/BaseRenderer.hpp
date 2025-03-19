@@ -2,6 +2,7 @@
 
 #include <vulkan/vulkan_core.h>
 
+#include <filesystem>
 #include <memory>
 
 #include "Common.hpp"
@@ -82,6 +83,7 @@ class BaseRenderer {
  public:
   struct InitInfo {
     GLFWwindow* window;
+    std::filesystem::path resource_dir;
     const char* name = "App";
     bool vsync{true};
     VkPresentModeKHR present_mode{VK_PRESENT_MODE_FIFO_KHR};
@@ -117,6 +119,7 @@ class BaseRenderer {
   std::vector<PerFrameData> per_frame_data_;
   PerFrameData& curr_frame();
   std::unique_ptr<QueueManager> transfer_queue_manager_;
+  std::filesystem::path resource_dir_;
 
   // begin non owning
   VkDevice device_;

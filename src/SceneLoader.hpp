@@ -15,6 +15,7 @@ struct Vertex {
   float uv_x;
   vec3 normal;
   float uv_y;
+  // vec2 uv;
 };
 
 struct Box3D {
@@ -37,16 +38,17 @@ struct PrimitiveDrawInfo {
 // };
 
 struct LoadedSceneData {
-  SceneGraphData scene_graph_data;
+  SceneLoadData scene_graph_data;
   std::vector<vk2::Sampler> samplers;
+  std::vector<PrimitiveDrawInfo> mesh_draw_infos;
   vk2::Buffer* vert_idx_staging;
   u64 vertices_size;
   u64 indices_size;
 };
 
 struct LoadedSceneBaseData {
-  SceneGraphData scene_graph_data;
-  std::vector<PrimitiveDrawInfo> primitive_draw_infos;
+  SceneLoadData scene_graph_data;
+  std::vector<PrimitiveDrawInfo> mesh_draw_infos;
   std::vector<Vertex> vertices;
   std::vector<u32> indices;
   std::vector<vk2::Sampler> samplers;

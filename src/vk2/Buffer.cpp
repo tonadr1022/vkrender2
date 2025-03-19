@@ -20,7 +20,11 @@ Buffer::Buffer(const BufferCreateInfo &cinfo, std::string name) : name_(std::mov
   }
   VkBufferCreateInfo buffer_create_info{
       .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = cinfo.size, .usage = usage};
-  VmaAllocationCreateInfo alloc_info{.flags = cinfo.alloc_flags, .usage = cinfo.mem_usage};
+  auto alloc_flags = cinfo.alloc_flags;
+  if (cinfo.buffer_device_address) {
+    alloc_flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+  }
+  VmaAllocationCreateInfo alloc_info{.flags = alloc_flags, .usage = cinfo.mem_usage};
   vk2::get_device().create_buffer(&buffer_create_info, &alloc_info, buffer_, allocation_, info_);
   assert(info_.size);
   if (cinfo.usage & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) {

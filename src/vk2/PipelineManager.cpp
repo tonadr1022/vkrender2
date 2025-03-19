@@ -28,9 +28,6 @@ constexpr VkStencilOpState convert_stencil_op_state(
                           .reference = state.reference};
 }
 constexpr VkLogicOp convert_logic_op(LogicOp op) { return static_cast<VkLogicOp>(op); }
-// constexpr VkColorComponentFlags convert_color_component_flags(ColorComponentFlagBits flags) {
-//   return flags;
-// }
 
 constexpr VkColorComponentFlags convert_color_component_flags(ColorComponentFlags flags) {
   return flags;

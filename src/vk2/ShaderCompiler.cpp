@@ -475,6 +475,7 @@ bool compile_glsl_to_spirv(std::string path, VkShaderStageFlagBits stage,
   shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_2);
   shader.setEnvTarget(glslang::EShTargetLanguage::EShTargetSpv, glslang::EShTargetSpv_1_5);
   std::string preamble = "#extension GL_GOOGLE_include_directive : enable\n";
+  // preamble += "";
   shader.setPreamble(preamble.c_str());
   shader.setOverrideVersion(460);
 

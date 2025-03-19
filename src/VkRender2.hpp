@@ -27,13 +27,11 @@ struct CmdEncoder {
  private:
   VkCommandBuffer cmd_;
 };
-template <typename T>
-struct InFlightResource {
-  T data;
-  VkFence fence;
-};
 
-// yes everything is public, this is a wrapper for a main.cpp
+struct Scene {};
+
+VK2_DEFINE_HANDLE(Scene);
+
 struct VkRender2 final : public BaseRenderer {
   static VkRender2& get();
   static void init(const InitInfo& info);
@@ -41,35 +39,55 @@ struct VkRender2 final : public BaseRenderer {
   explicit VkRender2(const InitInfo& info);
   ~VkRender2() override;
 
+  SceneHandle load_scene(const std::filesystem::path& path);
+  void submit_static(SceneHandle scene, mat4 transform = mat4{1});
+
  private:
+  template <typename T>
+  struct InFlightResource {
+    T data;
+    VkFence fence{};
+  };
+
   void on_draw(const SceneDrawInfo& info) override;
   void on_gui() override;
   void on_resize() override;
   void create_attachment_imgs();
   void set_viewport_and_scissor(VkCommandBuffer cmd, VkExtent2D extent);
 
-  // TODO: refactor
-  struct LoadedScene {
-    SceneGraphData scene_graph_data;
-    vk2::Buffer vertex_buffer;
-    vk2::Buffer index_buffer;
-    std::vector<vk2::Sampler> samplers;
+  struct InstanceData {
+    mat4 transform;
   };
 
-  std::optional<LoadedScene> cube_;
+  // TODO: refactor
+  struct SceneGPUResources {
+    vk2::Buffer vertex_buffer;
+    vk2::Buffer index_buffer;
+    vk2::Buffer draw_indirect_buffer;
+    vk2::Buffer instance_buffer;
+    std::vector<vk2::Sampler> samplers;
+    u32 draw_cnt{};
+  };
+
+  struct LoadedScene {
+    SceneLoadData scene_graph_data;
+    std::unique_ptr<SceneGPUResources> resources;
+  };
+
+  std::vector<LoadedScene> loaded_scenes_;
+
   StateTracker state_;
   StateTracker transfer_q_state_;
   std::optional<vk2::Texture> depth_img_;
   std::optional<vk2::Texture> img_;
 
   vk2::DeletionQueue main_del_q_;
-  std::filesystem::path resource_dir_;
   std::filesystem::path shader_dir_;
   [[nodiscard]] std::string get_shader_path(const std::string& path) const;
   vk2::PipelineHandle img_pipeline_;
   vk2::PipelineHandle draw_pipeline_;
   VkPipelineLayout default_pipeline_layout_{};
-  std::queue<InFlightResource<vk2::Buffer*>> in_flight_staging_buffers_;
+  std::queue<InFlightResource<vk2::Buffer*>> pending_buffer_transfers_;
 
   std::vector<vk2::Buffer> free_staging_buffers_;
 

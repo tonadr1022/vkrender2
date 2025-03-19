@@ -30,7 +30,7 @@ debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
   } else {
     LERROR("[{}: {}]\n{}\n", ms, mt, pCallbackData->pMessage);
   }
-  // exit(1);
+  exit(1);
 
   return VK_FALSE;
 }
@@ -40,7 +40,8 @@ debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
 }  // namespace
 
 BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info)
-    : window_(info.window) {
+    : window_(info.window), resource_dir_(info.resource_dir) {
+  assert(resource_dir_.string().length());
   if (!info.window) {
     LCRITICAL("cannot initialize renderer, window not provided");
     exit(1);

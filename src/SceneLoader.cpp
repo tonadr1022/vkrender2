@@ -8,6 +8,7 @@
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
 
+#include "Scene.hpp"
 #include "vk2/StagingBufferPool.hpp"
 
 // #include "ThreadPool.hpp"
@@ -80,20 +81,24 @@ u32 populate_vertices(const fastgltf::Primitive& primitive, const fastgltf::Asse
                       std::vector<Vertex>& vertices) {
   const auto* pos_attrib = primitive.findAttribute("POSITION");
   if (pos_attrib == primitive.attributes.end()) {
+    assert(0);
     return 0;
   }
   const auto& pos_accessor = gltf.accessors[pos_attrib->accessorIndex];
-  vertices.resize(vertices.size() + pos_accessor.count);
+  vertices.reserve(vertices.size() + pos_accessor.count);
   size_t i = 0;
   for (glm::vec3 pos : fastgltf::iterateAccessor<glm::vec3>(gltf, pos_accessor)) {
-    vertices[i++].pos = pos;
+    vertices.emplace_back(Vertex{.pos = pos});
   }
 
   const auto* uv_attrib = primitive.findAttribute("TEXCOORD_0");
   if (uv_attrib != primitive.attributes.end()) {
     const auto& accessor = gltf.accessors[uv_attrib->accessorIndex];
+
+    assert(accessor.count == pos_accessor.count);
     i = 0;
     for (glm::vec2 uv : fastgltf::iterateAccessor<glm::vec2>(gltf, accessor)) {
+      // vertices[i++].uv = uv;
       vertices[i].uv_x = uv.x;
       vertices[i++].uv_y = uv.y;
     }
@@ -103,6 +108,7 @@ u32 populate_vertices(const fastgltf::Primitive& primitive, const fastgltf::Asse
   if (normal_attrib != primitive.attributes.end()) {
     const auto& normal_accessor = gltf.accessors[normal_attrib->accessorIndex];
     i = 0;
+    assert(normal_accessor.count == pos_accessor.count);
     for (glm::vec3 normal : fastgltf::iterateAccessor<glm::vec3>(gltf, normal_accessor)) {
       vertices[i++].normal = normal;
     }
@@ -159,15 +165,32 @@ void update_node_transforms(std::vector<NodeData>& nodes, std::vector<u32>& root
   }
 }
 
-void load_scene_graph_data(SceneGraphData& result, fastgltf::Asset& gltf) {
+void load_scene_graph_data(SceneLoadData& result, fastgltf::Asset& gltf) {
   ZoneScoped;
   // aggregate nodes
+  std::vector<u32> prim_offsets_of_meshes(gltf.meshes.size());
+  {
+    u32 offset = 0;
+    for (u32 mesh_idx = 0; mesh_idx < gltf.meshes.size(); mesh_idx++) {
+      prim_offsets_of_meshes[mesh_idx] = offset;
+      offset += gltf.meshes[mesh_idx].primitives.size();
+    }
+  }
   result.node_datas.reserve(gltf.nodes.size());
-  for (const fastgltf::Node& gltf_node : gltf.nodes) {
+  for (u32 node_idx = 0; node_idx < gltf.nodes.size(); node_idx++) {
+    fastgltf::Node& gltf_node = gltf.nodes[node_idx];
     NodeData new_node;
-    new_node.mesh_idx = gltf_node.meshIndex.value_or(NodeData::null_idx);
+    if (auto mesh_idx = gltf_node.meshIndex.value_or(NodeData::null_idx);
+        mesh_idx != NodeData::null_idx) {
+      u32 prim_idx = 0;
+      for (const auto& primitive : gltf.meshes[mesh_idx].primitives) {
+        new_node.meshes.emplace_back(
+            NodeData::MeshData{.material_id = static_cast<u32>(primitive.materialIndex.value_or(0)),
+                               .mesh_idx = prim_offsets_of_meshes[mesh_idx] + prim_idx++});
+      }
+    }
     if (gltf_node.meshIndex.has_value()) {
-      result.mesh_node_indices.emplace_back(new_node.mesh_idx);
+      result.mesh_node_indices.emplace_back(node_idx);
     }
     new_node.name = gltf_node.name;
     set_node_transform_from_gltf_node(new_node, gltf_node);
@@ -194,6 +217,7 @@ void load_scene_graph_data(SceneGraphData& result, fastgltf::Asset& gltf) {
   }
   update_node_transforms(result.node_datas, result.root_node_indices);
 }
+
 void load_samplers(const fastgltf::Asset& gltf, std::vector<vk2::Sampler>& samplers) {
   ZoneScoped;
   samplers.reserve(gltf.samplers.size());
@@ -254,7 +278,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
   for (const auto& m : gltf.meshes) {
     total_num_gltf_primitives += m.primitives.size();
   }
-  result->primitive_draw_infos.resize(total_num_gltf_primitives);
+  result->mesh_draw_infos.resize(total_num_gltf_primitives);
 
   u32 primitive_idx{0};
   u32 mesh_idx{0};
@@ -264,12 +288,11 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
       u32 index_count = populate_indices(gltf_prim, gltf, result->indices);
       u32 first_vertex = result->vertices.size();
       u32 vertex_count = populate_vertices(gltf_prim, gltf, result->vertices);
-      result->primitive_draw_infos[primitive_idx] = {.first_index = first_index,
-                                                     .index_count = index_count,
-                                                     .first_vertex = first_vertex,
-                                                     .vertex_count = vertex_count,
-                                                     .mesh_idx = mesh_idx};
-      primitive_idx++;
+      result->mesh_draw_infos[primitive_idx++] = {.first_index = first_index,
+                                                  .index_count = index_count,
+                                                  .first_vertex = first_vertex,
+                                                  .vertex_count = vertex_count,
+                                                  .mesh_idx = mesh_idx};
     }
     mesh_idx++;
   };
@@ -299,6 +322,7 @@ std::optional<LoadedSceneData> load_gltf(const std::filesystem::path& path) {
   return LoadedSceneData{
       .scene_graph_data = std::move(base_scene_data.scene_graph_data),
       .samplers = std::move(base_scene_data.samplers),
+      .mesh_draw_infos = std::move(base_scene_data.mesh_draw_infos),
       .vert_idx_staging = staging,
       .vertices_size = vertices_size,
       .indices_size = indices_size,
