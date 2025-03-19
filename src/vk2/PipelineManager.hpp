@@ -190,7 +190,7 @@ struct GraphicsPipelineCreateInfo {
     PolygonMode polygon_mode{PolygonMode::Fill};
     CullMode cull_mode{CullMode::None};
     FrontFace front_face{FrontFace::CounterClockwise};
-    bool depth_clamp{true};
+    bool depth_clamp{false};
     bool depth_bias{false};
     bool rasterize_discard_enable{false};
     float line_width{1.};
@@ -261,6 +261,7 @@ struct GraphicsPipelineCreateInfo {
   Multisample multisample{};
   DepthStencil depth_stencil{};
 
+  static constexpr DepthStencil depth_disable() { return DepthStencil{.depth_test_enable = false}; }
   static constexpr DepthStencil depth_enable(bool write_enable, CompareOp op) {
     return DepthStencil{
         .depth_test_enable = true, .depth_write_enable = write_enable, .depth_compare_op = op};

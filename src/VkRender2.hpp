@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <queue>
 
 #include "App.hpp"
 #include "Scene.hpp"

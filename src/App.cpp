@@ -30,7 +30,7 @@ debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
   } else {
     LERROR("[{}: {}]\n{}\n", ms, mt, pCallbackData->pMessage);
   }
-  exit(1);
+  // exit(1);
 
   return VK_FALSE;
 }

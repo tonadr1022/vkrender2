@@ -8,7 +8,7 @@
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
 
-#include "ThreadPool.hpp"
+// #include "ThreadPool.hpp"
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/quaternion.hpp>
@@ -282,7 +282,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
 }
 
 std::optional<LoadedSceneData> load_gltf(const std::filesystem::path& path) {
-  LINFO("{}",path.string());
+  LINFO("{}", path.string());
   auto base_scene_data_ret = load_gltf_base(path);
   if (!base_scene_data_ret.has_value()) {
     return {};
@@ -290,16 +290,16 @@ std::optional<LoadedSceneData> load_gltf(const std::filesystem::path& path) {
   LoadedSceneBaseData& base_scene_data = base_scene_data_ret.value();
   u64 vertices_size = base_scene_data.vertices.size() * sizeof(Vertex);
   u64 indices_size = base_scene_data.indices.size() * sizeof(u32);
-  vk2::Buffer vertex_staging = vk2::create_staging_buffer(vertices_size + indices_size);
-  vk2::Buffer index_staging = vk2::create_staging_buffer(vertices_size + indices_size);
+  vk2::Buffer vertex_staging = vk2::create_staging_buffer(vertices_size);
+  vk2::Buffer index_staging = vk2::create_staging_buffer(indices_size);
   memcpy(vertex_staging.mapped_data(), base_scene_data.vertices.data(), vertices_size);
-  memcpy((char*)vertex_staging.mapped_data() + vertices_size, base_scene_data.indices.data(),
-         indices_size);
+  memcpy(index_staging.mapped_data(), base_scene_data.indices.data(), indices_size);
+  // memcpy((char*)vertex_staging.mapped_data() + vertices_size, base_scene_data.indices.data(),
+  //        indices_size);
 
   return LoadedSceneData{.vertex_staging = std::move(vertex_staging),
                          .index_staging = std::move(index_staging),
                          .samplers = std::move(base_scene_data.samplers)};
-  return std::nullopt;
 }
 
 }  // namespace gfx

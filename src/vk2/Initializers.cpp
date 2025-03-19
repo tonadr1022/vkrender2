@@ -127,7 +127,7 @@ VkRenderingAttachmentInfo rendering_attachment_info(vk2::TextureView& texture, V
   return {.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
           .imageView = texture.view(),
           .imageLayout = layout,
-          .loadOp = clear_value ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+          .loadOp = clear_value ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD,
           .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
           .clearValue = clear_value != nullptr ? *clear_value : VkClearValue{}};
 }

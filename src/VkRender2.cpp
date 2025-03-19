@@ -79,7 +79,9 @@ VkRender2::VkRender2(const InitInfo& info)
       .fragment_path = get_shader_path("debug/basic.frag"),
       .layout = default_pipeline_layout,
       .rendering = {{{img->format()}}, depth_img->format()},
-      .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::Less),
+      .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::Always),
+      // .rendering = {{{img->format()}}},
+      // .depth_stencil = GraphicsPipelineCreateInfo::depth_disable(),
   });
 
   auto res = std::move(gfx::load_gltf(resource_dir / "models/Cube/glTF/Cube.gltf").value());
@@ -116,18 +118,41 @@ VkRender2::VkRender2(const InitInfo& info)
                                        .regionCount = 1,
                                        .pRegions = &copy};
         vkCmdCopyBuffer2KHR(cmd, &copy_info);
+        {
+          VkBufferCopy2KHR copy{.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2_KHR,
+                                .srcOffset = 0,
+                                .dstOffset = 0,
+                                .size = res.index_staging.size()};
+          VkCopyBufferInfo2KHR copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+                                         .srcBuffer = res.index_staging.buffer(),
+                                         .dstBuffer = cube->index_buffer.buffer(),
+                                         .regionCount = 1,
+                                         .pRegions = &copy};
+          vkCmdCopyBuffer2KHR(cmd, &copy_info);
+        }
+
         // TODO: extract
-        VkBufferMemoryBarrier2 barrier{.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-                                       .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                                       .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
-                                       .srcQueueFamilyIndex = queues_.transfer_queue_idx,
-                                       .dstQueueFamilyIndex = queues_.graphics_queue_idx,
-                                       .buffer = cube->vertex_buffer.buffer(),
-                                       .offset = 0,
-                                       .size = VK_WHOLE_SIZE};
+        VkBufferMemoryBarrier2 barriers[] = {
+            VkBufferMemoryBarrier2{.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+                                   .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                                   .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+                                   .srcQueueFamilyIndex = queues_.transfer_queue_idx,
+                                   .dstQueueFamilyIndex = queues_.graphics_queue_idx,
+                                   .buffer = cube->vertex_buffer.buffer(),
+                                   .offset = 0,
+                                   .size = VK_WHOLE_SIZE},
+            VkBufferMemoryBarrier2{.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+                                   .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                                   .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+                                   .srcQueueFamilyIndex = queues_.transfer_queue_idx,
+                                   .dstQueueFamilyIndex = queues_.graphics_queue_idx,
+                                   .buffer = cube->index_buffer.buffer(),
+                                   .offset = 0,
+                                   .size = VK_WHOLE_SIZE}};
+
         VkDependencyInfo info{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                              .bufferMemoryBarrierCount = 1,
-                              .pBufferMemoryBarriers = &barrier,
+                              .bufferMemoryBarrierCount = COUNTOF(barriers),
+                              .pBufferMemoryBarriers = barriers,
                               .imageMemoryBarrierCount = 0,
                               .pImageMemoryBarriers = nullptr};
         vkCmdPipelineBarrier2KHR(cmd, &info);
@@ -172,6 +197,7 @@ void VkRender2::on_draw() {
 
   vk2::BindlessResourceAllocator::get().set_frame_num(curr_frame_num());
   vk2::BindlessResourceAllocator::get().flush_deletions();
+
   state.transition(img->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                    VK_ACCESS_2_MEMORY_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
   state.barrier();
@@ -191,16 +217,18 @@ void VkRender2::on_draw() {
   {
     state.transition(img->image(), VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
     state.transition(depth_img->image(), VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
                      VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT);
     state.barrier();
     auto dims = window_dims();
+    // VkClearValue clear{.color = {{.1, .1, .1, 1.}}};
+    VkClearValue depth_clear{.depthStencil = {.depth = 0.f}};
     VkRenderingAttachmentInfo color_attachment =
         init::rendering_attachment_info(img->view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    auto depth_att = init::rendering_attachment_info(depth_img->view(),
-                                                     VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+    auto depth_att = init::rendering_attachment_info(
+        depth_img->view(), VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, &depth_clear);
     auto info = init::rendering_info({dims.x, dims.y}, &color_attachment, &depth_att);
     vkCmdBeginRenderingKHR(cmd, &info);
     set_viewport_and_scissor(cmd, {dims.x, dims.y});
@@ -215,10 +243,10 @@ void VkRender2::on_draw() {
     ctx.push_constants(default_pipeline_layout, sizeof(pc), &pc);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                       PipelineManager::get().get(draw_pipeline)->pipeline);
+    // TODO: bind once?
     ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, default_pipeline_layout, &main_set, 0);
-    // // TODO: LOL
     vkCmdBindIndexBuffer(cmd, cube->index_buffer.buffer(), 0, VK_INDEX_TYPE_UINT32);
-    vkCmdDrawIndexed(cmd, 36, 1, 0, 0, 0);
+    vkCmdDrawIndexed(cmd, cube->index_buffer.size() / sizeof(u32), 1, 0, 0, 0);
     vkCmdEndRenderingKHR(cmd);
   }
 

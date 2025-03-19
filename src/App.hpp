@@ -2,6 +2,8 @@
 
 #include <vulkan/vulkan_core.h>
 
+#include <memory>
+
 #include "Common.hpp"
 #include "StateTracker.hpp"
 #include "VkBootstrap.h"
