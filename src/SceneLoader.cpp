@@ -92,7 +92,7 @@ u32 populate_vertices(const fastgltf::Primitive& primitive, const fastgltf::Asse
     const auto& accessor = gltf.accessors[uv_attrib->accessorIndex];
     i = 0;
     for (glm::vec2 uv : fastgltf::iterateAccessor<glm::vec2>(gltf, accessor)) {
-      vertices[i++].uv_x = uv.x;
+      vertices[i].uv_x = uv.x;
       vertices[i++].uv_y = uv.y;
     }
   }
@@ -245,44 +245,44 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
   result = LoadedSceneBaseData{};
   load_samplers(gltf, result->samplers);
 
-  std::array<std::future<void>, 2> scene_load_futures;
-  u32 scene_load_future_idx = 0;
-  scene_load_futures[scene_load_future_idx++] = threads::pool.submit_task([&]() {
-    size_t total_num_gltf_primitives = 0;
-    for (const auto& m : gltf.meshes) {
-      total_num_gltf_primitives += m.primitives.size();
-    }
-    result->primitive_draw_infos.resize(total_num_gltf_primitives);
-
-    u32 primitive_idx{0};
-    u32 mesh_idx{0};
-    for (const auto& gltf_mesh : gltf.meshes) {
-      for (const auto& gltf_prim : gltf_mesh.primitives) {
-        u32 first_index = result->indices.size();
-        u32 index_count = populate_indices(gltf_prim, gltf, result->indices);
-        u32 first_vertex = result->vertices.size();
-        u32 vertex_count = populate_vertices(gltf_prim, gltf, result->vertices);
-        result->primitive_draw_infos[primitive_idx] = {.first_index = first_index,
-                                                       .index_count = index_count,
-                                                       .first_vertex = first_vertex,
-                                                       .vertex_count = vertex_count,
-                                                       .mesh_idx = mesh_idx};
-        primitive_idx++;
-      }
-      mesh_idx++;
-    }
-  });
-  scene_load_futures[scene_load_future_idx++] =
-      threads::pool.submit_task([&]() { load_scene_graph_data(result->scene_graph_data, gltf); });
-
-  for (auto& f : scene_load_futures) {
-    f.get();
+  // std::array<std::future<void>, 2> scene_load_futures;
+  // u32 scene_load_future_idx = 0;
+  // scene_load_futures[scene_load_future_idx++] = threads::pool.submit_task([&]() { });
+  size_t total_num_gltf_primitives = 0;
+  for (const auto& m : gltf.meshes) {
+    total_num_gltf_primitives += m.primitives.size();
   }
+  result->primitive_draw_infos.resize(total_num_gltf_primitives);
+
+  u32 primitive_idx{0};
+  u32 mesh_idx{0};
+  for (const auto& gltf_mesh : gltf.meshes) {
+    for (const auto& gltf_prim : gltf_mesh.primitives) {
+      u32 first_index = result->indices.size();
+      u32 index_count = populate_indices(gltf_prim, gltf, result->indices);
+      u32 first_vertex = result->vertices.size();
+      u32 vertex_count = populate_vertices(gltf_prim, gltf, result->vertices);
+      result->primitive_draw_infos[primitive_idx] = {.first_index = first_index,
+                                                     .index_count = index_count,
+                                                     .first_vertex = first_vertex,
+                                                     .vertex_count = vertex_count,
+                                                     .mesh_idx = mesh_idx};
+      primitive_idx++;
+    }
+    mesh_idx++;
+  };
+  // scene_load_futures[scene_load_future_idx++] = threads::pool.submit_task([&result, &gltf]() {});
+
+  load_scene_graph_data(result->scene_graph_data, gltf);
+  // for (auto& f : scene_load_futures) {
+  //   f.get();
+  // }
 
   return result;
 }
 
 std::optional<LoadedSceneData> load_gltf(const std::filesystem::path& path) {
+  LINFO("{}",path.string());
   auto base_scene_data_ret = load_gltf_base(path);
   if (!base_scene_data_ret.has_value()) {
     return {};

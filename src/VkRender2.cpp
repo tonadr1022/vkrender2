@@ -10,6 +10,8 @@
 #include "GLFW/glfw3.h"
 #include "Logger.hpp"
 #include "SceneLoader.hpp"
+#include "glm/ext/matrix_clip_space.hpp"
+#include "glm/ext/matrix_transform.hpp"
 #include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Device.hpp"
 #include "vk2/Fence.hpp"
@@ -67,6 +69,8 @@ VkRender2::VkRender2(const InitInfo& info)
   VK_CHECK(vkCreatePipelineLayout(device_, &pipeline_info, nullptr, &default_pipeline_layout));
   main_del_q.push([this]() { vkDestroyPipelineLayout(device_, default_pipeline_layout, nullptr); });
 
+  create_attachment_imgs();
+
   img_pipeline = PipelineManager::get().load_compute_pipeline(
       {get_shader_path("debug/clear_img.comp"), default_pipeline_layout});
 
@@ -74,6 +78,7 @@ VkRender2::VkRender2(const InitInfo& info)
       .vertex_path = get_shader_path("debug/basic.vert"),
       .fragment_path = get_shader_path("debug/basic.frag"),
       .layout = default_pipeline_layout,
+      .rendering = {{{img->format()}}, depth_img->format()},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::Less),
   });
 
@@ -84,7 +89,9 @@ VkRender2::VkRender2(const InitInfo& info)
       vk2::Buffer{vk2::BufferCreateInfo{
           .size = res.vertex_staging.size(),
           .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-          .alloc_flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT}},
+          .alloc_flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+          .buffer_device_address = true,
+      }},
       vk2::Buffer{vk2::BufferCreateInfo{
           .size = res.index_staging.size(),
           .usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -118,20 +125,29 @@ VkRender2::VkRender2(const InitInfo& info)
                                        .buffer = cube->vertex_buffer.buffer(),
                                        .offset = 0,
                                        .size = VK_WHOLE_SIZE};
+        VkDependencyInfo info{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                              .bufferMemoryBarrierCount = 1,
+                              .pBufferMemoryBarriers = &barrier,
+                              .imageMemoryBarrierCount = 0,
+                              .pImageMemoryBarriers = nullptr};
+        vkCmdPipelineBarrier2KHR(cmd, &info);
       }
       VK_CHECK(vkEndCommandBuffer(cmd));
 
       VkFence transfer_fence = vk2::FencePool::get().allocate(true);
       auto cmd_buf_submit_info = vk2::init::command_buffer_submit_info(cmd);
-      auto submit = init::queue_submit_info(SPAN1(cmd_buf_submit_info), {}, {});
+
+      auto wait_info = vk2::init::semaphore_submit_info(transfer_queue_manager_->submit_semaphore_,
+                                                        VK_PIPELINE_STAGE_2_TRANSFER_BIT);
+      auto submit = init::queue_submit_info(SPAN1(cmd_buf_submit_info), {}, SPAN1(wait_info));
       VK_CHECK(vkQueueSubmit2KHR(queues_.transfer_queue, 1, &submit, transfer_fence));
+      transfer_queue_manager_->submit_signaled_ = true;
       in_flight_vertex_index_staging_buffers_.emplace(
           std::make_pair(std::move(res.vertex_staging), std::move(res.index_staging)),
           transfer_fence);
     }
     // staging buffer deleted here but too early
   }
-  create_attachment_imgs();
 }
 
 void VkRender2::on_update() {}
@@ -156,8 +172,8 @@ void VkRender2::on_draw() {
 
   vk2::BindlessResourceAllocator::get().set_frame_num(curr_frame_num());
   vk2::BindlessResourceAllocator::get().flush_deletions();
-  state.queue_transition(img->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                         VK_ACCESS_2_MEMORY_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
+  state.transition(img->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                   VK_ACCESS_2_MEMORY_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
   state.barrier();
 
   {
@@ -165,29 +181,80 @@ void VkRender2::on_draw() {
       uint idx;
       float t;
     } pc{img->view().storage_img_resource().handle, static_cast<f32>(glfwGetTime())};
-    ctx.push_constants(default_pipeline_layout, sizeof(pc), &pc);
     ctx.bind_compute_pipeline(PipelineManager::get().get(img_pipeline)->pipeline);
+    ctx.push_constants(default_pipeline_layout, sizeof(pc), &pc);
     ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_COMPUTE, default_pipeline_layout, &main_set, 0);
     ctx.dispatch((img->extent().width + 16) / 16, (img->extent().height + 16) / 16, 1);
   }
 
-  state.queue_transition(img->image(), VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
-                         VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
+  // draw cube
+  {
+    state.transition(img->image(), VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    state.transition(depth_img->image(), VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
+                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                     VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT);
+    state.barrier();
+    auto dims = window_dims();
+    VkRenderingAttachmentInfo color_attachment =
+        init::rendering_attachment_info(img->view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    auto depth_att = init::rendering_attachment_info(depth_img->view(),
+                                                     VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+    auto info = init::rendering_info({dims.x, dims.y}, &color_attachment, &depth_att);
+    vkCmdBeginRenderingKHR(cmd, &info);
+    set_viewport_and_scissor(cmd, {dims.x, dims.y});
+    float aspect_ratio = (float)dims.x / (float)dims.y;
+    mat4 view = glm::lookAt(vec3{1, 2, 5}, vec3{0, 0, 0}, {0, 1, 0});
+    mat4 proj = glm::perspective(glm::radians(70.f), aspect_ratio, 0.1f, 1000.f);
+    mat4 vp = proj * view;
+    struct {
+      mat4 vp;
+      u64 vbaddr;
+    } pc{vp, cube->vertex_buffer.device_addr()};
+    ctx.push_constants(default_pipeline_layout, sizeof(pc), &pc);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                      PipelineManager::get().get(draw_pipeline)->pipeline);
+    ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, default_pipeline_layout, &main_set, 0);
+    // // TODO: LOL
+    vkCmdBindIndexBuffer(cmd, cube->index_buffer.buffer(), 0, VK_INDEX_TYPE_UINT32);
+    vkCmdDrawIndexed(cmd, 36, 1, 0, 0, 0);
+    vkCmdEndRenderingKHR(cmd);
+  }
+
+  state.transition(img->image(), VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
+                   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
 
   auto& swapchain_img = swapchain_.imgs[curr_swapchain_img_idx()];
-  state.queue_transition(swapchain_img, VK_PIPELINE_STAGE_2_BLIT_BIT,
-                         VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                         VK_IMAGE_ASPECT_COLOR_BIT);
+  state.transition(swapchain_img, VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
   state.barrier();
 
   blit_img(cmd, img->image(), swapchain_img, img->extent(), VK_IMAGE_ASPECT_COLOR_BIT);
 
-  state.queue_transition(swapchain_img, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR,
-                         VK_ACCESS_2_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+  state.transition(swapchain_img, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR,
+                   VK_ACCESS_2_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
   state.barrier();
   VK_CHECK(vkEndCommandBuffer(cmd));
 
-  submit_single_command_buf_to_graphics(cmd);
+  // wait for swapchain to be ready
+  std::array<VkSemaphoreSubmitInfo, 10> wait_semaphores{};
+  u32 next_wait_sem_idx{0};
+  wait_semaphores[next_wait_sem_idx++] = vk2::init::semaphore_submit_info(
+      curr_frame().swapchain_semaphore, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT);
+  // signal the render semaphore so presentation can wait on it
+  auto signal_info = vk2::init::semaphore_submit_info(curr_frame().render_semaphore,
+                                                      VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT);
+  if (transfer_queue_manager_->submit_signaled_) {
+    wait_semaphores[next_wait_sem_idx++] = vk2::init::semaphore_submit_info(
+        transfer_queue_manager_->submit_semaphore_, VK_PIPELINE_STAGE_2_TRANSFER_BIT);
+    transfer_queue_manager_->submit_signaled_ = false;
+  }
+  auto cmd_buf_submit_info = vk2::init::command_buffer_submit_info(cmd);
+  auto submit = vk2::init::queue_submit_info(SPAN1(cmd_buf_submit_info),
+                                             std::span(wait_semaphores.data(), next_wait_sem_idx),
+                                             SPAN1(signal_info));
+  VK_CHECK(vkQueueSubmit2KHR(queues_.graphics_queue, 1, &submit, curr_frame().render_fence));
 }
 
 void VkRender2::on_gui() {}
@@ -215,6 +282,23 @@ void CmdEncoder::push_constants(VkPipelineLayout layout, u32 size, void* data) {
 void VkRender2::on_resize() { create_attachment_imgs(); }
 
 void VkRender2::create_attachment_imgs() {
-  auto dims = window_dims();
-  img = create_texture_2d(VK_FORMAT_R8G8B8A8_UNORM, uvec3{dims, 1}, TextureUsage::General);
+  auto win_dims = window_dims();
+  uvec3 dims{win_dims, 1};
+
+  img = create_texture_2d(VK_FORMAT_R8G8B8A8_UNORM, dims, TextureUsage::General);
+  depth_img = create_texture_2d(VK_FORMAT_D32_SFLOAT, dims, TextureUsage::AttachmentReadOnly);
+}
+
+void VkRender2::set_viewport_and_scissor(VkCommandBuffer cmd, VkExtent2D extent) {
+  VkViewport viewport{.x = 0,
+                      .y = 0,
+                      .width = static_cast<float>(extent.width),
+                      .height = static_cast<float>(extent.height),
+                      .minDepth = 0.f,
+                      .maxDepth = 1.f};
+
+  vkCmdSetViewport(cmd, 0, 1, &viewport);
+  VkRect2D scissor{.offset = VkOffset2D{.x = 0, .y = 0},
+                   .extent = VkExtent2D{.width = extent.width, .height = extent.height}};
+  vkCmdSetScissor(cmd, 0, 1, &scissor);
 }

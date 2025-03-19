@@ -59,6 +59,10 @@ struct QueueManager {
 
   VkCommandBuffer get_cmd_buffer();
 
+  // TODO: bad here
+  VkSemaphore submit_semaphore_;
+  bool submit_signaled_{};
+
  private:
   std::vector<VkCommandBuffer> active_cmd_buffers_;
   std::vector<VkCommandBuffer> free_cmd_buffers_;

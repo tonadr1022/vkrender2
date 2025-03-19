@@ -19,12 +19,11 @@ class StateTracker {
   VkImageSubresourceRange default_image_subresource_range(
       VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
 
-  void queue_transition(VkImage image, VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access,
-                        VkImageLayout new_layout,
-                        VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
+  void transition(VkImage image, VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access,
+                  VkImageLayout new_layout, VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
 
-  void queue_transition(VkImage image, VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access,
-                        VkImageLayout new_layout, const VkImageSubresourceRange& range);
+  void transition(VkImage image, VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access,
+                  VkImageLayout new_layout, const VkImageSubresourceRange& range);
 
   void reset(VkCommandBuffer cmd) {
     assert(img_barriers_.empty());

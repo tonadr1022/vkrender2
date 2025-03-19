@@ -233,6 +233,11 @@ struct GraphicsPipelineCreateInfo {
     u32 reference{};
   };
 
+  struct RenderingInfo {
+    std::span<const VkFormat> color_formats;
+    VkFormat depth_format{VK_FORMAT_UNDEFINED};
+    VkFormat stencil_format{VK_FORMAT_UNDEFINED};
+  };
   struct DepthStencil {
     StencilOpState stencil_front{};
     StencilOpState stencil_back{};
@@ -250,6 +255,7 @@ struct GraphicsPipelineCreateInfo {
   // TODO: move elsewhere
   VkPipelineLayout layout{};
   PrimitiveTopology topology{PrimitiveTopology::TriangleList};
+  RenderingInfo rendering{};
   Rasterization rasterization{};
   Blend blend{};
   Multisample multisample{};

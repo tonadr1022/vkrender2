@@ -4,6 +4,7 @@
 #include <vulkan/vulkan_core.h>
 
 #include "Common.hpp"
+#include "vk2/Texture.hpp"
 
 namespace vk2::init {
 
@@ -121,4 +122,39 @@ VkImageSubresourceRange subresource_range_whole(VkImageAspectFlags aspect) {
           .layerCount = VK_REMAINING_ARRAY_LAYERS};
 }
 
+VkRenderingAttachmentInfo rendering_attachment_info(vk2::TextureView& texture, VkImageLayout layout,
+                                                    VkClearValue* clear_value) {
+  return {.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+          .imageView = texture.view(),
+          .imageLayout = layout,
+          .loadOp = clear_value ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+          .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+          .clearValue = clear_value != nullptr ? *clear_value : VkClearValue{}};
+}
+
+VkRenderingInfo rendering_info(VkExtent2D render_extent,
+                               VkRenderingAttachmentInfo* color_attachment,
+                               VkRenderingAttachmentInfo* depth_attachment,
+                               VkRenderingAttachmentInfo* stencil_attachment) {
+  return {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+          .renderArea = VkRect2D{{0, 0}, render_extent},
+          .layerCount = 1,
+          .colorAttachmentCount = 1,
+          .pColorAttachments = color_attachment,
+          .pDepthAttachment = depth_attachment,
+          .pStencilAttachment = stencil_attachment};
+}
+
+VkRenderingInfo rendering_info(VkExtent2D render_extent,
+                               std::span<VkRenderingAttachmentInfo> color_attachments,
+                               VkRenderingAttachmentInfo* depth_attachment,
+                               VkRenderingAttachmentInfo* stencil_attachment) {
+  return {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+          .renderArea = VkRect2D{{0, 0}, render_extent},
+          .layerCount = 1,
+          .colorAttachmentCount = static_cast<u32>(color_attachments.size()),
+          .pColorAttachments = color_attachments.data(),
+          .pDepthAttachment = depth_attachment,
+          .pStencilAttachment = stencil_attachment};
+}
 }  // namespace vk2::init

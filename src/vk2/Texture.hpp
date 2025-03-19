@@ -66,6 +66,7 @@ class TextureView {
   const BindlessResourceInfo& sampled_img_resource() {
     return sampled_image_resource_info_.value();
   }
+  [[nodiscard]] VkImageView view() const { return view_; }
 
  private:
   VkImageView view_;

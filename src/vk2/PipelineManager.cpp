@@ -277,15 +277,22 @@ PipelineHandle PipelineManager::load_graphics_pipeline(const GraphicsPipelineCre
   assert(info.blend.attachments.size() <= 4);
   std::array<VkPipelineColorBlendAttachmentState, 4> attachments{};
   u32 i = 0;
+  u32 attachment_cnt = info.blend.attachments.size();
   for (const auto& attachment : info.blend.attachments) {
     attachments[i++] = convert_color_blend_attachment(attachment);
+  }
+  // dummy blend attachment if color attachment is specified but no blending
+  if (i == 0 && info.rendering.color_formats.size() > 0) {
+    attachment_cnt = 1;
+    attachments[0] =
+        convert_color_blend_attachment(GraphicsPipelineCreateInfo::ColorBlendAttachment{});
   }
 
   VkPipelineColorBlendStateCreateInfo blend_state{
       .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
       .logicOpEnable = info.blend.logic_op_enable,
       .logicOp = convert_logic_op(info.blend.logic_op),
-      .attachmentCount = static_cast<u32>(info.blend.attachments.size()),
+      .attachmentCount = attachment_cnt,
       .pAttachments = attachments.data()};
 
   VkPipelineMultisampleStateCreateInfo multisample{
@@ -323,7 +330,14 @@ PipelineHandle PipelineManager::load_graphics_pipeline(const GraphicsPipelineCre
   VkPipelineVertexInputStateCreateInfo vertex_state{
       .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
 
+  VkPipelineRenderingCreateInfo rendering_info{
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+      .colorAttachmentCount = static_cast<u32>(info.rendering.color_formats.size()),
+      .pColorAttachmentFormats = info.rendering.color_formats.data(),
+      .depthAttachmentFormat = info.rendering.depth_format,
+      .stencilAttachmentFormat = info.rendering.stencil_format};
   VkGraphicsPipelineCreateInfo cinfo{.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+                                     .pNext = &rendering_info,
                                      .stageCount = 2,
                                      .pStages = stages,
                                      .pVertexInputState = &vertex_state,

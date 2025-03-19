@@ -32,16 +32,15 @@ VkImageSubresourceRange StateTracker::default_image_subresource_range(VkImageAsp
           .layerCount = 1};
 }
 
-void StateTracker::queue_transition(VkImage image, VkPipelineStageFlags2 dst_stage,
-                                    VkAccessFlags2 dst_access, VkImageLayout new_layout,
-                                    VkImageAspectFlags aspect) {
-  queue_transition(image, dst_stage, dst_access, new_layout,
-                   default_image_subresource_range(aspect));
+void StateTracker::transition(VkImage image, VkPipelineStageFlags2 dst_stage,
+                              VkAccessFlags2 dst_access, VkImageLayout new_layout,
+                              VkImageAspectFlags aspect) {
+  transition(image, dst_stage, dst_access, new_layout, default_image_subresource_range(aspect));
 }
 
-void StateTracker::queue_transition(VkImage image, VkPipelineStageFlags2 dst_stage,
-                                    VkAccessFlags2 dst_access, VkImageLayout new_layout,
-                                    const VkImageSubresourceRange& range) {
+void StateTracker::transition(VkImage image, VkPipelineStageFlags2 dst_stage,
+                              VkAccessFlags2 dst_access, VkImageLayout new_layout,
+                              const VkImageSubresourceRange& range) {
   auto it = std::ranges::find_if(tracked_imgs_,
                                  [image](const ImageState& img) { return img.image == image; });
   if (it == tracked_imgs_.end()) {

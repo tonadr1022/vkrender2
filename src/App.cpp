@@ -288,12 +288,14 @@ uvec2 BaseRenderer::window_dims() {
 void BaseRenderer::on_resize() {}
 
 QueueManager::QueueManager(u32 queue_idx, u32 cmd_buffer_cnt)
-    : cmd_pool_(vk2::get_device().create_command_pool(queue_idx)), queue_idx_(queue_idx) {
+    : submit_semaphore_(vk2::get_device().create_semaphore()),
+      cmd_pool_(vk2::get_device().create_command_pool(queue_idx)),
+      queue_idx_(queue_idx) {
   free_cmd_buffers_.resize(cmd_buffer_cnt);
   vk2::get_device().create_command_buffers(cmd_pool_.pool(), free_cmd_buffers_);
 }
 
-QueueManager::~QueueManager() = default;
+QueueManager::~QueueManager() { vk2::get_device().destroy_semaphore(submit_semaphore_); }
 
 VkCommandBuffer QueueManager::get_cmd_buffer() {
   VkCommandBuffer buf;

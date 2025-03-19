@@ -14,6 +14,7 @@ struct BufferCreateInfo {
   VkBufferUsageFlags usage{};
   VmaMemoryUsage mem_usage{VMA_MEMORY_USAGE_AUTO};
   VmaAllocationCreateFlags alloc_flags{};
+  bool buffer_device_address{false};
 };
 
 class Buffer {
@@ -27,12 +28,14 @@ class Buffer {
   [[nodiscard]] void *mapped_data() const { return info_.pMappedData; }
 
   [[nodiscard]] VkBuffer buffer() const { return buffer_; }
+  [[nodiscard]] VkDeviceAddress device_addr() const { return buffer_address_; }
   [[nodiscard]] u64 size() const { return cinfo_.size; }
 
  private:
   BufferCreateInfo cinfo_;
   VmaAllocationInfo info_;
   VkBuffer buffer_{};
+  VkDeviceAddress buffer_address_{};
   VmaAllocation allocation_{};
   std::optional<BindlessResourceInfo> resource_info_;
 };

@@ -1,5 +1,6 @@
 #include "Buffer.hpp"
 
+#include <volk.h>
 #include <vulkan/vulkan_core.h>
 
 #include <cassert>
@@ -13,14 +14,24 @@ namespace vk2 {
 
 // https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/usage_patterns.html
 Buffer::Buffer(const BufferCreateInfo &cinfo) {
+  auto usage = cinfo.usage;
+  if (cinfo.buffer_device_address) {
+    usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+  }
   VkBufferCreateInfo buffer_create_info{
-      .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = cinfo.size, .usage = cinfo.usage};
+      .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = cinfo.size, .usage = usage};
   VmaAllocationCreateInfo alloc_info{.flags = cinfo.alloc_flags, .usage = cinfo.mem_usage};
   vk2::get_device().create_buffer(&buffer_create_info, &alloc_info, buffer_, allocation_, info_);
   assert(info_.size);
   if (cinfo.usage & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) {
     LINFO("making descriptor");
     resource_info_ = BindlessResourceAllocator::get().allocate_storage_buffer_descriptor(buffer_);
+  }
+  if (cinfo.buffer_device_address) {
+    VkBufferDeviceAddressInfo info{.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+                                   .buffer = buffer_};
+    buffer_address_ = vkGetBufferDeviceAddress(vk2::get_device().device(), &info);
+    assert(buffer_address_);
   }
   cinfo_ = cinfo;
 }
@@ -29,6 +40,7 @@ Buffer::Buffer(Buffer &&other) noexcept
     : cinfo_(std::exchange(other.cinfo_, {})),
       info_(std::exchange(other.info_, {})),
       buffer_(std::exchange(other.buffer_, nullptr)),
+      buffer_address_(std::exchange(other.buffer_address_, 0ll)),
       allocation_(std::exchange(other.allocation_, nullptr)),
       resource_info_(std::exchange(other.resource_info_, std::nullopt)) {}
 
@@ -39,6 +51,7 @@ Buffer &Buffer::operator=(Buffer &&other) noexcept {
   this->~Buffer();
   info_ = std::exchange(other.info_, {});
   cinfo_ = std::exchange(other.cinfo_, {});
+  buffer_address_ = std::exchange(other.buffer_address_, 0ll);
   buffer_ = std::exchange(other.buffer_, nullptr);
   allocation_ = std::exchange(other.allocation_, nullptr);
   resource_info_ = std::exchange(other.resource_info_, std::nullopt);

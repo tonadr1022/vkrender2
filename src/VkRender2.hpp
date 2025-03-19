@@ -41,6 +41,7 @@ struct VkRender2 final : public BaseRenderer {
   void on_gui() override;
   void on_resize() override;
   void create_attachment_imgs();
+  void set_viewport_and_scissor(VkCommandBuffer cmd, VkExtent2D extent);
 
   // TODO: refactor
   struct LoadedScene {
@@ -52,7 +53,9 @@ struct VkRender2 final : public BaseRenderer {
   std::optional<LoadedScene> cube;
 
   StateTracker state;
+  std::optional<vk2::Texture> depth_img;
   std::optional<vk2::Texture> img;
+
   vk2::DeletionQueue main_del_q;
   std::filesystem::path resource_dir;
   std::filesystem::path shader_dir;

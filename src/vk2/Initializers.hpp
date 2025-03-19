@@ -26,8 +26,22 @@ struct ImageCreateInfo {
 
 }  // namespace vk2
 
+namespace vk2 {
+class Texture;
+class TextureView;
+}  // namespace vk2
 namespace vk2::init {
 
+VkRenderingAttachmentInfo rendering_attachment_info(vk2::TextureView& texture, VkImageLayout layout,
+                                                    VkClearValue* clear_value = nullptr);
+VkRenderingInfo rendering_info(VkExtent2D render_extent,
+                               VkRenderingAttachmentInfo* color_attachment,
+                               VkRenderingAttachmentInfo* depth_attachment = nullptr,
+                               VkRenderingAttachmentInfo* stencil_attachment = nullptr);
+VkRenderingInfo rendering_info(VkExtent2D render_extent,
+                               std::span<VkRenderingAttachmentInfo> color_attachment,
+                               VkRenderingAttachmentInfo* depth_attachment = nullptr,
+                               VkRenderingAttachmentInfo* stencil_attachment = nullptr);
 VkCommandBufferBeginInfo command_buffer_begin_info(
     VkCommandBufferUsageFlags flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 VkSubmitInfo2 queue_submit_info();
