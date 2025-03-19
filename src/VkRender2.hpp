@@ -6,8 +6,7 @@
 #include <optional>
 #include <queue>
 
-#include "App.hpp"
-#include "Camera.hpp"
+#include "BaseRenderer.hpp"
 #include "Scene.hpp"
 #include "StateTracker.hpp"
 #include "vk2/Buffer.hpp"
@@ -36,18 +35,18 @@ struct InFlightResource {
 
 // yes everything is public, this is a wrapper for a main.cpp
 struct VkRender2 final : public BaseRenderer {
+  static VkRender2& get();
+  static void init(const InitInfo& info);
+  static void shutdown();
   explicit VkRender2(const InitInfo& info);
   ~VkRender2() override;
-  void on_update() override;
-  void on_draw() override;
+
+ private:
+  void on_draw(const SceneDrawInfo& info) override;
   void on_gui() override;
   void on_resize() override;
   void create_attachment_imgs();
   void set_viewport_and_scissor(VkCommandBuffer cmd, VkExtent2D extent);
-  void on_key_event([[maybe_unused]] int key, [[maybe_unused]] int scancode,
-                    [[maybe_unused]] int action, [[maybe_unused]] int mods);
-  void on_hide_mouse_change(bool new_hide_mouse);
-  void on_cursor_event(vec2 pos);
 
   // TODO: refactor
   struct LoadedScene {
@@ -56,30 +55,26 @@ struct VkRender2 final : public BaseRenderer {
     vk2::Buffer index_buffer;
     std::vector<vk2::Sampler> samplers;
   };
-  std::optional<LoadedScene> cube;
 
-  Camera cam_data;
-  CameraController cam;
-  StateTracker state;
-  StateTracker transfer_q_state;
-  std::optional<vk2::Texture> depth_img;
-  std::optional<vk2::Texture> img;
+  std::optional<LoadedScene> cube_;
+  StateTracker state_;
+  StateTracker transfer_q_state_;
+  std::optional<vk2::Texture> depth_img_;
+  std::optional<vk2::Texture> img_;
 
-  vk2::DeletionQueue main_del_q;
-  std::filesystem::path resource_dir;
-  std::filesystem::path shader_dir;
+  vk2::DeletionQueue main_del_q_;
+  std::filesystem::path resource_dir_;
+  std::filesystem::path shader_dir_;
   [[nodiscard]] std::string get_shader_path(const std::string& path) const;
-  vk2::PipelineHandle img_pipeline;
-  vk2::PipelineHandle draw_pipeline;
-  VkPipelineLayout default_pipeline_layout{};
+  vk2::PipelineHandle img_pipeline_;
+  vk2::PipelineHandle draw_pipeline_;
+  VkPipelineLayout default_pipeline_layout_{};
   std::queue<InFlightResource<vk2::Buffer*>> in_flight_staging_buffers_;
 
   std::vector<vk2::Buffer> free_staging_buffers_;
 
   // non owning
-  VkDescriptorSet main_set{};
+  VkDescriptorSet main_set_{};
   VmaAllocator allocator_;
   // end non owning
-
-  bool hide_mouse{false};
 };

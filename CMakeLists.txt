@@ -10,7 +10,7 @@ add_subdirectory(third_party)
 add_executable(vkrender2
 
 src/main.cpp
-src/App.cpp
+src/BaseRenderer.cpp
 src/StateTracker.cpp
 src/VkRender2.cpp
 src/ThreadPool.cpp
@@ -33,6 +33,7 @@ src/SceneLoader.cpp
 src/vk2/Swapchain.cpp
 src/vk2/VkCommon.cpp
 
+src/App.cpp
 )
 
 target_compile_options(vkrender2

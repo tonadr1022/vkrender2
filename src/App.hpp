@@ -1,80 +1,10 @@
 #pragma once
 
-#include <vulkan/vulkan_core.h>
-
-#include <memory>
-
+#include "Camera.hpp"
 #include "Common.hpp"
-#include "StateTracker.hpp"
-#include "VkBootstrap.h"
-#include "vk2/DeletionQueue.hpp"
-#include "vk2/Swapchain.hpp"
-
 struct GLFWwindow;
 
-#ifndef NDEBUG
-#define VALIDATION_LAYERS_ENABLED 1
-#define DEBUG_CALLBACK_ENABLED 1
-#endif
-
-struct QueueFamilies {
-  VkQueue graphics_queue{};
-  VkQueue compute_queue{};
-  VkQueue transfer_queue{};
-  u32 graphics_queue_idx{UINT32_MAX};
-  u32 compute_queue_idx{UINT32_MAX};
-  u32 transfer_queue_idx{UINT32_MAX};
-  bool is_unified_graphics_transfer{};
-};
-
-struct CmdPool {
-  explicit CmdPool(VkCommandPool pool) : pool_(pool) {}
-  ~CmdPool();
-
-  CmdPool& operator=(const CmdPool&) = delete;
-  CmdPool(const CmdPool&) = delete;
-  CmdPool(CmdPool&& old) noexcept;
-  CmdPool& operator=(CmdPool&& old) noexcept;
-
-  [[nodiscard]] VkCommandPool pool() const { return pool_; }
-
- private:
-  VkCommandPool pool_;
-};
-
-struct PerFrameData {
-  VkCommandPool cmd_pool;
-  VkCommandBuffer main_cmd_buffer;
-  VkSemaphore swapchain_semaphore, render_semaphore;
-  VkFence render_fence;
-};
-
-struct QueueManager {
-  explicit QueueManager(u32 queue_idx, u32 cmd_buffer_cnt = 1);
-  QueueManager() = delete;
-  ~QueueManager();
-
-  QueueManager(QueueManager&&) = delete;
-  QueueManager& operator=(QueueManager&&) = delete;
-  QueueManager(const QueueManager&) = delete;
-  QueueManager& operator=(const QueueManager&) = delete;
-
-  VkCommandBuffer get_cmd_buffer();
-
-  // TODO: bad here
-  VkSemaphore submit_semaphore_;
-  bool submit_signaled_{};
-
- private:
-  std::vector<VkCommandBuffer> active_cmd_buffers_;
-  std::vector<VkCommandBuffer> free_cmd_buffers_;
-  StateTracker state_tracker_;
-  CmdPool cmd_pool_;
-  u32 queue_idx_{UINT32_MAX};
-};
-
-class BaseRenderer {
- public:
+struct App {
   struct InitInfo {
     const char* name = "App";
     u32 width{800};
@@ -82,59 +12,23 @@ class BaseRenderer {
     bool maximize{false};
     bool decorate{true};
     bool vsync{true};
-    VkPresentModeKHR present_mode{VK_PRESENT_MODE_FIFO_KHR};
   };
-
-  BaseRenderer(const BaseRenderer&) = delete;
-  BaseRenderer(BaseRenderer&& other) = delete;
-  BaseRenderer operator=(BaseRenderer&&) = delete;
-  BaseRenderer operator=(const BaseRenderer&) = delete;
-
-  virtual ~BaseRenderer();
+  explicit App(const InitInfo& info);
   void run();
+  void quit() const;
+  void on_key_event([[maybe_unused]] int key, [[maybe_unused]] int scancode,
+                    [[maybe_unused]] int action, [[maybe_unused]] int mods);
+  void on_hide_mouse_change(bool new_hide_mouse);
+  void on_cursor_event(vec2 pos);
 
-  static constexpr u32 max_frames_in_flight{3};
-
- protected:
-  struct BaseInitInfo {
-    u32 frames_in_flight{2};
-  };
-  explicit BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info);
-  virtual void on_update();
-  virtual void on_draw();
-  virtual void on_gui();
-  virtual void on_resize();
-
-  QueueFamilies queues_;
-  vkb::Instance instance_;
-  VkSurfaceKHR surface_;
-  GLFWwindow* window_;
-  vk2::Swapchain swapchain_;
-  [[nodiscard]] vk2::Swapchain::Status curr_frame_swapchain_status() const;
-  u32 frames_in_flight_{2};
-  std::vector<PerFrameData> per_frame_data_;
-  PerFrameData& curr_frame();
-  void quit();
-  std::unique_ptr<QueueManager> transfer_queue_manager_;
-
-  // begin non owning
-  VkDevice device_;
-
-  // end non-owning
-
-  void submit_single_command_buf_to_graphics(VkCommandBuffer cmd);
-
-  [[nodiscard]] u32 curr_swapchain_img_idx() const { return curr_swapchain_img_idx_; }
-  [[nodiscard]] u64 curr_frame_num() const { return curr_frame_num_; }
-
-  uvec2 window_dims();
+  Camera cam_data;
+  CameraController cam;
+  GLFWwindow* window{};
+  bool hide_mouse{false};
 
  private:
-  vk2::DeletionQueue app_del_queue_;
-  vk2::Swapchain::Status curr_frame_swapchain_status_;
-  bool resize_swapchain_req_{};
-  u32 curr_swapchain_img_idx_{};
-  bool initialized_{false};
-  u64 curr_frame_num_{};
-  void draw();
+  void shutdown() const;
+  void update(float dt);
+  [[nodiscard]] float aspect_ratio() const;
+  [[nodiscard]] uvec2 window_dims() const;
 };
