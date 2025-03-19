@@ -206,7 +206,8 @@ struct GraphicsPipelineCreateInfo {
     BlendFactor src_alpha_factor;
     BlendFactor dst_alpha_blend_factor;
     BlendOp alpha_blend_op;
-    ColorComponentFlags color_write_mask;
+    ColorComponentFlags color_write_mask{ColorComponentRBit | ColorComponentGBit |
+                                         ColorComponentBBit | ColorComponentABit};
   };
   struct Blend {
     bool logic_op_enable{false};
