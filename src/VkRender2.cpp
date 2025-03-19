@@ -10,6 +10,7 @@
 #include "GLFW/glfw3.h"
 #include "Logger.hpp"
 #include "SceneLoader.hpp"
+#include "StateTracker.hpp"
 #include "glm/ext/matrix_clip_space.hpp"
 #include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Device.hpp"
@@ -93,8 +94,8 @@ VkRender2::VkRender2(const InitInfo& info)
       // .depth_stencil = GraphicsPipelineCreateInfo::depth_disable(),
   });
 
-  auto res = std::move(gfx::load_gltf(resource_dir / "models/Cube/glTF/Cube.gltf").value());
-
+  auto res = std::move(gfx::load_gltf("/home/tony/models/Models/Sponza/glTF/Sponza.gltf").value());
+  // auto res = std::move(gfx::load_gltf(resource_dir / "models/Cube/glTF/Cube.gltf").value());
   cube = LoadedScene{
       std::move(res.scene_graph_data),
       vk2::Buffer{vk2::BufferCreateInfo{
@@ -115,7 +116,6 @@ VkRender2::VkRender2(const InitInfo& info)
       auto info = vk2::init::command_buffer_begin_info();
       VK_CHECK(vkResetCommandBuffer(cmd, 0));
       VK_CHECK(vkBeginCommandBuffer(cmd, &info));
-
       {
         VkBufferCopy2KHR copy{.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2_KHR,
                               .srcOffset = 0,
@@ -139,32 +139,15 @@ VkRender2::VkRender2(const InitInfo& info)
                                          .pRegions = &copy};
           vkCmdCopyBuffer2KHR(cmd, &copy_info);
         }
-
-        // TODO: extract
-        VkBufferMemoryBarrier2 barriers[] = {
-            VkBufferMemoryBarrier2{.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-                                   .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                                   .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
-                                   .srcQueueFamilyIndex = queues_.transfer_queue_idx,
-                                   .dstQueueFamilyIndex = queues_.graphics_queue_idx,
-                                   .buffer = cube->vertex_buffer.buffer(),
-                                   .offset = 0,
-                                   .size = VK_WHOLE_SIZE},
-            VkBufferMemoryBarrier2{.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-                                   .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                                   .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
-                                   .srcQueueFamilyIndex = queues_.transfer_queue_idx,
-                                   .dstQueueFamilyIndex = queues_.graphics_queue_idx,
-                                   .buffer = cube->index_buffer.buffer(),
-                                   .offset = 0,
-                                   .size = VK_WHOLE_SIZE}};
-
-        VkDependencyInfo info{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                              .bufferMemoryBarrierCount = COUNTOF(barriers),
-                              .pBufferMemoryBarriers = barriers,
-                              .imageMemoryBarrierCount = 0,
-                              .pImageMemoryBarriers = nullptr};
-        vkCmdPipelineBarrier2KHR(cmd, &info);
+        transfer_q_state.reset(cmd)
+            .queue_transfer_buffer(state, VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
+                                   VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT,
+                                   cube->vertex_buffer.buffer(), queues_.transfer_queue_idx,
+                                   queues_.graphics_queue_idx)
+            .queue_transfer_buffer(state, VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT,
+                                   VK_ACCESS_2_INDEX_READ_BIT, cube->index_buffer.buffer(),
+                                   queues_.transfer_queue_idx, queues_.graphics_queue_idx)
+            .flush_barriers();
       }
       VK_CHECK(vkEndCommandBuffer(cmd));
 
@@ -172,7 +155,7 @@ VkRender2::VkRender2(const InitInfo& info)
       auto cmd_buf_submit_info = vk2::init::command_buffer_submit_info(cmd);
 
       auto wait_info = vk2::init::semaphore_submit_info(transfer_queue_manager_->submit_semaphore_,
-                                                        VK_PIPELINE_STAGE_2_TRANSFER_BIT);
+                                                        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT);
       auto submit = init::queue_submit_info(SPAN1(cmd_buf_submit_info), {}, SPAN1(wait_info));
       VK_CHECK(vkQueueSubmit2KHR(queues_.transfer_queue, 1, &submit, transfer_fence));
       transfer_queue_manager_->submit_signaled_ = true;
@@ -214,13 +197,14 @@ void VkRender2::on_draw() {
   VK_CHECK(vkBeginCommandBuffer(cmd, &info));
   ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, default_pipeline_layout, &main_set, 0);
   ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_COMPUTE, default_pipeline_layout, &main_set, 0);
+  state.flush_transfers(queues_.graphics_queue_idx);
 
   vk2::BindlessResourceAllocator::get().set_frame_num(curr_frame_num());
   vk2::BindlessResourceAllocator::get().flush_deletions();
 
   state.transition(img->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                    VK_ACCESS_2_MEMORY_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
-  state.barrier();
+  state.flush_barriers();
 
   {
     struct {
@@ -242,7 +226,7 @@ void VkRender2::on_draw() {
         VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
         VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
         VK_IMAGE_ASPECT_DEPTH_BIT);
-    state.barrier();
+    state.flush_barriers();
     auto dims = window_dims();
     // VkClearValue clear{.color = {{.1, .1, .1, 1.}}};
     VkClearValue depth_clear{.depthStencil = {.depth = 0.f}};
@@ -281,13 +265,13 @@ void VkRender2::on_draw() {
   state.transition(swapchain_img, VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
 
-  state.barrier();
+  state.flush_barriers();
 
   blit_img(cmd, img->image(), swapchain_img, img->extent(), VK_IMAGE_ASPECT_COLOR_BIT);
 
   state.transition(swapchain_img, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR,
                    VK_ACCESS_2_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-  state.barrier();
+  state.flush_barriers();
   VK_CHECK(vkEndCommandBuffer(cmd));
 
   // wait for swapchain to be ready

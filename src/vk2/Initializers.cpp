@@ -157,4 +157,13 @@ VkRenderingInfo rendering_info(VkExtent2D render_extent,
           .pDepthAttachment = depth_attachment,
           .pStencilAttachment = stencil_attachment};
 }
+VkDependencyInfo dependency_info(std::span<VkBufferMemoryBarrier2> buffer_barriers,
+                                 std::span<VkImageMemoryBarrier2> img_barriers) {
+  return {
+      .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+      .bufferMemoryBarrierCount = static_cast<u32>(buffer_barriers.size()),
+      .pBufferMemoryBarriers = buffer_barriers.size() ? buffer_barriers.data() : nullptr,
+      .imageMemoryBarrierCount = static_cast<u32>(img_barriers.size()),
+      .pImageMemoryBarriers = img_barriers.size() ? img_barriers.data() : nullptr};
+}
 }  // namespace vk2::init

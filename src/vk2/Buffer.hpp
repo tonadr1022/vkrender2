@@ -4,6 +4,7 @@
 #include <vulkan/vulkan_core.h>
 
 #include <optional>
+#include <string>
 
 #include "Common.hpp"
 #include "vk2/Resource.hpp"
@@ -24,7 +25,7 @@ class Buffer {
   Buffer(Buffer &&) noexcept;
   Buffer &operator=(Buffer &&) noexcept;
   ~Buffer();
-  explicit Buffer(const BufferCreateInfo &cinfo);
+  explicit Buffer(const BufferCreateInfo &cinfo, std::string name = "Buffer");
   [[nodiscard]] void *mapped_data() const { return info_.pMappedData; }
 
   [[nodiscard]] VkBuffer buffer() const { return buffer_; }
@@ -33,6 +34,7 @@ class Buffer {
 
  private:
   BufferCreateInfo cinfo_;
+  std::string name_;
   VmaAllocationInfo info_;
   VkBuffer buffer_{};
   VkDeviceAddress buffer_address_{};

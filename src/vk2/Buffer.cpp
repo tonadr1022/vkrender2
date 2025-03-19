@@ -13,7 +13,7 @@
 namespace vk2 {
 
 // https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/usage_patterns.html
-Buffer::Buffer(const BufferCreateInfo &cinfo) {
+Buffer::Buffer(const BufferCreateInfo &cinfo, std::string name) : name_(std::move(name)) {
   auto usage = cinfo.usage;
   if (cinfo.buffer_device_address) {
     usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
@@ -38,6 +38,7 @@ Buffer::Buffer(const BufferCreateInfo &cinfo) {
 
 Buffer::Buffer(Buffer &&other) noexcept
     : cinfo_(std::exchange(other.cinfo_, {})),
+      name_(std::move(other.name_)),
       info_(std::exchange(other.info_, {})),
       buffer_(std::exchange(other.buffer_, nullptr)),
       buffer_address_(std::exchange(other.buffer_address_, 0ll)),
@@ -51,6 +52,7 @@ Buffer &Buffer::operator=(Buffer &&other) noexcept {
   this->~Buffer();
   info_ = std::exchange(other.info_, {});
   cinfo_ = std::exchange(other.cinfo_, {});
+  name_ = std::move(other.name_);
   buffer_address_ = std::exchange(other.buffer_address_, 0ll);
   buffer_ = std::exchange(other.buffer_, nullptr);
   allocation_ = std::exchange(other.allocation_, nullptr);

@@ -61,6 +61,7 @@ struct VkRender2 final : public BaseRenderer {
   Camera cam_data;
   CameraController cam;
   StateTracker state;
+  StateTracker transfer_q_state;
   std::optional<vk2::Texture> depth_img;
   std::optional<vk2::Texture> img;
 
