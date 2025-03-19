@@ -11,7 +11,6 @@
 #include "Logger.hpp"
 #include "SceneLoader.hpp"
 #include "glm/ext/matrix_clip_space.hpp"
-#include "glm/ext/matrix_transform.hpp"
 #include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Device.hpp"
 #include "vk2/Fence.hpp"
@@ -39,7 +38,17 @@ std::optional<std::filesystem::path> get_resource_dir() {
 using namespace vk2;
 
 VkRender2::VkRender2(const InitInfo& info)
-    : BaseRenderer(info, BaseRenderer::BaseInitInfo{.frames_in_flight = 2}) {
+    : BaseRenderer(info, BaseRenderer::BaseInitInfo{.frames_in_flight = 2}), cam(cam_data, .1) {
+  glfwSetWindowUserPointer(window_, this);
+  glfwSetKeyCallback(window_, []([[maybe_unused]] GLFWwindow* win, [[maybe_unused]] int key,
+                                 [[maybe_unused]] int scancode, [[maybe_unused]] int action,
+                                 [[maybe_unused]] int mods) {
+    ((VkRender2*)glfwGetWindowUserPointer(win))->on_key_event(key, scancode, action, mods);
+  });
+  glfwSetCursorPosCallback(window_, [](GLFWwindow* win, double xpos, double ypos) {
+    ((VkRender2*)glfwGetWindowUserPointer(win))->on_cursor_event({xpos, ypos});
+  });
+
   auto resource_dir_result = get_resource_dir();
   if (!resource_dir_result.has_value()) {
     LCRITICAL("unable to locate 'resources' directory from current path: {}",
@@ -175,7 +184,16 @@ VkRender2::VkRender2(const InitInfo& info)
   }
 }
 
-void VkRender2::on_update() {}
+namespace {
+float last_time{};
+}
+
+void VkRender2::on_update() {
+  float curr_t = glfwGetTime();
+  float dt = curr_t - last_time;
+  last_time = curr_t;
+  cam.update_pos(window_, dt);
+}
 
 void VkRender2::on_draw() {
   while (!in_flight_vertex_index_staging_buffers_.empty()) {
@@ -194,6 +212,8 @@ void VkRender2::on_draw() {
   auto info = vk2::init::command_buffer_begin_info();
   VK_CHECK(vkResetCommandBuffer(cmd, 0));
   VK_CHECK(vkBeginCommandBuffer(cmd, &info));
+  ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, default_pipeline_layout, &main_set, 0);
+  ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_COMPUTE, default_pipeline_layout, &main_set, 0);
 
   vk2::BindlessResourceAllocator::get().set_frame_num(curr_frame_num());
   vk2::BindlessResourceAllocator::get().flush_deletions();
@@ -209,7 +229,6 @@ void VkRender2::on_draw() {
     } pc{img->view().storage_img_resource().handle, static_cast<f32>(glfwGetTime())};
     ctx.bind_compute_pipeline(PipelineManager::get().get(img_pipeline)->pipeline);
     ctx.push_constants(default_pipeline_layout, sizeof(pc), &pc);
-    ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_COMPUTE, default_pipeline_layout, &main_set, 0);
     ctx.dispatch((img->extent().width + 16) / 16, (img->extent().height + 16) / 16, 1);
   }
 
@@ -235,8 +254,10 @@ void VkRender2::on_draw() {
     vkCmdBeginRenderingKHR(cmd, &info);
     set_viewport_and_scissor(cmd, {dims.x, dims.y});
     float aspect_ratio = (float)dims.x / (float)dims.y;
-    mat4 view = glm::lookAt(vec3{1, 2, 5}, vec3{0, 0, 0}, {0, 1, 0});
+
+    mat4 view = cam_data.get_view();
     mat4 proj = glm::perspective(glm::radians(70.f), aspect_ratio, 0.1f, 1000.f);
+    proj[1][1] *= -1;
     mat4 vp = proj * view;
     struct {
       mat4 vp;
@@ -245,8 +266,6 @@ void VkRender2::on_draw() {
     ctx.push_constants(default_pipeline_layout, sizeof(pc), &pc);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                       PipelineManager::get().get(draw_pipeline)->pipeline);
-    // TODO: bind once?
-    ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, default_pipeline_layout, &main_set, 0);
     vkCmdBindIndexBuffer(cmd, cube->index_buffer.buffer(), 0, VK_INDEX_TYPE_UINT32);
     vkCmdDrawIndexed(cmd, cube->index_buffer.size() / sizeof(u32), 1, 0, 0, 0);
     vkCmdEndRenderingKHR(cmd);
@@ -335,4 +354,34 @@ void VkRender2::set_viewport_and_scissor(VkCommandBuffer cmd, VkExtent2D extent)
   VkRect2D scissor{.offset = VkOffset2D{.x = 0, .y = 0},
                    .extent = VkExtent2D{.width = extent.width, .height = extent.height}};
   vkCmdSetScissor(cmd, 0, 1, &scissor);
+}
+void VkRender2::on_key_event([[maybe_unused]] int key, [[maybe_unused]] int scancode,
+                             [[maybe_unused]] int action, [[maybe_unused]] int mods) {
+  if (action == GLFW_PRESS) {
+    if (key == GLFW_KEY_ESCAPE) {
+      on_hide_mouse_change(!hide_mouse);
+    }
+  }
+}
+void VkRender2::on_hide_mouse_change(bool new_hide_mouse) {
+  hide_mouse = new_hide_mouse;
+  glfwSetInputMode(window_, GLFW_CURSOR, hide_mouse ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+}
+
+// TODO: move
+namespace {
+bool first_mouse{true};
+vec2 last_pos{};
+}  // namespace
+void VkRender2::on_cursor_event(vec2 pos) {
+  if (first_mouse) {
+    first_mouse = false;
+    last_pos = pos;
+    return;
+  }
+  vec2 offset = {pos.x - last_pos.x, last_pos.y - pos.y};
+  last_pos = pos;
+  if (hide_mouse) {
+    cam.process_mouse(offset);
+  }
 }

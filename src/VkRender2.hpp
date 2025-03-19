@@ -7,6 +7,7 @@
 #include <queue>
 
 #include "App.hpp"
+#include "Camera.hpp"
 #include "Scene.hpp"
 #include "StateTracker.hpp"
 #include "vk2/Buffer.hpp"
@@ -43,6 +44,10 @@ struct VkRender2 final : public BaseRenderer {
   void on_resize() override;
   void create_attachment_imgs();
   void set_viewport_and_scissor(VkCommandBuffer cmd, VkExtent2D extent);
+  void on_key_event([[maybe_unused]] int key, [[maybe_unused]] int scancode,
+                    [[maybe_unused]] int action, [[maybe_unused]] int mods);
+  void on_hide_mouse_change(bool new_hide_mouse);
+  void on_cursor_event(vec2 pos);
 
   // TODO: refactor
   struct LoadedScene {
@@ -53,6 +58,8 @@ struct VkRender2 final : public BaseRenderer {
   };
   std::optional<LoadedScene> cube;
 
+  Camera cam_data;
+  CameraController cam;
   StateTracker state;
   std::optional<vk2::Texture> depth_img;
   std::optional<vk2::Texture> img;
@@ -72,4 +79,7 @@ struct VkRender2 final : public BaseRenderer {
   // non owning
   VkDescriptorSet main_set{};
   VmaAllocator allocator_;
+  // end non owning
+
+  bool hide_mouse{false};
 };

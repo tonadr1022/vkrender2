@@ -184,6 +184,7 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info) 
 void BaseRenderer::run() {
   while (!glfwWindowShouldClose(window_)) {
     glfwPollEvents();
+    on_update();
     draw();
   }
 }
