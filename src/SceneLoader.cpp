@@ -7,11 +7,15 @@
 #include <fastgltf/glm_element_traits.hpp>
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
+#include <future>
 
 #include "Scene.hpp"
+#include "ThreadPool.hpp"
 #include "vk2/StagingBufferPool.hpp"
 
 // #include "ThreadPool.hpp"
+
+#include "stb_image.h"
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/quaternion.hpp>
@@ -238,6 +242,75 @@ void load_samplers(const fastgltf::Asset& gltf, std::vector<vk2::Sampler>& sampl
   }
 }
 
+struct CpuImageData {
+  u32 w, h, channels;
+  void* data;
+};
+
+void load_gltf_img(fastgltf::Asset& asset, fastgltf::Image& image,
+                   const std::filesystem::path& directory, CpuImageData& result) {
+  int w, h, channels;
+  unsigned char* data = nullptr;
+  std::visit(
+      fastgltf::visitor{
+          [&](fastgltf::sources::URI& file_path) {
+            assert(file_path.fileByteOffset == 0);
+            const std::string path(file_path.uri.path().begin(), file_path.uri.path().end());
+            auto full_path = directory / path;
+            if (!std::filesystem::exists(full_path)) {
+              LINFO("glTF Image load fail: path does not exist {}", full_path.string());
+            }
+            data = stbi_load(full_path.string().c_str(), &w, &h, &channels, 4);
+          },
+          [&](fastgltf::sources::Vector& vector) {
+            data =
+                stbi_load_from_memory(reinterpret_cast<unsigned char*>(vector.bytes.data()),
+                                      static_cast<int>(vector.bytes.size()), &w, &h, &channels, 4);
+          },
+          [&](fastgltf::sources::BufferView& view) {
+            auto& buffer_view = asset.bufferViews[view.bufferViewIndex];
+            auto& buffer = asset.buffers[buffer_view.bufferIndex];
+            std::visit(fastgltf::visitor{
+                           [](auto&) {},
+                           [&](fastgltf::sources::Array& vector) {
+                             data = stbi_load_from_memory(
+                                 reinterpret_cast<unsigned char*>(vector.bytes.data() +
+                                                                  buffer_view.byteOffset),
+                                 static_cast<int>(buffer_view.byteLength), &w, &h, &channels, 4);
+                           },
+                           [&](fastgltf::sources::Vector& vector) {
+                             data = stbi_load_from_memory(
+                                 reinterpret_cast<unsigned char*>(vector.bytes.data() +
+                                                                  buffer_view.byteOffset),
+                                 static_cast<int>(buffer_view.byteLength), &w, &h, &channels, 4);
+                           },
+                       },
+                       buffer.data);
+          },
+          [](fastgltf::sources::ByteView&) {}, [](fastgltf::sources::Fallback&) {},
+          [&](fastgltf::sources::Array& arr) {
+            // TODO: KTX2
+            if (arr.mimeType != fastgltf::MimeType::JPEG &&
+                arr.mimeType != fastgltf::MimeType::PNG) {
+              return;
+            }
+            data = stbi_load_from_memory(reinterpret_cast<unsigned char*>(arr.bytes.data()),
+                                         static_cast<int>(arr.bytes.size_bytes()), &w, &h,
+                                         &channels, 4);
+          },
+          [](auto&) { LINFO("not valid image path uh oh spaghettio"); }},
+      image.data);
+
+  if (!data) {
+    result = {};
+  } else {
+    result.w = w;
+    result.h = h;
+    result.channels = channels;
+    result.data = data;
+  }
+}
+
 }  // namespace
 
 std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& path) {
@@ -255,7 +328,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
   constexpr auto gltf_options =
       fastgltf::Options::DontRequireValidAssetMember | fastgltf::Options::AllowDouble |
       fastgltf::Options::LoadExternalBuffers | fastgltf::Options::GenerateMeshIndices |
-      fastgltf::Options::DecomposeNodeMatrices;
+      fastgltf::Options::DecomposeNodeMatrices | fastgltf::Options::LoadExternalImages;
 
   fastgltf::Parser parser{supported_extensions};
   auto gltf_file = fastgltf::GltfDataBuffer::FromPath(path);
@@ -270,6 +343,21 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
   fastgltf::Asset gltf = std::move(load_ret.get());
   result = LoadedSceneBaseData{};
   load_samplers(gltf, result->samplers);
+
+  std::vector<CpuImageData> images(gltf.images.size());
+  std::vector<std::future<void>> img_futures;
+  img_futures.reserve(images.size());
+  {
+    ZoneScopedN("load images");
+    for (u64 i = 0; i < images.size(); i++) {
+      img_futures.emplace_back(threads::pool.submit_task([i, &gltf, &parent_path, &images]() {
+        load_gltf_img(gltf, gltf.images[i], parent_path, images[i]);
+      }));
+    }
+    for (auto& f : img_futures) {
+      f.get();
+    }
+  }
 
   // std::array<std::future<void>, 2> scene_load_futures;
   // u32 scene_load_future_idx = 0;

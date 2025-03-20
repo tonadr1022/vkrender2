@@ -28,7 +28,9 @@ struct CmdEncoder {
   VkCommandBuffer cmd_;
 };
 
-struct Scene {};
+struct MaterialData {
+  u32 albedo_tex;
+};
 
 VK2_DEFINE_HANDLE(Scene);
 
@@ -65,6 +67,7 @@ struct VkRender2 final : public BaseRenderer {
     vk2::Buffer index_buffer;
     vk2::Buffer draw_indirect_buffer;
     vk2::Buffer instance_buffer;
+    // std::vector<u32> material_indices;
     std::vector<vk2::Sampler> samplers;
     u32 draw_cnt{};
   };
