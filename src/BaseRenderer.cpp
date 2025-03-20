@@ -7,6 +7,7 @@
 #include <vulkan/vk_enum_string_helper.h>
 #include <vulkan/vulkan_core.h>
 
+#include <algorithm>
 #include <tracy/TracyVulkan.hpp>
 
 #include "GLFW/glfw3.h"
@@ -35,8 +36,6 @@ debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
   } else {
     LERROR("[{}: {}]\n{}\n", ms, mt, pCallbackData->pMessage);
   }
-  glfwTerminate();
-  exit(1);
 
   return VK_FALSE;
 }
@@ -128,13 +127,6 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info)
   // for (const auto& ext : extensions) {
   //   LINFO("{} {}", ext.extensionName, ext.specVersion);
   // }
-  assert(vkGetCalibratedTimestampsKHR);
-  assert(vkGetPhysicalDeviceCalibrateableTimeDomainsEXT);
-#ifdef TRACY_ENABLE
-  tracy_vk_ctx_ = TracyVkContextHostCalibrated(
-      vk2::get_device().phys_device(), vk2::get_device().device(), vkResetQueryPool,
-      vkGetPhysicalDeviceCalibrateableTimeDomainsEXT, vkGetCalibratedTimestampsEXT);
-#endif
 
   for (u64 i = 0; i < phys.queue_families.size(); i++) {
     if (i == queues_.graphics_queue_idx) continue;
@@ -174,16 +166,22 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info)
       frame.render_fence = vk2::get_device().create_fence();
       frame.swapchain_semaphore = vk2::get_device().create_semaphore();
       frame.render_semaphore = vk2::get_device().create_semaphore();
+#ifdef TRACY_ENABLE
+      frame.tracy_vk_ctx =
+          TracyVkContext(vk2::get_device().phys_device(), vk2::get_device().device(),
+                         queues_.graphics_queue, frame.main_cmd_buffer);
+#endif
     }
   }
 
   app_del_queue_.push([this]() {
-    for (const auto& frame : per_frame_data_) {
+    for (auto& frame : per_frame_data_) {
       auto& d = vk2::get_device();
       d.destroy_fence(frame.render_fence);
       d.destroy_semaphore(frame.render_semaphore);
       d.destroy_semaphore(frame.swapchain_semaphore);
       d.destroy_command_pool(frame.cmd_pool);
+      TracyVkDestroy(frame.tracy_vk_ctx);
     }
   });
   vk2::SamplerCache::init(device_);
@@ -418,7 +416,7 @@ void BaseRenderer::render_imgui(VkCommandBuffer cmd, uvec2 draw_extent,
       target_img_view, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, nullptr);
   VkRenderingInfo render_info = vk2::init::rendering_info({draw_extent.x, draw_extent.y},
                                                           &color_attachment, nullptr, nullptr);
-  vkCmdBeginRendering(cmd, &render_info);
+  vkCmdBeginRenderingKHR(cmd, &render_info);
   ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
-  vkCmdEndRendering(cmd);
+  vkCmdEndRenderingKHR(cmd);
 }

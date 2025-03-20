@@ -6,6 +6,7 @@
 #include <cassert>
 #include <filesystem>
 #include <tracy/Tracy.hpp>
+#include <tracy/TracyVulkan.hpp>
 
 #include "GLFW/glfw3.h"
 #include "SceneLoader.hpp"
@@ -111,99 +112,105 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
   auto cmd_begin_info = vk2::init::command_buffer_begin_info();
   VK_CHECK(vkResetCommandBuffer(cmd, 0));
   VK_CHECK(vkBeginCommandBuffer(cmd, &cmd_begin_info));
-  ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, default_pipeline_layout_, &main_set_, 0);
-  ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_COMPUTE, default_pipeline_layout_, &main_set_, 0);
-  state_.flush_transfers(queues_.graphics_queue_idx);
-
-  vk2::BindlessResourceAllocator::get().set_frame_num(curr_frame_num());
-  vk2::BindlessResourceAllocator::get().flush_deletions();
-
-  state_.transition(img_->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                    VK_ACCESS_2_MEMORY_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
-  state_.flush_barriers();
-
   {
-    struct {
-      uint idx;
-      float t;
-    } pc{img_->view().storage_img_resource().handle, static_cast<f32>(glfwGetTime())};
-    ctx.bind_compute_pipeline(PipelineManager::get().get(img_pipeline_)->pipeline);
-    ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-    ctx.dispatch((img_->extent().width + 16) / 16, (img_->extent().height + 16) / 16, 1);
-  }
+    TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "draw objects");
+    ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, default_pipeline_layout_, &main_set_,
+                            0);
+    ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_COMPUTE, default_pipeline_layout_, &main_set_,
+                            0);
+    state_.flush_transfers(queues_.graphics_queue_idx);
 
-  // draw
-  {
-    state_.transition(
-        img_->image(), VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-        VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
-    state_.transition(
-        depth_img_->image(),
-        VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-        VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-        VK_IMAGE_ASPECT_DEPTH_BIT);
+    vk2::BindlessResourceAllocator::get().set_frame_num(curr_frame_num());
+    vk2::BindlessResourceAllocator::get().flush_deletions();
+
+    state_.transition(img_->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                      VK_ACCESS_2_MEMORY_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
     state_.flush_barriers();
-    VkClearValue depth_clear{.depthStencil = {.depth = 1.f}};
-    VkRenderingAttachmentInfo color_attachment =
-        init::rendering_attachment_info(img_->view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    auto depth_att = init::rendering_attachment_info(
-        depth_img_->view(), VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, &depth_clear);
-    auto rendering_info = init::rendering_info(img_->extent_2d(), &color_attachment, &depth_att);
-    vkCmdBeginRenderingKHR(cmd, &rendering_info);
-    set_viewport_and_scissor(cmd, img_->extent_2d());
 
-    mat4 proj = info.proj;
-    proj[1][1] *= -1;
-
-    mat4 vp = proj * info.view;
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                      PipelineManager::get().get(draw_pipeline_)->pipeline);
-
-    // TODO: uniform buffer lol
-    for (auto& scene : loaded_scenes_) {
+    {
       struct {
-        mat4 vp;
-        u64 vbaddr;
-        u32 instance_buffer;
-      } pc{vp, scene.resources->vertex_buffer.device_addr(),
-           scene.resources->instance_buffer.resource_info_->handle};
+        uint idx;
+        float t;
+      } pc{img_->view().storage_img_resource().handle, static_cast<f32>(glfwGetTime())};
+      ctx.bind_compute_pipeline(PipelineManager::get().get(img_pipeline_)->pipeline);
       ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-      vkCmdBindIndexBuffer(cmd, scene.resources->index_buffer.buffer(), 0, VK_INDEX_TYPE_UINT32);
-      vkCmdDrawIndexedIndirect(cmd, scene.resources->draw_indirect_buffer.buffer(), 0,
-                               scene.resources->draw_cnt, sizeof(VkDrawIndexedIndirectCommand));
+      ctx.dispatch((img_->extent().width + 16) / 16, (img_->extent().height + 16) / 16, 1);
     }
-    vkCmdEndRenderingKHR(cmd);
-  }
 
-  state_.transition(img_->image(), VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_MEMORY_READ_BIT,
-                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
+    // draw
+    {
+      state_.transition(
+          img_->image(), VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+          VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+          VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
+      state_.transition(depth_img_->image(),
+                        VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                            VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                        VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                        VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT);
+      state_.flush_barriers();
+      VkClearValue depth_clear{.depthStencil = {.depth = 1.f}};
+      VkRenderingAttachmentInfo color_attachment =
+          init::rendering_attachment_info(img_->view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+      auto depth_att = init::rendering_attachment_info(
+          depth_img_->view(), VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, &depth_clear);
+      auto rendering_info = init::rendering_info(img_->extent_2d(), &color_attachment, &depth_att);
+      vkCmdBeginRenderingKHR(cmd, &rendering_info);
+      set_viewport_and_scissor(cmd, img_->extent_2d());
 
-  state_.transition(depth_img_->image(), VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, VK_ACCESS_2_NONE,
-                    VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT);
+      mat4 proj = info.proj;
+      proj[1][1] *= -1;
 
-  auto& swapchain_img = swapchain_.imgs[curr_swapchain_img_idx()];
-  state_.transition(swapchain_img, VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
+      mat4 vp = proj * info.view;
+      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                        PipelineManager::get().get(draw_pipeline_)->pipeline);
 
-  state_.flush_barriers();
+      // TODO: uniform buffer lol
+      for (auto& scene : loaded_scenes_) {
+        struct {
+          mat4 vp;
+          u64 vbaddr;
+          u32 instance_buffer;
+        } pc{vp, scene.resources->vertex_buffer.device_addr(),
+             scene.resources->instance_buffer.resource_info_->handle};
+        ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
+        vkCmdBindIndexBuffer(cmd, scene.resources->index_buffer.buffer(), 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexedIndirect(cmd, scene.resources->draw_indirect_buffer.buffer(), 0,
+                                 scene.resources->draw_cnt, sizeof(VkDrawIndexedIndirectCommand));
+      }
+      vkCmdEndRenderingKHR(cmd);
+    }
 
-  VkExtent3D dims{glm::min(img_->extent().width, swapchain_.dims.x),
-                  glm::min(img_->extent().height, swapchain_.dims.y), 1};
-  blit_img(cmd, img_->image(), swapchain_img, dims, VK_IMAGE_ASPECT_COLOR_BIT);
+    state_.transition(img_->image(), VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_MEMORY_READ_BIT,
+                      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
 
-  if (draw_imgui) {
-    state_.transition(swapchain_img, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    state_.transition(depth_img_->image(), VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, VK_ACCESS_2_NONE,
+                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT);
+
+    auto& swapchain_img = swapchain_.imgs[curr_swapchain_img_idx()];
+    state_.transition(swapchain_img, VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
+
     state_.flush_barriers();
-    render_imgui(cmd, {swapchain_.dims.x, swapchain_.dims.y},
-                 swapchain_.img_views[curr_swapchain_img_idx()]);
-  }
 
-  state_.transition(swapchain_img, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR,
-                    VK_ACCESS_2_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-  state_.flush_barriers();
+    VkExtent3D dims{glm::min(img_->extent().width, swapchain_.dims.x),
+                    glm::min(img_->extent().height, swapchain_.dims.y), 1};
+    blit_img(cmd, img_->image(), swapchain_img, dims, VK_IMAGE_ASPECT_COLOR_BIT);
+
+    if (draw_imgui) {
+      state_.transition(swapchain_img, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                        VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+      state_.flush_barriers();
+      render_imgui(cmd, {swapchain_.dims.x, swapchain_.dims.y},
+                   swapchain_.img_views[curr_swapchain_img_idx()]);
+    }
+
+    state_.transition(swapchain_img, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR,
+                      VK_ACCESS_2_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    state_.flush_barriers();
+    TracyVkCollect(curr_frame().tracy_vk_ctx, cmd);
+  }
   VK_CHECK(vkEndCommandBuffer(cmd));
 
   // wait for swapchain to be ready

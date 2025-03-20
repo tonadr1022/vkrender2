@@ -35,7 +35,7 @@ layout(scalar, push_constant) uniform PC {
 } pc;
 
 void main() {
-    InstanceData data = instance_buffers[pc.instance_buffer].instances[gl_DrawID];
+    InstanceData data = instance_buffers[pc.instance_buffer].instances[gl_InstanceIndex];
     Vertex v = pc.vertex_buffer.vertices[gl_VertexIndex];
     gl_Position = pc.view_proj * data.model * vec4(v.pos, 1.);
     out_normal = normalize(v.normal) * .5 + .5;

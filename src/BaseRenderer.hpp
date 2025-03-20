@@ -51,6 +51,9 @@ struct PerFrameData {
   VkCommandBuffer main_cmd_buffer;
   VkSemaphore swapchain_semaphore, render_semaphore;
   VkFence render_fence;
+#ifdef TRACY_ENABLE
+  tracy::VkCtx* tracy_vk_ctx{};
+#endif
 };
 
 struct QueueManager {
@@ -140,9 +143,6 @@ class BaseRenderer {
   uvec2 window_dims();
 
  private:
-#ifdef TRACY_ENABLE
-  tracy::VkCtx* tracy_vk_ctx_{};
-#endif
   std::function<void()> on_gui_callback_;
   vk2::DeletionQueue app_del_queue_;
   vk2::Swapchain::Status curr_frame_swapchain_status_;
