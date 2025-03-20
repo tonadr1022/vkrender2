@@ -70,7 +70,14 @@ void Device::init_impl(const CreateInfo& info) {
   sync2_features.synchronization2 = VK_TRUE;
   std::vector<const char*> extensions{{VK_KHR_COPY_COMMANDS_2_EXTENSION_NAME,
                                        VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
+#ifdef TRACY_ENABLE
+                                       VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME,
+#endif
                                        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME}};
+
+  // #ifndef NDEBUG
+  //   extensions.push_back(VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME);
+  // #endif
   // features12.drawIndirectCount = true;
   phys_selector.set_minimum_version(min_api_version_major, min_api_version_minor)
       .set_required_features_12(features12)

@@ -22,6 +22,7 @@ struct App {
                     [[maybe_unused]] int action, [[maybe_unused]] int mods);
   void on_hide_mouse_change(bool new_hide_mouse);
   void on_cursor_event(vec2 pos);
+  void on_imgui();
 
   Camera cam_data;
   CameraController cam;

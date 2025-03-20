@@ -171,8 +171,23 @@ bool ShaderManager::get_spirv_binary(const std::filesystem::path& path, VkShader
   ZoneScoped;
   assert(path.extension() != ".spv" && path.extension() != ".glsl");
   auto spv_path = std::filesystem::path(path.string() + ".spv");
+  auto glsl_path = std::filesystem::path(path.string() + ".glsl");
+
+  // {
+  //   std::string command = std::string(
+  //                             "glslang"
+  //                             " -V ") +
+  //                         glsl_path.string() + " -o " + spv_path.string();
+  //   // command += " -gVS";
+  //   int r = std::system(command.c_str());
+  //   if (r != 0) {
+  //     LINFO("Error compiling: {}", glsl_path.string());
+  //   }
+  //
+  //   return load_shader_bytes(spv_path, result.binary_data);
+  // }
+
   if (needs_new) {
-    auto glsl_path = std::filesystem::path(path.string() + ".glsl");
     if (!std::filesystem::exists(glsl_path)) {
       LERROR("glsl file does not exist for shader: {}", glsl_path.string());
       return false;
@@ -253,6 +268,7 @@ ShaderManager::LoadProgramResult ShaderManager::load_program(
     if (cached_shader_stages[i] && !dirty_shader_stages[i]) {
       continue;
     }
+
     if (!get_spirv_binary(shader_create_infos[i].path, shader_create_infos[i].stage,
                           spirv_binaries[i], dirty_shader_stages[i])) {
       return result;
@@ -506,6 +522,8 @@ bool compile_glsl_to_spirv(std::string path, VkShaderStageFlagBits stage,
   // TODO: only in debug?
   auto options = glslang::SpvOptions{
       .generateDebugInfo = true, .stripDebugInfo = false,
+      // .emitNonSemanticShaderDebugInfo = true,
+      // .emitNonSemanticShaderDebugSource = true,
       // .disableOptimizer = true,
   };
 

@@ -5,7 +5,7 @@
 
 namespace vk2 {
 constexpr int min_api_version_major = 1;
-constexpr int min_api_version_minor = 2;
+constexpr int min_api_version_minor = 3;
 
 void print_vk_error(size_t x, bool exit_prog = false);
 

@@ -76,6 +76,11 @@ struct VkRender2 final : public BaseRenderer {
 
   std::vector<LoadedScene> loaded_scenes_;
 
+  VkCommandPool imm_cmd_pool_;
+  VkCommandBuffer imm_cmd_buf_;
+  VkFence imm_fence_;
+  void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
+
   StateTracker state_;
   StateTracker transfer_q_state_;
   std::optional<vk2::Texture> depth_img_;

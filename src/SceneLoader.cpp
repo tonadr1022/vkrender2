@@ -69,9 +69,10 @@ u32 populate_indices(const fastgltf::Primitive& primitive, const fastgltf::Asset
   if (!primitive.indicesAccessor.has_value()) {
     return 0;
   }
+  u64 first_idx = indices.size();
   const auto& index_accessor = gltf.accessors[primitive.indicesAccessor.value()];
   indices.resize(indices.size() + index_accessor.count);
-  size_t i = 0;
+  size_t i = first_idx;
   fastgltf::iterateAccessor<u32>(gltf, index_accessor,
                                  [&](uint32_t index) { indices[i++] = index; });
   return index_accessor.count;
@@ -84,9 +85,9 @@ u32 populate_vertices(const fastgltf::Primitive& primitive, const fastgltf::Asse
     assert(0);
     return 0;
   }
+  u64 start_i = vertices.size();
   const auto& pos_accessor = gltf.accessors[pos_attrib->accessorIndex];
   vertices.reserve(vertices.size() + pos_accessor.count);
-  size_t i = 0;
   for (glm::vec3 pos : fastgltf::iterateAccessor<glm::vec3>(gltf, pos_accessor)) {
     vertices.emplace_back(Vertex{.pos = pos});
   }
@@ -96,9 +97,8 @@ u32 populate_vertices(const fastgltf::Primitive& primitive, const fastgltf::Asse
     const auto& accessor = gltf.accessors[uv_attrib->accessorIndex];
 
     assert(accessor.count == pos_accessor.count);
-    i = 0;
+    u64 i = start_i;
     for (glm::vec2 uv : fastgltf::iterateAccessor<glm::vec2>(gltf, accessor)) {
-      // vertices[i++].uv = uv;
       vertices[i].uv_x = uv.x;
       vertices[i++].uv_y = uv.y;
     }
@@ -107,7 +107,7 @@ u32 populate_vertices(const fastgltf::Primitive& primitive, const fastgltf::Asse
   const auto* normal_attrib = primitive.findAttribute("NORMAL");
   if (normal_attrib != primitive.attributes.end()) {
     const auto& normal_accessor = gltf.accessors[normal_attrib->accessorIndex];
-    i = 0;
+    u64 i = start_i;
     assert(normal_accessor.count == pos_accessor.count);
     for (glm::vec3 normal : fastgltf::iterateAccessor<glm::vec3>(gltf, normal_accessor)) {
       vertices[i++].normal = normal;

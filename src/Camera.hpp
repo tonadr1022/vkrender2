@@ -3,7 +3,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include "Common.hpp"
-#include "GLFW/glfw3.h"
+#include "Input.hpp"
 
 struct Camera {
   vec3 pos{0, 0, 5};
@@ -32,8 +32,8 @@ struct CameraController {
     cam.up = glm::normalize(glm::cross(cam.right, cam.front));
   }
 
-  void update_pos(GLFWwindow* window_, float dt) {
-    auto get_key = [&](int key) { return glfwGetKey(window_, key); };
+  void update_pos(GLFWwindow*, float dt) {
+    auto get_key = [&](int key) { return Input::key_down(key); };
     vec3 offset{};
     if (get_key(GLFW_KEY_W) || get_key(GLFW_KEY_I)) {
       offset += cam.front;

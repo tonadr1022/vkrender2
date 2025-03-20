@@ -79,7 +79,9 @@ glslang
 glslang-default-resource-limits
 spirv-reflect-static
 BS_thread_pool
+stb_image
 SPIRV
 )
 
+# target_compile_definitions(vkrender2 PRIVATE TRACY_VK_USE_SYMBOL_TABLE)
 target_compile_definitions(glm INTERFACE GLM_FORCE_DEPTH_ZERO_TO_ONE VK_NO_PROTOTYPES GLFW_INCLUDE_NONE)

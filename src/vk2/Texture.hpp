@@ -85,6 +85,9 @@ class Texture {
   Texture(Texture&& other) noexcept;
   Texture& operator=(Texture&& other) noexcept;
 
+  [[nodiscard]] VkExtent2D extent_2d() const {
+    return {create_info_.extent.width, create_info_.extent.height};
+  }
   [[nodiscard]] VkExtent3D extent() const { return create_info_.extent; }
   [[nodiscard]] VkImage image() const { return image_; }
   [[nodiscard]] VkFormat format() const { return create_info_.format; }

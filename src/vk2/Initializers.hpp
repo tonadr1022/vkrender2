@@ -34,6 +34,8 @@ namespace vk2::init {
 VkDependencyInfo dependency_info(std::span<VkBufferMemoryBarrier2> buffer_barriers,
                                  std::span<VkImageMemoryBarrier2> img_barriers);
 
+VkRenderingAttachmentInfo rendering_attachment_info(VkImageView texture, VkImageLayout layout,
+                                                    VkClearValue* clear_value = nullptr);
 VkRenderingAttachmentInfo rendering_attachment_info(vk2::TextureView& texture, VkImageLayout layout,
                                                     VkClearValue* clear_value = nullptr);
 VkRenderingInfo rendering_info(VkExtent2D render_extent,

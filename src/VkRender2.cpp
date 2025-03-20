@@ -8,7 +8,6 @@
 #include <tracy/Tracy.hpp>
 
 #include "GLFW/glfw3.h"
-#include "Logger.hpp"
 #include "SceneLoader.hpp"
 #include "StateTracker.hpp"
 #include "vk2/BindlessResourceAllocator.hpp"
@@ -48,6 +47,10 @@ VkRender2::VkRender2(const InitInfo& info)
 
   vk2::BindlessResourceAllocator::init(device_, vk2::get_device().allocator());
   vk2::StagingBufferPool::init();
+
+  imm_cmd_pool_ = vk2::get_device().create_command_pool(queues_.graphics_queue_idx);
+  imm_cmd_buf_ = vk2::get_device().create_command_buffer(imm_cmd_pool_);
+  main_del_q_.push([this]() { vk2::get_device().destroy_command_pool(imm_cmd_pool_); });
 
   main_del_q_.push([]() {
     vk2::PipelineManager::shutdown();
@@ -141,15 +144,14 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
         VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
         VK_IMAGE_ASPECT_DEPTH_BIT);
     state_.flush_barriers();
-    auto dims = window_dims();
     VkClearValue depth_clear{.depthStencil = {.depth = 1.f}};
     VkRenderingAttachmentInfo color_attachment =
         init::rendering_attachment_info(img_->view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     auto depth_att = init::rendering_attachment_info(
         depth_img_->view(), VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, &depth_clear);
-    auto rendering_info = init::rendering_info({dims.x, dims.y}, &color_attachment, &depth_att);
+    auto rendering_info = init::rendering_info(img_->extent_2d(), &color_attachment, &depth_att);
     vkCmdBeginRenderingKHR(cmd, &rendering_info);
-    set_viewport_and_scissor(cmd, {dims.x, dims.y});
+    set_viewport_and_scissor(cmd, img_->extent_2d());
 
     mat4 proj = info.proj;
     proj[1][1] *= -1;
@@ -186,7 +188,18 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
 
   state_.flush_barriers();
 
-  blit_img(cmd, img_->image(), swapchain_img, img_->extent(), VK_IMAGE_ASPECT_COLOR_BIT);
+  VkExtent3D dims{glm::min(img_->extent().width, swapchain_.dims.x),
+                  glm::min(img_->extent().height, swapchain_.dims.y), 1};
+  blit_img(cmd, img_->image(), swapchain_img, dims, VK_IMAGE_ASPECT_COLOR_BIT);
+
+  if (draw_imgui) {
+    state_.transition(swapchain_img, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    state_.flush_barriers();
+    render_imgui(cmd, {swapchain_.dims.x, swapchain_.dims.y},
+                 swapchain_.img_views[curr_swapchain_img_idx()]);
+  }
 
   state_.transition(swapchain_img, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR,
                     VK_ACCESS_2_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
@@ -263,7 +276,6 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path) {
   auto res = std::move(gfx::load_gltf(path).value());
   std::vector<VkDrawIndexedIndirectCommand> cmds;
   std::vector<InstanceData> transforms;
-  // u32 cmd_i{};
   for (auto& node : res.scene_graph_data.node_datas) {
     for (auto& mesh_indices : node.meshes) {
       auto& mesh = res.mesh_draw_infos[mesh_indices.mesh_idx];
@@ -325,8 +337,18 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path) {
   memcpy(staging->mapped_data(), cmds.data(), draw_indirect_buf_size);
   memcpy((char*)staging->mapped_data() + draw_indirect_buf_size, transforms.data(),
          instance_buf_size);
-  LINFO("transforms: {}", transforms.size());
-  LINFO("cmds : {}", cmds.size());
+  // {
+  //   immediate_submit([&](VkCommandBuffer cmd) {
+  //     copy_buffer(cmd, res.vert_idx_staging->buffer(), resources->vertex_buffer.buffer(), 0, 0,
+  //                 res.vertices_size);
+  //     copy_buffer(cmd, res.vert_idx_staging->buffer(), resources->index_buffer.buffer(),
+  //                 res.vertices_size, 0, res.indices_size);
+  //     copy_buffer(cmd, staging->buffer(), resources->draw_indirect_buffer.buffer(), 0, 0,
+  //                 draw_indirect_buf_size);
+  //     copy_buffer(cmd, staging->buffer(), resources->instance_buffer.buffer(),
+  //                 draw_indirect_buf_size, 0, instance_buf_size);
+  //   });
+  // }
 
   {
     VkCommandBuffer cmd = transfer_queue_manager_->get_cmd_buffer();
@@ -334,7 +356,6 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path) {
       auto info = vk2::init::command_buffer_begin_info();
       VK_CHECK(vkResetCommandBuffer(cmd, 0));
       VK_CHECK(vkBeginCommandBuffer(cmd, &info));
-
       copy_buffer(cmd, res.vert_idx_staging->buffer(), resources->vertex_buffer.buffer(), 0, 0,
                   res.vertices_size);
       copy_buffer(cmd, res.vert_idx_staging->buffer(), resources->index_buffer.buffer(),
@@ -379,3 +400,17 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path) {
 }
 
 void VkRender2::submit_static(SceneHandle, mat4) {}
+
+void VkRender2::immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function) {
+  imm_fence_ = FencePool::get().allocate(true);
+  VK_CHECK(vkResetCommandBuffer(imm_cmd_buf_, 0));
+  auto info = vk2::init::command_buffer_begin_info();
+  VK_CHECK(vkBeginCommandBuffer(imm_cmd_buf_, &info));
+  function(imm_cmd_buf_);
+  VK_CHECK(vkEndCommandBuffer(imm_cmd_buf_));
+  VkCommandBufferSubmitInfo cmd_info = init::command_buffer_submit_info(imm_cmd_buf_);
+  VkSubmitInfo2 submit = init::queue_submit_info(SPAN1(cmd_info), {}, {});
+  VK_CHECK(vkQueueSubmit2KHR(queues_.graphics_queue, 1, &submit, imm_fence_));
+  VK_CHECK(vkWaitForFences(device_, 1, &imm_fence_, true, 99999999999));
+  FencePool::get().free(imm_fence_);
+}

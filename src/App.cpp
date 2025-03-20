@@ -1,9 +1,10 @@
 #include "App.hpp"
 
 #include "GLFW/glfw3.h"
+#include "Input.hpp"
 #include "Logger.hpp"
 #include "VkRender2.hpp"
-
+#include "imgui.h"
 namespace {
 
 std::optional<std::filesystem::path> get_resource_dir() {
@@ -39,7 +40,6 @@ App::App(const InitInfo& info) : cam(cam_data, .1) {
   glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
   glfwWindowHint(GLFW_DECORATED, info.decorate);
   glfwWindowHint(GLFW_MAXIMIZED, info.maximize);
-  // glfwWindowHint(GLFW_FOCUSED, GLFW_FALSE);
   window = glfwCreateWindow(info.width, info.height, info.name, nullptr, nullptr);
   if (!window) {
     LCRITICAL("Failed to create window");
@@ -50,6 +50,8 @@ App::App(const InitInfo& info) : cam(cam_data, .1) {
   glfwSetKeyCallback(window, []([[maybe_unused]] GLFWwindow* win, [[maybe_unused]] int key,
                                 [[maybe_unused]] int scancode, [[maybe_unused]] int action,
                                 [[maybe_unused]] int mods) {
+    if (ImGui::GetIO().WantCaptureKeyboard) return;
+    Input::set_key_down(key, action == GLFW_PRESS || action == GLFW_REPEAT);
     ((App*)glfwGetWindowUserPointer(win))->on_key_event(key, scancode, action, mods);
   });
 
@@ -57,14 +59,17 @@ App::App(const InitInfo& info) : cam(cam_data, .1) {
     ((App*)glfwGetWindowUserPointer(win))->on_cursor_event({xpos, ypos});
   });
 
-  VkRender2::init(VkRender2::InitInfo{
-      .window = window, .resource_dir = resource_dir, .name = info.name, .vsync = info.vsync});
+  VkRender2::init(VkRender2::InitInfo{.window = window,
+                                      .resource_dir = resource_dir,
+                                      .name = info.name,
+                                      .vsync = info.vsync,
+                                      .on_gui_callback = [this]() { this->on_imgui(); }});
 }
 void App::run() {
   float last_time{};
-  // VkRender2::get().load_scene("/home/tony/models/Models/Sponza/glTF/Sponza.gltf");
-  VkRender2::get().load_scene(
-      "/home/tony/models/Models/MetalRoughSpheres/glTF/MetalRoughSpheres.gltf");
+  VkRender2::get().load_scene("/home/tony/models/Models/Sponza/glTF/Sponza.gltf");
+  // VkRender2::get().load_scene(
+  // "/home/tony/models/Models/MetalRoughSpheres/glTF/MetalRoughSpheres.gltf");
   // VkRender2::get().load_scene("/home/tony/models/Models/ABeautifulGame/glTF/ABeautifulGame.gltf");
   // VkRender2::get().load_scene(resource_dir / "models/Cube/glTF/Cube.gltf");
   while (!glfwWindowShouldClose(window)) {
@@ -88,6 +93,7 @@ void App::shutdown() const {
   glfwDestroyWindow(window);
   glfwTerminate();
 }
+
 void App::update(float dt) { cam.update_pos(window, dt); }
 
 void App::on_key_event([[maybe_unused]] int key, [[maybe_unused]] int scancode,
@@ -96,8 +102,12 @@ void App::on_key_event([[maybe_unused]] int key, [[maybe_unused]] int scancode,
     if (key == GLFW_KEY_ESCAPE) {
       on_hide_mouse_change(!hide_mouse);
     }
+    if (key == GLFW_KEY_G && mods & GLFW_MOD_ALT) {
+      VkRender2::get().draw_imgui = !VkRender2::get().draw_imgui;
+    }
   }
 }
+
 void App::on_hide_mouse_change(bool new_hide_mouse) {
   hide_mouse = new_hide_mouse;
   glfwSetInputMode(window, GLFW_CURSOR, hide_mouse ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
@@ -130,4 +140,12 @@ uvec2 App::window_dims() const {
   int x, y;
   glfwGetWindowSize(window, &x, &y);
   return {x, y};
+}
+
+void App::on_imgui() {
+  ImGui::Begin("hello");
+  ImGui::Text("world");
+  static char text[100] = "";
+  ImGui::InputText("input text", text, 100);
+  ImGui::End();
 }

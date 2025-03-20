@@ -91,6 +91,7 @@ target_include_directories(lib_imgui PUBLIC
     ${imgui_SOURCE_DIR}/backends
     ${Vulkan_INCLUDE_DIRS}
     )
+target_compile_definitions(lib_imgui PUBLIC IMGUI_IMPL_VULKAN_NO_PROTOTYPES)
 target_link_libraries(lib_imgui PRIVATE glfw volk::volk)
 
 FetchContent_Declare(
@@ -104,3 +105,6 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(bshoshany_thread_pool)
 add_library(BS_thread_pool INTERFACE)
 target_include_directories(BS_thread_pool INTERFACE ${bshoshany_thread_pool_SOURCE_DIR}/include)
+
+add_library(stb_image INTERFACE)
+target_include_directories(stb_image SYSTEM INTERFACE stb_image)

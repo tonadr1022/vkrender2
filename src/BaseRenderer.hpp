@@ -12,6 +12,9 @@
 #include "vk2/Swapchain.hpp"
 
 struct GLFWwindow;
+namespace tracy {
+struct VkCtx;
+}
 
 #ifndef NDEBUG
 #define VALIDATION_LAYERS_ENABLED 1
@@ -71,7 +74,6 @@ struct QueueManager {
   std::vector<VkCommandBuffer> free_cmd_buffers_;
   StateTracker state_tracker_;
   CmdPool cmd_pool_;
-  u32 queue_idx_{UINT32_MAX};
 };
 
 struct SceneDrawInfo {
@@ -87,6 +89,7 @@ class BaseRenderer {
     const char* name = "App";
     bool vsync{true};
     VkPresentModeKHR present_mode{VK_PRESENT_MODE_FIFO_KHR};
+    std::function<void()> on_gui_callback;
   };
 
   BaseRenderer(const BaseRenderer&) = delete;
@@ -99,6 +102,8 @@ class BaseRenderer {
   static constexpr u32 max_frames_in_flight{3};
   void draw(const SceneDrawInfo& info);
 
+  bool draw_imgui{true};
+
  protected:
   struct BaseInitInfo {
     u32 frames_in_flight{2};
@@ -108,6 +113,7 @@ class BaseRenderer {
   virtual void on_draw(const SceneDrawInfo& info);
   virtual void on_gui();
   virtual void on_resize();
+  void render_imgui(VkCommandBuffer cmd, uvec2 draw_extent, VkImageView target_img_view);
 
   QueueFamilies queues_;
   vkb::Instance instance_;
@@ -134,6 +140,10 @@ class BaseRenderer {
   uvec2 window_dims();
 
  private:
+#ifdef TRACY_ENABLE
+  tracy::VkCtx* tracy_vk_ctx_{};
+#endif
+  std::function<void()> on_gui_callback_;
   vk2::DeletionQueue app_del_queue_;
   vk2::Swapchain::Status curr_frame_swapchain_status_;
   bool resize_swapchain_req_{};
