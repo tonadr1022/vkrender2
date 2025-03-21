@@ -4,7 +4,6 @@
 #include <vulkan/vulkan_core.h>
 
 #include "Common.hpp"
-#include "Logger.hpp"
 #include "vk2/Texture.hpp"
 
 namespace vk2::init {
@@ -20,7 +19,6 @@ VkSubmitInfo2 queue_submit_info() {
 VkSubmitInfo2 queue_submit_info(std::span<VkCommandBufferSubmitInfo> cmds,
                                 std::span<VkSemaphoreSubmitInfo> wait_semaphores,
                                 std::span<VkSemaphoreSubmitInfo> submit_semaphores) {
-  LINFO("{} {}", wait_semaphores.size(), submit_semaphores.size());
   return VkSubmitInfo2{.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
                        .waitSemaphoreInfoCount = static_cast<u32>(wait_semaphores.size()),
                        .pWaitSemaphoreInfos = wait_semaphores.data(),

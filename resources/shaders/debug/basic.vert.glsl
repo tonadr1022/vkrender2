@@ -31,10 +31,11 @@ layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING, std430) readonly buff
     InstanceData instances[];
 } instance_buffers[];
 
-layout(scalar, push_constant) uniform PC {
+layout(push_constant) uniform PC {
     mat4 view_proj;
     VertexBuffer vertex_buffer;
     uint instance_buffer;
+    uint materials_buffer;
 } pc;
 
 void main() {

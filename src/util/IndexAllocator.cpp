@@ -12,7 +12,7 @@ u32 IndexAllocator::alloc() {
     return next_index_++;
   }
 
-  auto ret = free_list_.front();
+  auto ret = free_list_.back();
   free_list_.pop_back();
   return ret;
 }
@@ -20,9 +20,12 @@ u32 IndexAllocator::alloc() {
 void IndexAllocator::free(u32 idx) { free_list_.push_back(idx); }
 
 IndexAllocator::IndexAllocator(u32 size, bool expandable) : expandable_(expandable) {
-  for (u32 i = 0; i < size; i++) {
-    free_list_.push_back(i);
+  free_list_.reserve(size);
+  u32 j = 0;
+  while (j < size) {
+    free_list_.push_back(size - j);
     next_index_++;
+    j++;
   }
 }
 

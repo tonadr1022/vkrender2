@@ -12,6 +12,7 @@
 #include "vk2/Buffer.hpp"
 #include "vk2/DeletionQueue.hpp"
 #include "vk2/PipelineManager.hpp"
+#include "vk2/SamplerCache.hpp"
 #include "vk2/Texture.hpp"
 
 struct CmdEncoder {
@@ -70,7 +71,7 @@ struct VkRender2 final : public BaseRenderer {
   struct SceneGPUResources {
     vk2::Buffer vertex_buffer;
     vk2::Buffer index_buffer;
-    // vk2::Buffer materials_buffer;
+    vk2::Buffer materials_buffer;
     vk2::Buffer draw_indirect_buffer;
     vk2::Buffer instance_buffer;
     // std::vector<u32> material_indices;

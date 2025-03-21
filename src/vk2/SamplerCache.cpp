@@ -4,11 +4,12 @@
 
 #include <tracy/Tracy.hpp>
 
+#include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Hash.hpp"
 
 namespace vk2 {
 
-VkSampler SamplerCache::get_or_create_sampler(const VkSamplerCreateInfo& info) {
+Sampler SamplerCache::get_or_create_sampler(const VkSamplerCreateInfo& info) {
   ZoneScoped;
   auto h = std::make_tuple(info.addressModeU, info.addressModeV, info.addressModeW, info.minFilter,
                            info.magFilter, info.anisotropyEnable, info.maxAnisotropy, info.flags,
@@ -20,9 +21,11 @@ VkSampler SamplerCache::get_or_create_sampler(const VkSamplerCreateInfo& info) {
     return it->second;
   }
 
-  VkSampler sampler;
-  vkCreateSampler(device_, &info, nullptr, &sampler);
-
+  Sampler sampler;
+  vkCreateSampler(device_, &info, nullptr, &sampler.sampler);
+  assert(sampler.sampler);
+  sampler.resource_info =
+      BindlessResourceAllocator::get().allocate_sampler_descriptor(sampler.sampler);
   sampler_cache_.emplace(hash, sampler);
 
   return sampler;
@@ -30,7 +33,7 @@ VkSampler SamplerCache::get_or_create_sampler(const VkSamplerCreateInfo& info) {
 
 void SamplerCache::clear() {
   for (auto& [_, sampler] : sampler_cache_) {
-    vkDestroySampler(device_, sampler, nullptr);
+    vkDestroySampler(device_, sampler.sampler, nullptr);
   }
   sampler_cache_.clear();
 }

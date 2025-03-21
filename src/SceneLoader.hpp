@@ -7,6 +7,7 @@
 #include "Common.hpp"
 #include "Scene.hpp"
 #include "vk2/Buffer.hpp"
+#include "vk2/SamplerCache.hpp"
 #include "vk2/Texture.hpp"
 namespace gfx {
 

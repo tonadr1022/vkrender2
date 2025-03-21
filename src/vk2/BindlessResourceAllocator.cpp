@@ -5,6 +5,7 @@
 
 #include <tracy/Tracy.hpp>
 
+#include "Logger.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/Resource.hpp"
 #include "vk2/Texture.hpp"
@@ -129,6 +130,7 @@ BindlessResourceAllocator::~BindlessResourceAllocator() {
 BindlessResourceInfo BindlessResourceAllocator::allocate_sampled_img_descriptor(
     VkImageView view, VkImageLayout layout) {
   u32 handle = sampled_image_allocator_.alloc();
+  LINFO("sampled image handle {}", handle);
   VkDescriptorImageInfo img{.sampler = nullptr, .imageView = view, .imageLayout = layout};
   allocate_bindless_resource(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &img, nullptr, handle,
                              bindless_sampled_image_binding);
@@ -146,6 +148,7 @@ BindlessResourceInfo BindlessResourceAllocator::allocate_storage_img_descriptor(
 
 BindlessResourceInfo BindlessResourceAllocator::allocate_sampler_descriptor(VkSampler sampler) {
   u32 handle = sampler_allocator_.alloc();
+  LINFO("sampler handle {}", handle);
   VkDescriptorImageInfo info{.sampler = sampler};
   allocate_bindless_resource(VK_DESCRIPTOR_TYPE_SAMPLER, &info, nullptr, handle,
                              bindless_sampler_binding);
