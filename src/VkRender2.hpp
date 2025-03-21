@@ -75,6 +75,7 @@ struct VkRender2 final : public BaseRenderer {
     vk2::Buffer instance_buffer;
     // std::vector<u32> material_indices;
     std::vector<vk2::Sampler> samplers;
+    std::vector<vk2::Texture> textures;
     u32 draw_cnt{};
   };
 
