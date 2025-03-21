@@ -23,6 +23,11 @@ struct Box3D {
   vec3 max;
 };
 
+struct Material {
+  u32 albedo_idx;
+  u32 normal_idx;
+};
+
 struct PrimitiveDrawInfo {
   u32 first_index;
   u32 index_count;
@@ -40,6 +45,8 @@ struct PrimitiveDrawInfo {
 struct LoadedSceneData {
   SceneLoadData scene_graph_data;
   std::vector<vk2::Sampler> samplers;
+  std::vector<Material> materials;
+  std::vector<vk2::Texture> textures;
   std::vector<PrimitiveDrawInfo> mesh_draw_infos;
   vk2::Buffer* vert_idx_staging;
   u64 vertices_size;
@@ -51,6 +58,8 @@ struct LoadedSceneBaseData {
   std::vector<PrimitiveDrawInfo> mesh_draw_infos;
   std::vector<Vertex> vertices;
   std::vector<u32> indices;
+  std::vector<vk2::Texture> textures;
+  std::vector<Material> materials;
   std::vector<vk2::Sampler> samplers;
 };
 

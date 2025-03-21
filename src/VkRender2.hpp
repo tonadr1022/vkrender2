@@ -63,12 +63,14 @@ struct VkRender2 final : public BaseRenderer {
 
   struct InstanceData {
     mat4 transform;
+    u32 material_id;
   };
 
   // TODO: refactor
   struct SceneGPUResources {
     vk2::Buffer vertex_buffer;
     vk2::Buffer index_buffer;
+    vk2::Buffer materials_buffer;
     vk2::Buffer draw_indirect_buffer;
     vk2::Buffer instance_buffer;
     // std::vector<u32> material_indices;
@@ -91,6 +93,9 @@ struct VkRender2 final : public BaseRenderer {
   StateTracker transfer_q_state_;
   std::optional<vk2::Texture> depth_img_;
   std::optional<vk2::Texture> img_;
+  struct DefaultData {
+    std::optional<vk2::Texture> white_img;
+  } default_data_;
 
   vk2::DeletionQueue main_del_q_;
   std::filesystem::path shader_dir_;
@@ -106,4 +111,6 @@ struct VkRender2 final : public BaseRenderer {
   VkDescriptorSet main_set_{};
   VmaAllocator allocator_;
   // end non owning
+ public:
+  [[nodiscard]] const DefaultData& get_default_data() const { return default_data_; }
 };

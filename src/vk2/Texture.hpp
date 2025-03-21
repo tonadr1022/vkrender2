@@ -60,10 +60,10 @@ class TextureView {
   TextureView& operator=(const TextureView&) = delete;
 
   // TODO: use pointers or optionals?
-  const BindlessResourceInfo& storage_img_resource() {
+  [[nodiscard]] const BindlessResourceInfo& storage_img_resource() const {
     return storage_image_resource_info_.value();
   }
-  const BindlessResourceInfo& sampled_img_resource() {
+  [[nodiscard]] const BindlessResourceInfo& sampled_img_resource() const {
     return sampled_image_resource_info_.value();
   }
   [[nodiscard]] VkImageView view() const { return view_; }
@@ -93,6 +93,7 @@ class Texture {
   [[nodiscard]] VkFormat format() const { return create_info_.format; }
 
   [[nodiscard]] TextureView& view() { return view_.value(); }
+  [[nodiscard]] const TextureView& view() const { return view_.value(); }
 
  private:
   friend class Device;

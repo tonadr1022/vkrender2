@@ -8,6 +8,7 @@
 
 layout(location = 0) out vec3 out_normal;
 layout(location = 1) out vec2 out_uv;
+layout(location = 2) flat out uint material_id;
 
 struct Vertex {
     vec3 pos;
@@ -20,8 +21,10 @@ layout(std430, buffer_reference, buffer_reference_align = 32) buffer VertexBuffe
     Vertex vertices[];
 };
 
+// TODO: more indirection?
 struct InstanceData {
     mat4 model;
+    uint material_id;
 };
 
 layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING, std430) readonly buffer InstanceBuffers {
