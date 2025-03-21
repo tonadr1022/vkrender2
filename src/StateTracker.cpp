@@ -26,9 +26,9 @@ StateTracker& StateTracker::add_image(VkImage image, VkAccessFlags2 access,
 VkImageSubresourceRange StateTracker::default_image_subresource_range(VkImageAspectFlags aspect) {
   return {.aspectMask = aspect,
           .baseMipLevel = 0,
-          .levelCount = 1,
+          .levelCount = VK_REMAINING_MIP_LEVELS,
           .baseArrayLayer = 0,
-          .layerCount = 1};
+          .layerCount = VK_REMAINING_ARRAY_LAYERS};
 }
 
 StateTracker& StateTracker::transition(VkImage image, VkPipelineStageFlags2 dst_stage,
@@ -138,7 +138,7 @@ StateTracker& StateTracker::queue_transfer_buffer(StateTracker& dst_tracker,
   return *this;
 }
 StateTracker& StateTracker::flush_transfers(u32 queue_idx) {
-  auto info = vk2::init::dependency_info(buffer_transfer_barriers_[queue_idx], {});
+  auto info = vk2::init::dependency_info(buffer_transfer_barriers_[queue_idx], img_barriers_);
   vkCmdPipelineBarrier2KHR(cmd_, &info);
   buffer_transfer_barriers_[queue_idx].clear();
   return *this;

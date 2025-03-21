@@ -280,7 +280,12 @@ void VkRender2::set_viewport_and_scissor(VkCommandBuffer cmd, VkExtent2D extent)
 }
 
 SceneHandle VkRender2::load_scene(const std::filesystem::path& path) {
-  auto res = std::move(gfx::load_gltf(path).value());
+  auto ret = gfx::load_gltf(path);
+  if (!ret.has_value()) {
+    return {};
+  }
+  auto res = std::move(ret.value());
+
   std::vector<VkDrawIndexedIndirectCommand> cmds;
   std::vector<InstanceData> transforms;
   for (auto& node : res.scene_graph_data.node_datas) {

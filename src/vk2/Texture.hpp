@@ -122,6 +122,7 @@ struct TextureViewDeleteInfo {
 };
 
 Texture create_texture_2d(VkFormat format, uvec3 dims, TextureUsage usage);
+Texture create_texture_2d_mip(VkFormat format, uvec3 dims, TextureUsage usage, u32 levels);
 
 uint32_t get_mip_levels(VkExtent2D size);
 VkImageType vkviewtype_to_img_type(VkImageViewType view_type);
@@ -129,5 +130,10 @@ bool format_is_stencil(VkFormat format);
 bool format_is_depth(VkFormat format);
 bool format_is_srgb(VkFormat format);
 bool format_is_color(VkFormat format);
+
+uint32_t format_storage_size(VkFormat format);
+bool format_is_block_compreesed(VkFormat format);
+u64 block_compressed_image_size(VkFormat format, uvec3 extent);
+u64 img_to_buffer_size(VkFormat format, uvec3 extent);
 
 }  // namespace vk2

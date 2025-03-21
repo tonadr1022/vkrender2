@@ -44,6 +44,10 @@ struct VkRender2 final : public BaseRenderer {
   SceneHandle load_scene(const std::filesystem::path& path);
   void submit_static(SceneHandle scene, mat4 transform = mat4{1});
 
+  // TODO: private
+  void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
+  [[nodiscard]] const QueueFamilies& get_queues() const { return queues_; }
+
  private:
   template <typename T>
   struct InFlightResource {
@@ -82,7 +86,6 @@ struct VkRender2 final : public BaseRenderer {
   VkCommandPool imm_cmd_pool_;
   VkCommandBuffer imm_cmd_buf_;
   VkFence imm_fence_;
-  void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
 
   StateTracker state_;
   StateTracker transfer_q_state_;

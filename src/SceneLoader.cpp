@@ -1,9 +1,12 @@
 #include "SceneLoader.hpp"
 
+#include <ktx.h>
+#include <ktxvulkan.h>
 #include <volk.h>
 #include <vulkan/vulkan_core.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <fastgltf/core.hpp>
 #include <fastgltf/glm_element_traits.hpp>
@@ -12,12 +15,16 @@
 #include <future>
 
 #include "Scene.hpp"
+#include "StateTracker.hpp"
 #include "ThreadPool.hpp"
+#include "VkRender2.hpp"
 #include "vk2/StagingBufferPool.hpp"
+#include "vk2/VkCommon.hpp"
 
 // #include "ThreadPool.hpp"
 
 #include "stb_image.h"
+#include "vk2/Texture.hpp"
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/quaternion.hpp>
@@ -26,49 +33,51 @@
 #include "Logger.hpp"
 #include "vk2/Buffer.hpp"
 
+// ktx loading inspired/ripped from:
+// https://github.com/JuanDiegoMontoya/Frogfood/blob/be82e484baab02b7ce3e80d36eb7c9291d97ebcb/src/Fvog/detail/ApiToEnum2.cpp#L4
 namespace gfx {
 
 namespace {
 
-VkFilter gltf_to_vk_filter(fastgltf::Filter filter) {
-  switch (filter) {
-    // nearest
-    case fastgltf::Filter::Nearest:
-    case fastgltf::Filter::NearestMipMapNearest:
-    case fastgltf::Filter::NearestMipMapLinear:
-      return VK_FILTER_NEAREST;
-
-      // linear
-    case fastgltf::Filter::Linear:
-    case fastgltf::Filter::LinearMipMapLinear:
-    case fastgltf::Filter::LinearMipMapNearest:
-    default:
-      return VK_FILTER_LINEAR;
-  }
-}
-
-VkSamplerMipmapMode gltf_to_vk_mipmap_mode(fastgltf::Filter filter) {
-  switch (filter) {
-    case fastgltf::Filter::NearestMipMapNearest:
-    case fastgltf::Filter::LinearMipMapNearest:
-      return VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    case fastgltf::Filter::NearestMipMapLinear:
-    case fastgltf::Filter::LinearMipMapLinear:
-    default:
-      return VK_SAMPLER_MIPMAP_MODE_NEAREST;
-  }
-}
-
-VkSamplerAddressMode gltf_to_vk_wrap_mode(fastgltf::Wrap wrap) {
-  switch (wrap) {
-    case fastgltf::Wrap::ClampToEdge:
-      return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    case fastgltf::Wrap::MirroredRepeat:
-      return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
-    default:
-      return VK_SAMPLER_ADDRESS_MODE_REPEAT;
-  }
-}
+// VkFilter gltf_to_vk_filter(fastgltf::Filter filter) {
+//   switch (filter) {
+//     // nearest
+//     case fastgltf::Filter::Nearest:
+//     case fastgltf::Filter::NearestMipMapNearest:
+//     case fastgltf::Filter::NearestMipMapLinear:
+//       return VK_FILTER_NEAREST;
+//
+//       // linear
+//     case fastgltf::Filter::Linear:
+//     case fastgltf::Filter::LinearMipMapLinear:
+//     case fastgltf::Filter::LinearMipMapNearest:
+//     default:
+//       return VK_FILTER_LINEAR;
+//   }
+// }
+//
+// VkSamplerMipmapMode gltf_to_vk_mipmap_mode(fastgltf::Filter filter) {
+//   switch (filter) {
+//     case fastgltf::Filter::NearestMipMapNearest:
+//     case fastgltf::Filter::LinearMipMapNearest:
+//       return VK_SAMPLER_MIPMAP_MODE_LINEAR;
+//     case fastgltf::Filter::NearestMipMapLinear:
+//     case fastgltf::Filter::LinearMipMapLinear:
+//     default:
+//       return VK_SAMPLER_MIPMAP_MODE_NEAREST;
+//   }
+// }
+//
+// VkSamplerAddressMode gltf_to_vk_wrap_mode(fastgltf::Wrap wrap) {
+//   switch (wrap) {
+//     case fastgltf::Wrap::ClampToEdge:
+//       return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+//     case fastgltf::Wrap::MirroredRepeat:
+//       return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
+//     default:
+//       return VK_SAMPLER_ADDRESS_MODE_REPEAT;
+//   }
+// }
 
 u32 populate_indices(const fastgltf::Primitive& primitive, const fastgltf::Asset& gltf,
                      std::vector<uint32_t>& indices) {
@@ -246,79 +255,160 @@ void load_scene_graph_data(SceneLoadData& result, fastgltf::Asset& gltf) {
 
 struct CpuImageData {
   u32 w, h, channels;
-  void* data;
+  bool is_ktx{};
+  VkFormat format;
+  std::unique_ptr<unsigned char[], decltype([](unsigned char* p) { stbi_image_free(p); })>
+      non_ktx_data;
+  std::unique_ptr<ktxTexture2, decltype([](ktxTexture2* p) { ktxTexture_Destroy(ktxTexture(p)); })>
+      ktx_data;
 };
 
-void load_gltf_img(fastgltf::Asset& asset, fastgltf::Image& image,
-                   const std::filesystem::path& directory, CpuImageData& result) {
-  int w{}, h{}, channels{};
-  unsigned char* data = nullptr;
+enum class ImageUsage : u8 {
+  BaseColor,
+  Normal,
+  MetallicRoughness,
+  OccRoughnessMetallic,
+  Emissive,
+  Occlusion
+};
+
+void load_cpu_img_data(fastgltf::Asset& asset, fastgltf::Image& image, const std::filesystem::path&,
+                       CpuImageData& result, ImageUsage usage) {
+  auto get_vk_format = [&](bool is_ktx) {
+    switch (usage) {
+      case ImageUsage::BaseColor:
+      case ImageUsage::Emissive:
+        return is_ktx ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_R8G8B8A8_SRGB;
+      case ImageUsage::MetallicRoughness:
+      case ImageUsage::Occlusion:
+      case ImageUsage::Normal:
+      case ImageUsage::OccRoughnessMetallic:
+        return is_ktx ? VK_FORMAT_BC7_UNORM_BLOCK : VK_FORMAT_R8G8B8A8_UNORM;
+    }
+  };
+  auto load_non_ktx = [&](void* data, u64 size) {
+    int w, h, channels;
+    auto* pixels = stbi_load_from_memory(reinterpret_cast<unsigned char*>(data),
+                                         static_cast<int>(size), &w, &h, &channels, 4);
+    result.w = w;
+    result.h = h;
+    result.channels = channels;
+    result.non_ktx_data.reset(pixels);
+    result.format = get_vk_format(false);
+  };
+  auto load_ktx = [&](void* data, u64 size) {
+    ktxTexture2* ktx_tex{};
+    if (auto result =
+            ktxTexture2_CreateFromMemory(reinterpret_cast<const ktx_uint8_t*>(data), size,
+                                         KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktx_tex);
+        result != KTX_SUCCESS) {
+      assert(0);
+    }
+    result.ktx_data.reset(ktx_tex);
+    result.w = ktx_tex->baseWidth;
+    result.h = ktx_tex->baseHeight;
+    result.channels = ktxTexture2_GetNumComponents(ktx_tex);
+    result.format = get_vk_format(true);
+    if (ktxTexture2_NeedsTranscoding(ktx_tex)) {
+      ZoneScopedN("Transcode KTX 2 Texture");
+      ktx_transcode_fmt_e ktx_transcode_format{};
+      switch (usage) {
+        case ImageUsage::BaseColor:
+        case ImageUsage::Emissive:
+        case ImageUsage::MetallicRoughness:
+        case ImageUsage::Occlusion:
+        case ImageUsage::Normal:
+        case ImageUsage::OccRoughnessMetallic:
+          ktx_transcode_format = KTX_TTF_BC7_RGBA;
+          break;
+      }
+      if (auto result =
+              ktxTexture2_TranscodeBasis(ktx_tex, ktx_transcode_format, KTX_TF_HIGH_QUALITY);
+          result != KTX_SUCCESS) {
+        assert(false);
+      }
+    } else {
+      result.format = static_cast<VkFormat>(ktx_tex->vkFormat);
+    }
+  };
+
   std::visit(
       fastgltf::visitor{
-          [&](fastgltf::sources::URI& file_path) {
-            assert(file_path.fileByteOffset == 0);
-            const std::string path(file_path.uri.path().begin(), file_path.uri.path().end());
-            auto full_path = directory / path;
-            if (!std::filesystem::exists(full_path)) {
-              LINFO("glTF Image load fail: path does not exist {}", full_path.string());
+          [&](fastgltf::sources::Array& arr) {
+            result.is_ktx = arr.mimeType == fastgltf::MimeType::KTX2;
+            if (result.is_ktx) {
+              load_ktx(arr.bytes.data(), arr.bytes.size() * sizeof(std::byte));
+            } else {
+              load_non_ktx(arr.bytes.data(), arr.bytes.size_bytes());
             }
-            data = stbi_load(full_path.string().c_str(), &w, &h, &channels, 4);
           },
           [&](fastgltf::sources::Vector& vector) {
-            data =
-                stbi_load_from_memory(reinterpret_cast<unsigned char*>(vector.bytes.data()),
-                                      static_cast<int>(vector.bytes.size()), &w, &h, &channels, 4);
+            result.is_ktx = vector.mimeType == fastgltf::MimeType::KTX2;
+            if (result.is_ktx) {
+              load_ktx(vector.bytes.data(), vector.bytes.size() * sizeof(std::byte));
+            } else {
+              load_non_ktx(vector.bytes.data(), vector.bytes.size() * sizeof(std::byte));
+            }
+          },
+          [&](fastgltf::sources::URI&) {
+            assert(0);
+            // assert(file_path.fileByteOffset == 0);
+            // const std::string path(file_path.uri.path().begin(),
+            // file_path.uri.path().end()); auto full_path = directory / path;
+            // if
+            // (!std::filesystem::exists(full_path)) {
+            //   LERROR("glTF Image load fail: path does not exist {}",
+            //   full_path.string());
+            // }
+            // if (file_path.mimeType == fastgltf::MimeType::KTX2) {
+            //   result.is_ktx = true;
+            //   LERROR("URI ktx unhandled");
+            // } else if (file_path.mimeType == fastgltf::MimeType::PNG ||
+            //            file_path.mimeType == fastgltf::MimeType::JPEG) {
+            //   data = stbi_load(full_path.string().c_str(), &w, &h,
+            //   &channels, 4);
+            // } else {
+            //   LERROR("unhandled uri type for loading image");
+            // }
           },
           [&](fastgltf::sources::BufferView& view) {
-            if (view.mimeType == fastgltf::MimeType::KTX2) {
-              LINFO("ktx2 unhandled");
-              return;
-            }
+            result.is_ktx = view.mimeType == fastgltf::MimeType::KTX2;
             auto& buffer_view = asset.bufferViews[view.bufferViewIndex];
             auto& buffer = asset.buffers[buffer_view.bufferIndex];
-            std::visit(fastgltf::visitor{
-                           [](auto&) {},
-                           [&](fastgltf::sources::Array& vector) {
-                             data = stbi_load_from_memory(
-                                 reinterpret_cast<unsigned char*>(vector.bytes.data() +
-                                                                  buffer_view.byteOffset),
-                                 static_cast<int>(buffer_view.byteLength), &w, &h, &channels, 4);
-                           },
-                           [&](fastgltf::sources::Vector& vector) {
-                             data = stbi_load_from_memory(
-                                 reinterpret_cast<unsigned char*>(vector.bytes.data() +
-                                                                  buffer_view.byteOffset),
-                                 static_cast<int>(buffer_view.byteLength), &w, &h, &channels, 4);
-                           },
-                       },
-                       buffer.data);
+            std::visit(
+                fastgltf::visitor{
+                    [](auto&) {},
+                    [&](fastgltf::sources::Array& arr) {
+                      if (result.is_ktx) {
+                        load_ktx(arr.bytes.data(), arr.bytes.size() * sizeof(std::byte));
+                      } else {
+                        load_non_ktx(arr.bytes.data(), arr.bytes.size_bytes());
+                      }
+                    },
+                    [&](fastgltf::sources::Vector& vector) {
+                      if (result.is_ktx) {
+                        load_ktx(vector.bytes.data(), vector.bytes.size() * sizeof(std::byte));
+                      } else {
+                        load_non_ktx(vector.bytes.data(), vector.bytes.size() * sizeof(std::byte));
+                      }
+                    },
+                },
+                buffer.data);
           },
-          [](fastgltf::sources::ByteView&) {}, [](fastgltf::sources::Fallback&) {},
-          [&](fastgltf::sources::Array& arr) {
-            if (arr.mimeType != fastgltf::MimeType::JPEG &&
-                arr.mimeType != fastgltf::MimeType::PNG) {
-              LINFO("unhandled mimetype");
-              return;
-            }
-            data = stbi_load_from_memory(reinterpret_cast<unsigned char*>(arr.bytes.data()),
-                                         static_cast<int>(arr.bytes.size_bytes()), &w, &h,
-                                         &channels, 4);
-          },
-          [](auto&) { LINFO("not valid image path uh oh spaghettio"); }},
+          [](auto&) {
+            LERROR("not valid image path uh oh spaghettio");
+            assert(0);
+          }},
       image.data);
-
-  result.w = w;
-  result.h = h;
-  result.channels = channels;
-  result.data = data;
 }
 
 }  // namespace
 
 std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& path) {
+  ZoneScoped;
   std::optional<LoadedSceneBaseData> result = std::nullopt;
   if (!std::filesystem::exists(path)) {
-    LINFO("Failed to load glTF: directory {} does not exist", path.string());
+    LERROR("Failed to load glTF: directory {} does not exist", path.string());
     return result;
   }
 
@@ -337,58 +427,252 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
   auto parent_path = std::filesystem::path(path).parent_path();
   auto load_ret = parser.loadGltf(gltf_file.get(), parent_path, gltf_options);
   if (!load_ret) {
-    LINFO("Failed to load glTF\n\tpath: {}\n\terror: {}\n", path.string(),
-          fastgltf::getErrorMessage(load_ret.error()));
+    LERROR("Failed to load glTF\n\tpath: {}\n\terror: {}\n", path.string(),
+           fastgltf::getErrorMessage(load_ret.error()));
     return result;
   }
 
   fastgltf::Asset gltf = std::move(load_ret.get());
   result = LoadedSceneBaseData{};
 
+  std::vector<ImageUsage> img_usages(gltf.images.size(), ImageUsage::BaseColor);
+  {
+    ZoneScopedN("determine usages");
+    auto set_usage = [&img_usages](const fastgltf::Texture& tex, ImageUsage usage) {
+      std::size_t idx = tex.basisuImageIndex.value_or(tex.imageIndex.value_or(UINT32_MAX));
+      if (idx != UINT32_MAX) {
+        img_usages[idx] = usage;
+      }
+    };
+    for (const auto& gltf_mat : gltf.materials) {
+      if (gltf_mat.pbrData.baseColorTexture.has_value()) {
+        set_usage(gltf.textures[gltf_mat.pbrData.baseColorTexture.value().textureIndex],
+                  ImageUsage::BaseColor);
+      }
+      if (gltf_mat.pbrData.metallicRoughnessTexture.has_value()) {
+        set_usage(gltf.textures[gltf_mat.pbrData.metallicRoughnessTexture.value().textureIndex],
+                  ImageUsage::MetallicRoughness);
+      }
+      if (gltf_mat.emissiveTexture.has_value()) {
+        set_usage(gltf.textures[gltf_mat.emissiveTexture.value().textureIndex],
+                  ImageUsage::Emissive);
+      }
+      if (gltf_mat.normalTexture.has_value()) {
+        set_usage(gltf.textures[gltf_mat.normalTexture.value().textureIndex], ImageUsage::Normal);
+      }
+      if (gltf_mat.occlusionTexture.has_value()) {
+        set_usage(gltf.textures[gltf_mat.occlusionTexture.value().textureIndex],
+                  ImageUsage::Occlusion);
+      }
+      if (gltf_mat.packedOcclusionRoughnessMetallicTextures) {
+        if (gltf_mat.packedOcclusionRoughnessMetallicTextures->occlusionRoughnessMetallicTexture
+                .has_value()) {
+          set_usage(gltf.textures[gltf_mat.packedOcclusionRoughnessMetallicTextures
+                                      ->occlusionRoughnessMetallicTexture.value()
+                                      .textureIndex],
+                    ImageUsage::OccRoughnessMetallic);
+        }
+      }
+    }
+  }
   std::vector<CpuImageData> images(gltf.images.size());
   std::vector<std::future<void>> futures(images.size());
   {
     ZoneScopedN("load images");
     for (u64 i = 0; i < images.size(); i++) {
-      futures[i] = threads::pool.submit_task([i, &gltf, &parent_path, &images]() {
-        load_gltf_img(gltf, gltf.images[i], parent_path, images[i]);
+      futures[i] = threads::pool.submit_task([i, &gltf, &parent_path, &images, &img_usages]() {
+        load_cpu_img_data(gltf, gltf.images[i], parent_path, images[i], img_usages[i]);
       });
     }
     for (auto& f : futures) {
       f.get();
     }
+    futures.clear();
   }
-  struct MatTextureLoadData {
-    u32 albedo_img_idx;
+
+  struct ImgUploadInfo {
+    uvec3 extent{};
+    size_t size;
+    void* data;
+    size_t staging_offset;
+    u32 level;
+    u32 img_idx;
   };
-  std::vector<VkFormat> vulkan_formats(gltf.textures.size(), VK_FORMAT_UNDEFINED);
-  std::vector<MatTextureLoadData> materials(gltf.materials.size());
-  for (u64 i = 0; i < gltf.materials.size(); i++) {
-    const auto& gltf_mat = gltf.materials[i];
-    auto& mat = materials[i];
-    if (gltf_mat.pbrData.baseColorTexture.has_value()) {
-      const auto& color_tex = gltf_mat.pbrData.baseColorTexture.value();
-      mat.albedo_img_idx = color_tex.textureIndex;
-      auto& t = gltf.textures[color_tex.textureIndex];
-      if (t.imageIndex.has_value()) {
-        vulkan_formats[t.imageIndex.value()] = VK_FORMAT_R8G8B8A8_SRGB;
+  std::vector<ImgUploadInfo> img_upload_infos;
+  img_upload_infos.reserve(images.size());
+  std::vector<vk2::Texture> textures;
+  textures.reserve(images.size());
+  size_t staging_offset{};
+  for (auto& img : images) {
+    if (img.is_ktx) {
+      assert(img.ktx_data && "need ktx data if the img is ktx");
+      assert(!img.non_ktx_data);
+      auto* ktx = img.ktx_data.get();
+      assert(ktx->numLevels > 0);
+      u64 tot = 0;
+      for (u32 level = 0; level < ktx->numLevels; level++) {
+        size_t level_offset;
+        ktxTexture_GetImageOffset(ktxTexture(ktx), level, 0, 0, &level_offset);
+        u32 w = std::max(img.w >> level, 1u);
+        u32 h = std::max(img.h >> level, 1u);
+        size_t size = vk2::img_to_buffer_size(img.format, {w, h, 1});
+        tot += size;
+        img_upload_infos.emplace_back(ImgUploadInfo{.extent = {w, h, 1},
+                                                    .size = size,
+                                                    .data = ktx->pData + level_offset,
+                                                    .staging_offset = staging_offset,
+                                                    .level = level,
+                                                    .img_idx = static_cast<u32>(textures.size())});
+        staging_offset += size;
       }
+
+      textures.emplace_back(vk2::create_texture_2d_mip(
+          img.format, {img.w, img.h, 1}, vk2::TextureUsage::ReadOnly, ktx->numLevels));
+      assert(tot == ktx->dataSize);
+    } else {
+      // TODO: mip gen?
+      size_t size = vk2::img_to_buffer_size(img.format, {img.w, img.h, 1});
+      assert(img.non_ktx_data);
+      assert(!img.ktx_data);
+      img_upload_infos.emplace_back(ImgUploadInfo{.extent = {img.w, img.w, 1},
+                                                  .size = size,
+                                                  .data = img.non_ktx_data.get(),
+                                                  .staging_offset = staging_offset,
+                                                  .level = 0,
+                                                  .img_idx = static_cast<u32>(textures.size())});
+      textures.emplace_back(vk2::create_texture_2d_mip(img.format, {img.w, img.h, 1},
+                                                       vk2::TextureUsage::ReadOnly, 1));
+      staging_offset += size;
     }
   }
+
+  assert(textures.size() == images.size());
+  {
+    ZoneScopedN("upload images");
+    constexpr size_t max_batch_upload_size = 1'000'000'000;
+    size_t batch_upload_size = std::min(max_batch_upload_size, staging_offset);
+    assert(batch_upload_size < max_batch_upload_size);
+    vk2::Buffer* img_staging = vk2::StagingBufferPool::get().acquire(batch_upload_size);
+    size_t bytes_remaining = staging_offset;
+    u64 img_i{};
+    u64 curr_staging_offset = 0;
+    u64 start_copy_idx{};
+    // u64 end_copy_idx{};
+    StateTracker state;
+    auto flush_uploads = [&]() {
+      for (u64 i = 0; i < img_i; i++) {
+        if (futures[i].valid()) futures[i].get();
+      }
+      futures.clear();
+      VkRender2::get().immediate_submit([start_copy_idx, end_copy_idx = img_i - 1,
+                                         &img_upload_infos, &img_staging, &textures, &state,
+                                         curr_staging_offset](VkCommandBuffer cmd) {
+        state.reset(cmd);
+        for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
+          const auto& img_upload = img_upload_infos[i];
+          state.transition(textures[img_upload.img_idx].image(), VK_PIPELINE_STAGE_2_COPY_BIT,
+                           VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        }
+        state.flush_barriers();
+
+        for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
+          const auto& img_upload = img_upload_infos[i];
+          const auto& texture = textures[img_upload.img_idx];
+          vkCmdCopyBufferToImage2KHR(
+              cmd, vk2::addr(VkCopyBufferToImageInfo2{
+                       .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2_KHR,
+                       .srcBuffer = img_staging->buffer(),
+                       .dstImage = texture.image(),
+                       .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                       .regionCount = 1,
+                       .pRegions = vk2::addr(VkBufferImageCopy2{
+                           .sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
+                           .bufferOffset = img_upload.staging_offset - curr_staging_offset,
+                           .bufferRowLength = 0,
+                           .bufferImageHeight = 0,
+                           .imageSubresource =
+                               {
+                                   .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                   .mipLevel = img_upload.level,
+                                   .layerCount = 1,
+                               },
+                           .imageExtent = VkExtent3D{img_upload.extent.x, img_upload.extent.y, 1}
+
+                       })
+
+                   }));
+        }
+        for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
+          state.transition(textures[img_upload_infos[i].img_idx].image(),
+                           VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                           VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                           VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
+        }
+        state.flush_barriers();
+      });
+
+      start_copy_idx = img_i;
+    };
+    while (bytes_remaining > 0) {
+      if (bytes_remaining - img_upload_infos[img_i].size < 0) {
+        flush_uploads();
+      }
+
+      futures.emplace_back(threads::pool.submit_task([img_i, &img_upload_infos, curr_staging_offset,
+                                                      &img_staging]() {
+        const auto& img_upload = img_upload_infos[img_i];
+        if (img_staging->size() < img_upload.staging_offset + img_upload.size) {
+          assert(0);
+        } else {
+          memcpy(
+              (char*)img_staging->mapped_data() + img_upload.staging_offset - curr_staging_offset,
+              img_upload.data, img_upload.size);
+        }
+      }));
+      bytes_remaining -= img_upload_infos[img_i].size;
+      img_i++;
+    }
+
+    flush_uploads();
+    // for (auto& f : futures) {
+    //   if (f.valid()) f.get();
+    // }
+    // futures.clear();
+  }
+
+  for (u64 i = 0; i < images.size(); i++) {
+  }
+
+  // for (auto& img : images) {
+  //   futures.emplace_back(threads::pool.submit_task())
+  // }
+
+  // LINFO("staging offset: {}", staging_offset / 1024 / 1024);
+  // u64 tot_imgs_size = 0;
+  // constexpr u64 img_upload_batch_size = 1'000'000'000;
+  // vk2::Buffer* img_staging = vk2::StagingBufferPool::get().acquire(img_upload_batch_size);
+  // while (img_idx < gltf.images.size()) {
+  //   auto& cpu_img = images[img_idx];
+  //   auto usage = img_usages[img_idx];
+  //   u64 img_size = static_cast<u64>(cpu_img.w) * cpu_img.h * cpu_img.channels;
+  //
+  //   img_idx++;
+  // }
 
   // std::vector<u64> staging_buffer_offsets(gltf.images.size());
   // u64 staging_buffer_size = 0;
   // {
   //   for (u64 i = 0; i < images.size(); i++) {
   //     staging_buffer_offsets[i] = staging_buffer_size;
-  //     staging_buffer_size += static_cast<u64>(images[i].channels * images[i].w * images[i].h);
+  //     staging_buffer_size += static_cast<u64>(images[i].channels * images[i].w *
+  //     images[i].h);
   //   }
   // }
-  // vk2::Buffer* img_staging = vk2::StagingBufferPool::get().acquire(staging_buffer_size);
   // assert(img_staging);
   // // make one big staging buffer and copy all the images to it
   // for (u64 i = 0; i < images.size(); i++) {
-  //   futures[i] = threads::pool.submit_task([i, &images, img_staging, &staging_buffer_offsets] {
+  //   futures[i] = threads::pool.submit_task([i, &images, img_staging,
+  //   &staging_buffer_offsets] {
   //     memcpy((char*)img_staging->mapped_data() + staging_buffer_offsets[i], images[i].data,
   //            static_cast<u64>(images[i].h * images[i].w * images[i].channels));
   //   });
@@ -430,7 +714,8 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
     }
     mesh_idx++;
   };
-  // scene_load_futures[scene_load_future_idx++] = threads::pool.submit_task([&result, &gltf]() {});
+  // scene_load_futures[scene_load_future_idx++] = threads::pool.submit_task([&result,
+  // &gltf]() {});
 
   load_scene_graph_data(result->scene_graph_data, gltf);
   // for (auto& f : scene_load_futures) {
@@ -462,5 +747,4 @@ std::optional<LoadedSceneData> load_gltf(const std::filesystem::path& path) {
       .indices_size = indices_size,
   };
 }
-
 }  // namespace gfx

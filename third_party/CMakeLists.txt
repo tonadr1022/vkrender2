@@ -73,6 +73,7 @@ FetchContent_Declare(
 )
 
 option(KTX_FEATURE_TESTS "" OFF)
+# TODO: turn off
 option(KTX_FEATURE_VULKAN "" ON)
 option(KTX_FEATURE_GL_UPLOAD "" OFF)
 option(KTX_FEATURE_VK_UPLOAD "" ON)
@@ -86,7 +87,7 @@ FetchContent_Declare(
     SYSTEM
 )
 
-FetchContent_MakeAvailable(glfw glslang glm fastgltf tracy volk vkbootstrap vma spirv-reflect, ktx)
+FetchContent_MakeAvailable(glfw glslang glm fastgltf tracy volk vkbootstrap vma spirv-reflect ktx)
 
 FetchContent_MakeAvailable(imgui)
 FetchContent_GetProperties(imgui)
