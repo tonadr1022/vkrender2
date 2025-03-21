@@ -67,6 +67,7 @@ src
 )
 
 target_link_libraries(vkrender2 PRIVATE
+ktx
 glfw
 glm
 lib_imgui

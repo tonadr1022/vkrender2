@@ -63,6 +63,7 @@ FetchContent_Declare(
     GIT_TAG         v0.11.1
 )
 
+# TODO: get rid if don't need
 set(SPIRV_REFLECT_EXECUTABLE OFF CACHE BOOL "" FORCE)
 set(SPIRV_REFLECT_STATIC_LIB ON CACHE BOOL "" FORCE)
 FetchContent_Declare(
@@ -71,7 +72,21 @@ FetchContent_Declare(
     GIT_TAG vulkan-sdk-1.4.309.0
 )
 
-FetchContent_MakeAvailable(glfw glslang glm fastgltf tracy volk vkbootstrap vma spirv-reflect)
+option(KTX_FEATURE_TESTS "" OFF)
+option(KTX_FEATURE_VULKAN "" ON)
+option(KTX_FEATURE_GL_UPLOAD "" OFF)
+option(KTX_FEATURE_VK_UPLOAD "" ON)
+option(KTX_FEATURE_WRITE "" OFF)
+option(KTX_FEATURE_TOOLS "" OFF)
+option(KTX_FEATURE_STATIC_LIBRARY "" ON)
+FetchContent_Declare(
+    ktx
+    GIT_REPOSITORY https://github.com/KhronosGroup/KTX-Software.git
+    GIT_TAG        v4.3.2
+    SYSTEM
+)
+
+FetchContent_MakeAvailable(glfw glslang glm fastgltf tracy volk vkbootstrap vma spirv-reflect, ktx)
 
 FetchContent_MakeAvailable(imgui)
 FetchContent_GetProperties(imgui)
