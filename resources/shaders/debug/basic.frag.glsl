@@ -28,5 +28,6 @@ void main() {
 
     //  vec4 color_raw = In.Color * texture(sampler2D(textures[pc.textureIndex], samplers[pc.samplerIndex]), In.UV);
     vec4 color = texture(sampler2D(textures[nonuniformEXT(material.albedo_id)], samplers[0]), in_uv);
-    out_frag_color = vec4(in_normal, 1.);
+    out_frag_color = vec4(color.rgb, 1.);
+    // out_frag_color = vec4(in_normal, 1.);
 }

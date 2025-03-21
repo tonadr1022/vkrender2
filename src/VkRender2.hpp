@@ -70,7 +70,7 @@ struct VkRender2 final : public BaseRenderer {
   struct SceneGPUResources {
     vk2::Buffer vertex_buffer;
     vk2::Buffer index_buffer;
-    vk2::Buffer materials_buffer;
+    // vk2::Buffer materials_buffer;
     vk2::Buffer draw_indirect_buffer;
     vk2::Buffer instance_buffer;
     // std::vector<u32> material_indices;
@@ -87,7 +87,7 @@ struct VkRender2 final : public BaseRenderer {
 
   VkCommandPool imm_cmd_pool_;
   VkCommandBuffer imm_cmd_buf_;
-  VkFence imm_fence_;
+  // VkFence imm_fence_;
 
   StateTracker state_;
   StateTracker transfer_q_state_;
