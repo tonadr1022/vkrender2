@@ -63,6 +63,7 @@ endif()
 
 target_include_directories(vkrender2 PRIVATE
 third_party
+resources
 src
 )
 

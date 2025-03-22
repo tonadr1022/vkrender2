@@ -29,6 +29,7 @@ struct App {
   GLFWwindow* window{};
   bool hide_mouse{false};
   std::filesystem::path resource_dir;
+  std::filesystem::path local_models_dir;
 
  private:
   void shutdown() const;

@@ -63,9 +63,14 @@ struct LoadedSceneBaseData {
   std::vector<Material> materials;
   std::vector<vk2::Sampler> samplers;
 };
+struct DefaultMaterialData {
+  u32 white_img_handle;
+};
 
-std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& path);
+std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& path,
+                                                  const DefaultMaterialData& default_mat);
 
-std::optional<LoadedSceneData> load_gltf(const std::filesystem::path& path);
+std::optional<LoadedSceneData> load_gltf(const std::filesystem::path& path,
+                                         const DefaultMaterialData& default_mat);
 
 }  // namespace gfx

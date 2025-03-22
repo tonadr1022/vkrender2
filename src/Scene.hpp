@@ -6,7 +6,7 @@
 
 struct NodeData {
   static constexpr u32 null_idx = UINT32_MAX;
-  mat4 local_transform;
+  mat4 local_transform{mat4{1}};
   mat4 world_transform{mat4{1}};
   std::vector<u64> children_indices;
   struct MeshData {

@@ -1,8 +1,7 @@
 #version 460
 
-#extension GL_EXT_scalar_block_layout : require
-#extension GL_EXT_buffer_reference : require
-#extension GL_EXT_nonuniform_qualifier : require
+#include "../resources.h.glsl"
+#include "./basic_common.h.glsl"
 
 layout(location = 0) in vec3 in_normal;
 layout(location = 1) in vec2 in_uv;
@@ -15,29 +14,16 @@ struct Material {
     uint normal_id;
 };
 
-#define BINDLESS_STORAGE_BUFFER_BINDING 1
-#define BINDLESS_SAMPLER_BINDING 0
-#define BINDLESS_SAMPLED_IMAGE_BINDING 2
+VK2_DECLARE_SAMPLED_IMAGES(texture2D);
 
-layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING) readonly buffer MaterialBuffers {
-    Material materials[];
+VK2_DECLARE_STORAGE_BUFFERS_RO(MaterialBuffers){
+Material mats[];
 } materials[];
-layout(set = 0, binding = BINDLESS_SAMPLED_IMAGE_BINDING) uniform texture2D textures[];
-layout(set = 1, binding = BINDLESS_SAMPLER_BINDING) uniform sampler samplers[];
-
-layout(scalar, push_constant) uniform PC {
-    mat4 view_proj;
-    uint vertex_buffer_idx;
-    uint instance_buffer;
-    uint materials_buffer;
-    uint sampler_idx;
-} pc;
 
 void main() {
-    Material material = materials[pc.materials_buffer].materials[nonuniformEXT(material_id)];
-    vec4 color = texture(sampler2D(textures[nonuniformEXT(material.albedo_id)], samplers[1]), in_uv);
-    // out_frag_color = vec4(vec3(float(material_id)), 1.);
-    // out_frag_color = vec4(vec2(in_uv), 0., 1.);
+    Material material = materials[materials_buffer].mats[nonuniformEXT(material_id)];
+    vec4 color = texture(vk2_sampler2D(material.albedo_id, sampler_idx), in_uv);
+    // vec4 normal = texture(vk2_sampler2D(material.normal_id, sampler_idx), in_uv);
     out_frag_color = vec4(color.rgb, 1.);
-    // out_frag_color = vec4(in_normal, 1.);
+    // out_frag_color = vec4(normal.rgb, 1.);
 }

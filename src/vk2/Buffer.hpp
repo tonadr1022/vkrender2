@@ -52,5 +52,6 @@ struct BufferDeleteInfo {
 };
 
 Buffer create_staging_buffer(u64 size);
+Buffer create_storage_buffer(u64 size);
 
 }  // namespace vk2

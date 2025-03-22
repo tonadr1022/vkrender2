@@ -24,6 +24,7 @@ class Timer {
 
   void print() { LINFO("ElapsedMS: {}", elapsed_ms()); }
   void print_micro() { LINFO("ElapsedMicro: {}", elapsed_micro()); }
+  void print_ms() { LINFO("ElapsedMS: {}", elapsed_ms()); }
   void reset(std::string_view msg) {
     print(msg);
     reset();
@@ -36,6 +37,10 @@ class Timer {
   std::chrono::time_point<std::chrono::high_resolution_clock> start_time_;
 };
 
+class PrintTimerMS : public Timer {
+ public:
+  ~PrintTimerMS() { print_ms(); }
+};
 class PrintTimerMicro : public Timer {
  public:
   ~PrintTimerMicro() { print_micro(); }

@@ -64,16 +64,15 @@ App::App(const InitInfo& info) : cam(cam_data, .1) {
                                       .name = info.name,
                                       .vsync = info.vsync,
                                       .on_gui_callback = [this]() { this->on_imgui(); }});
+  local_models_dir = resource_dir / "local_models/";
 }
 void App::run() {
   float last_time{};
-  // VkRender2::get().load_scene("/Users/tony/models/Models/Sponza/glTF/Sponza.gltf");
-  VkRender2::get().load_scene("/Users/tony/models/Models/Sponza/output.glb");
-  // VkRender2::get().load_scene("/Users/tony/models/Models/Sponza/output2.glb");
-  // VkRender2::get().load_scene(
-  // "/home/tony/models/Models/MetalRoughSpheres/glTF/MetalRoughSpheres.gltf");
-  // VkRender2::get().load_scene("/home/tony/models/Models/ABeautifulGame/glTF/ABeautifulGame.gltf");
-  // VkRender2::get().load_scene(resource_dir / "models/Cube/glTF/Cube.gltf");
+
+  // VkRender2::get().load_scene(local_models_dir / "sponza.glb");
+  // VkRender2::get().load_scene("/Users/tony/models/Models/ABeautifulGame/glTF/ABeautifulGame.gltf");
+  VkRender2::get().load_scene(local_models_dir / "ABeautifulGame.glb");
+
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
     float curr_t = glfwGetTime();

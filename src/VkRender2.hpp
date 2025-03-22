@@ -8,6 +8,7 @@
 
 #include "BaseRenderer.hpp"
 #include "Scene.hpp"
+#include "SceneLoader.hpp"
 #include "StateTracker.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/DeletionQueue.hpp"
@@ -62,12 +63,6 @@ struct VkRender2 final : public BaseRenderer {
   void create_attachment_imgs();
   void set_viewport_and_scissor(VkCommandBuffer cmd, VkExtent2D extent);
 
-  struct InstanceData {
-    mat4 transform;
-    // u32 material_id;
-    // u8 padding[108];
-  };
-
   // TODO: refactor
   struct SceneGPUResources {
     vk2::Buffer vertex_buffer;
@@ -100,6 +95,7 @@ struct VkRender2 final : public BaseRenderer {
   struct DefaultData {
     std::optional<vk2::Texture> white_img;
   } default_data_;
+  gfx::DefaultMaterialData default_mat_data_;
 
   vk2::DeletionQueue main_del_q_;
   std::filesystem::path shader_dir_;

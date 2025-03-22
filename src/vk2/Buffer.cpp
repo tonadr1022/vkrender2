@@ -78,4 +78,11 @@ Buffer create_staging_buffer(u64 size) {
                        .alloc_flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
                                       VMA_ALLOCATION_CREATE_MAPPED_BIT}};
 }
+
+Buffer create_storage_buffer(u64 size) {
+  return Buffer{BufferCreateInfo{
+      .size = size,
+      .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+  }};
+}
 }  // namespace vk2
