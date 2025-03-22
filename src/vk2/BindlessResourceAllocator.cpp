@@ -15,80 +15,114 @@ namespace vk2 {
 BindlessResourceAllocator::BindlessResourceAllocator(VkDevice device, VmaAllocator allocator)
     : device_(device), allocator_(allocator) {
   ZoneScoped;
-  VkDescriptorSetLayoutBinding bindings[] = {
-      VkDescriptorSetLayoutBinding{
-          .binding = bindless_storage_image_binding,
-          .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-          .descriptorCount = max_resource_descriptors,
-          .stageFlags = VK_SHADER_STAGE_ALL,
-      },
-      VkDescriptorSetLayoutBinding{
-          .binding = bindless_combined_image_sampler_binding,
-          .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-          .descriptorCount = max_sampler_descriptors,
-          .stageFlags = VK_SHADER_STAGE_ALL,
-      },
-      VkDescriptorSetLayoutBinding{
-          .binding = bindless_storage_buffer_binding,
-          .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-          .descriptorCount = max_resource_descriptors,
-          .stageFlags = VK_SHADER_STAGE_ALL,
-      },
-      VkDescriptorSetLayoutBinding{
-          .binding = bindless_sampled_image_binding,
-          .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-          .descriptorCount = max_resource_descriptors,
-          .stageFlags = VK_SHADER_STAGE_ALL,
-      },
-      VkDescriptorSetLayoutBinding{
-          .binding = bindless_sampler_binding,
-          .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
-          .descriptorCount = max_sampler_descriptors,
-          .stageFlags = VK_SHADER_STAGE_ALL,
-      },
-  };
+  {
+    VkDescriptorSetLayoutBinding bindings[] = {
+        VkDescriptorSetLayoutBinding{
+            .binding = bindless_storage_image_binding,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            .descriptorCount = max_resource_descriptors,
+            .stageFlags = VK_SHADER_STAGE_ALL,
+        },
+        VkDescriptorSetLayoutBinding{
+            .binding = bindless_combined_image_sampler_binding,
+            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .descriptorCount = max_sampler_descriptors,
+            .stageFlags = VK_SHADER_STAGE_ALL,
+        },
+        VkDescriptorSetLayoutBinding{
+            .binding = bindless_storage_buffer_binding,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .descriptorCount = max_resource_descriptors,
+            .stageFlags = VK_SHADER_STAGE_ALL,
+        },
+        VkDescriptorSetLayoutBinding{
+            .binding = bindless_sampled_image_binding,
+            .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+            .descriptorCount = max_resource_descriptors,
+            .stageFlags = VK_SHADER_STAGE_ALL,
+        },
+    };
 
-  std::array<VkDescriptorBindingFlags, COUNTOF(bindings)> flags;
-  for (auto& f : flags) {
-    f = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
+    std::array<VkDescriptorBindingFlags, COUNTOF(bindings)> flags;
+    for (auto& f : flags) {
+      f = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
+          VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT_EXT;
+    }
+
+    VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
+        .bindingCount = flags.size(),
+        .pBindingFlags = flags.data()};
+    VkDescriptorSetLayoutCreateInfo set_info{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .pNext = &binding_flags,
+        .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
+        .bindingCount = COUNTOF(bindings),
+        .pBindings = bindings};
+    VK_CHECK(vkCreateDescriptorSetLayout(device_, &set_info, nullptr, &main_set_layout_));
+
+    VkDescriptorPoolSize sizes[] = {
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, max_resource_descriptors},
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, max_resource_descriptors},
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLER, max_sampler_descriptors},
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, max_resource_descriptors},
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, max_sampler_descriptors},
+    };
+
+    VkDescriptorPoolCreateInfo info{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+                                    .flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT,
+                                    // TODO: fine tune this? just one?
+                                    .maxSets = 10,
+                                    .poolSizeCount = COUNTOF(sizes),
+                                    .pPoolSizes = sizes};
+    VK_CHECK(vkCreateDescriptorPool(device_, &info, nullptr, &main_pool_));
+    assert(main_pool_);
+    assert(main_set_layout_);
+    VkDescriptorSetAllocateInfo set_layout_info{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = main_pool_,
+        .descriptorSetCount = 1,
+        .pSetLayouts = &main_set_layout_};
+    VK_CHECK(vkAllocateDescriptorSets(device_, &set_layout_info, &main_set_));
+    assert(main_set_);
   }
+  {
+    VkDescriptorSetLayoutBinding bindings[] = {
+        VkDescriptorSetLayoutBinding{
+            .binding = bindless_sampler_binding,
+            .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
+            .descriptorCount = max_sampler_descriptors,
+            .stageFlags = VK_SHADER_STAGE_ALL,
+        },
+    };
 
-  VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags{
-      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
-      .bindingCount = flags.size(),
-      .pBindingFlags = flags.data()};
-  VkDescriptorSetLayoutCreateInfo set_info{
-      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-      .pNext = &binding_flags,
-      .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
-      .bindingCount = COUNTOF(bindings),
-      .pBindings = bindings};
-  VK_CHECK(vkCreateDescriptorSetLayout(device_, &set_info, nullptr, &main_set_layout_));
+    std::array<VkDescriptorBindingFlags, COUNTOF(bindings)> flags;
+    for (auto& f : flags) {
+      f = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
+          VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT_EXT;
+    }
 
-  VkDescriptorPoolSize sizes[] = {
-      VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, max_resource_descriptors},
-      VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, max_resource_descriptors},
-      VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLER, max_sampler_descriptors},
-      VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, max_resource_descriptors},
-      VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, max_sampler_descriptors},
-  };
-
-  VkDescriptorPoolCreateInfo info{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-                                  .flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT,
-                                  // TODO: fine tune this? just one?
-                                  .maxSets = 10,
-                                  .poolSizeCount = COUNTOF(sizes),
-                                  .pPoolSizes = sizes};
-  VK_CHECK(vkCreateDescriptorPool(device_, &info, nullptr, &main_pool_));
-  assert(main_pool_);
-  assert(main_set_layout_);
-  VkDescriptorSetAllocateInfo set_layout_info{
-      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-      .descriptorPool = main_pool_,
-      .descriptorSetCount = 1,
-      .pSetLayouts = &main_set_layout_};
-  VK_CHECK(vkAllocateDescriptorSets(device_, &set_layout_info, &main_set_));
-  assert(main_set_);
+    VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
+        .bindingCount = flags.size(),
+        .pBindingFlags = flags.data()};
+    VkDescriptorSetLayoutCreateInfo set_info{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .pNext = &binding_flags,
+        .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
+        .bindingCount = COUNTOF(bindings),
+        .pBindings = bindings};
+    VK_CHECK(vkCreateDescriptorSetLayout(device_, &set_info, nullptr, &main_set2_layout_));
+    assert(main_pool_);
+    assert(main_set2_layout_);
+    VkDescriptorSetAllocateInfo set_layout_info{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = main_pool_,
+        .descriptorSetCount = 1,
+        .pSetLayouts = &main_set2_layout_};
+    VK_CHECK(vkAllocateDescriptorSets(device_, &set_layout_info, &main_set2_));
+    assert(main_set2_);
+  }
 }
 
 namespace {
@@ -125,12 +159,12 @@ BindlessResourceAllocator::~BindlessResourceAllocator() {
   flush_deletions();
   vkDestroyDescriptorPool(device_, main_pool_, nullptr);
   vkDestroyDescriptorSetLayout(device_, main_set_layout_, nullptr);
+  vkDestroyDescriptorSetLayout(device_, main_set2_layout_, nullptr);
 }
 
 BindlessResourceInfo BindlessResourceAllocator::allocate_sampled_img_descriptor(
     VkImageView view, VkImageLayout layout) {
   u32 handle = sampled_image_allocator_.alloc();
-  LINFO("sampled image handle {}", handle);
   VkDescriptorImageInfo img{.sampler = nullptr, .imageView = view, .imageLayout = layout};
   allocate_bindless_resource(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &img, nullptr, handle,
                              bindless_sampled_image_binding);
@@ -148,10 +182,16 @@ BindlessResourceInfo BindlessResourceAllocator::allocate_storage_img_descriptor(
 
 BindlessResourceInfo BindlessResourceAllocator::allocate_sampler_descriptor(VkSampler sampler) {
   u32 handle = sampler_allocator_.alloc();
-  LINFO("sampler handle {}", handle);
   VkDescriptorImageInfo info{.sampler = sampler};
-  allocate_bindless_resource(VK_DESCRIPTOR_TYPE_SAMPLER, &info, nullptr, handle,
-                             bindless_sampler_binding);
+  VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                             .dstSet = main_set2_,
+                             .dstBinding = bindless_sampler_binding,
+                             .dstArrayElement = handle,
+                             .descriptorCount = 1,
+                             .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
+                             .pImageInfo = &info,
+                             .pBufferInfo = nullptr};
+  vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
   return {ResourceType::Sampler, handle};
 }
 
@@ -242,4 +282,5 @@ BindlessResourceInfo BindlessResourceAllocator::allocate_storage_buffer_descript
                              resource_to_binding(ResourceType::StorageBuffer));
   return {ResourceType::StorageBuffer, handle};
 }
+
 }  // namespace vk2

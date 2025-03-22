@@ -62,6 +62,9 @@ void Device::init_impl(const CreateInfo& info) {
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
   features13.dynamicRendering = true;
   features13.synchronization2 = true;
+  VkPhysicalDeviceDescriptorIndexingFeatures desc_indexing{
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES};
+  desc_indexing.descriptorBindingUpdateUnusedWhilePending = true;
   VkPhysicalDeviceDynamicRenderingFeatures dynamic_rendering_features{};
   dynamic_rendering_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES;
   dynamic_rendering_features.dynamicRendering = VK_TRUE;
@@ -85,6 +88,7 @@ void Device::init_impl(const CreateInfo& info) {
       .add_required_extensions(extensions)
       .add_required_extension_features(dynamic_rendering_features)
       .add_required_extension_features(sync2_features)
+      .add_required_extension_features(desc_indexing)
       .set_required_features(features);
   auto phys_ret = phys_selector.select();
   if (!phys_ret) {

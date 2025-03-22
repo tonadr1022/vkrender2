@@ -111,6 +111,7 @@ struct VkRender2 final : public BaseRenderer {
 
   // non owning
   VkDescriptorSet main_set_{};
+  VkDescriptorSet main_set2_{};
   VmaAllocator allocator_;
   // end non owning
  public:

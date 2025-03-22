@@ -43,6 +43,7 @@ struct ImageViewCreateInfo {
 
 class BindlessResourceAllocator {
  public:
+  void bind_desc_sets(VkCommandBuffer cmd);
   static constexpr u32 max_resource_descriptors{100'000};
   static constexpr u32 max_sampler_descriptors{128};
 
@@ -50,7 +51,7 @@ class BindlessResourceAllocator {
   static constexpr u32 bindless_storage_buffer_binding{1};
   static constexpr u32 bindless_sampled_image_binding{2};
   static constexpr u32 bindless_combined_image_sampler_binding{3};
-  static constexpr u32 bindless_sampler_binding{4};
+  static constexpr u32 bindless_sampler_binding{0};
 
   u32 resource_to_binding(ResourceType type);
 
@@ -74,6 +75,9 @@ class BindlessResourceAllocator {
   void delete_buffer(const BufferDeleteInfo& info);
 
   void flush_deletions();
+
+  VkDescriptorSetLayout main_set2_layout_{};
+  VkDescriptorSet main_set2_{};
 
  private:
   template <typename T>

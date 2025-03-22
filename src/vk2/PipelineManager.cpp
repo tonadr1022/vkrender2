@@ -349,6 +349,7 @@ PipelineHandle PipelineManager::load_graphics_pipeline(const GraphicsPipelineCre
                                      .layout = info.layout};
   VkPipeline pipeline;
   VK_CHECK(vkCreateGraphicsPipelines(device_, nullptr, 1, &cinfo, nullptr, &pipeline));
+  if (!pipeline) return {};
 
   auto tup = std::make_tuple(info.vertex_path.string(), info.fragment_path.string());
   auto handle = detail::hashing::hash<decltype(tup)>{}(tup);

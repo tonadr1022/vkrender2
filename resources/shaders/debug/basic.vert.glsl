@@ -17,9 +17,9 @@ struct Vertex {
     float uv_y;
 };
 
-layout(std430, buffer_reference, buffer_reference_align = 32) buffer VertexBuffer {
+layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING, std430) restrict readonly buffer VertexBuffer {
     Vertex vertices[];
-};
+} vertex_buffers[];
 
 // TODO: more indirection?
 struct InstanceData {
@@ -27,20 +27,20 @@ struct InstanceData {
     uint material_id;
 };
 
-layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING, std430) readonly buffer InstanceBuffers {
+layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING, std430) restrict readonly buffer InstanceBuffers {
     InstanceData instances[];
 } instance_buffers[];
 
 layout(push_constant) uniform PC {
     mat4 view_proj;
-    VertexBuffer vertex_buffer;
+    uint vertex_buffer_idx;
     uint instance_buffer;
     uint materials_buffer;
 } pc;
 
 void main() {
     InstanceData data = instance_buffers[pc.instance_buffer].instances[gl_InstanceIndex];
-    Vertex v = pc.vertex_buffer.vertices[gl_VertexIndex];
+    Vertex v = vertex_buffers[pc.vertex_buffer_idx].vertices[gl_VertexIndex];
     gl_Position = pc.view_proj * data.model * vec4(v.pos, 1.);
     out_normal = normalize(v.normal) * .5 + .5;
     out_uv = vec2(v.uv_x, v.uv_y);

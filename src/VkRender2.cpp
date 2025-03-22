@@ -9,6 +9,7 @@
 #include <tracy/TracyVulkan.hpp>
 
 #include "GLFW/glfw3.h"
+#include "Logger.hpp"
 #include "SceneLoader.hpp"
 #include "StateTracker.hpp"
 #include "glm/packing.hpp"
@@ -65,11 +66,14 @@ VkRender2::VkRender2(const InitInfo& info)
   VkPushConstantRange default_range{.stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = 128};
   // TODO: refactor
   VkDescriptorSetLayout main_set_layout = vk2::BindlessResourceAllocator::get().main_set_layout();
+  VkDescriptorSetLayout layouts[] = {main_set_layout,
+                                     vk2::BindlessResourceAllocator::get().main_set2_layout_};
   main_set_ = vk2::BindlessResourceAllocator::get().main_set();
+  main_set2_ = vk2::BindlessResourceAllocator::get().main_set2_;
 
   VkPipelineLayoutCreateInfo pipeline_info{.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-                                           .setLayoutCount = 1,
-                                           .pSetLayouts = &main_set_layout,
+                                           .setLayoutCount = COUNTOF(layouts),
+                                           .pSetLayouts = layouts,
                                            .pushConstantRangeCount = 1,
                                            .pPushConstantRanges = &default_range};
   VK_CHECK(vkCreatePipelineLayout(device_, &pipeline_info, nullptr, &default_pipeline_layout_));
@@ -88,6 +92,7 @@ VkRender2::VkRender2(const InitInfo& info)
       .rendering = {{{img_->format()}}, depth_img_->format()},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::Less),
   });
+  assert(draw_pipeline_);
 
   uint32_t white = glm::packUnorm4x8(glm::vec4(1, 1, 1, 1));
   vk2::Buffer* staging = vk2::StagingBufferPool::get().acquire(32);
@@ -134,8 +139,8 @@ VkRender2::VkRender2(const InitInfo& info)
       .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
       .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
       .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-      .minLod = -1000,
-      .maxLod = 100,
+      .minLod = 0,
+      .maxLod = 1000,
       .borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
 
   });
@@ -171,6 +176,10 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
                             0);
     ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_COMPUTE, default_pipeline_layout_, &main_set_,
                             0);
+    ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, default_pipeline_layout_, &main_set2_,
+                            1);
+    ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_COMPUTE, default_pipeline_layout_, &main_set2_,
+                            1);
     state_.flush_transfers(queues_.graphics_queue_idx);
 
     vk2::BindlessResourceAllocator::get().set_frame_num(curr_frame_num());
@@ -222,10 +231,10 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
       for (auto& scene : loaded_scenes_) {
         struct {
           mat4 vp;
-          u64 vbaddr;
+          u32 vbaddr;
           u32 instance_buffer;
           u32 materials_buffer;
-        } pc{vp, scene.resources->vertex_buffer.device_addr(),
+        } pc{vp, scene.resources->vertex_buffer.resource_info_->handle,
              scene.resources->instance_buffer.resource_info_->handle,
              scene.resources->materials_buffer.resource_info_->handle};
         ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
@@ -253,9 +262,10 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
     blit_img(cmd, img_->image(), swapchain_img, dims, VK_IMAGE_ASPECT_COLOR_BIT);
 
     if (draw_imgui) {
-      state_.transition(swapchain_img, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                        VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+      state_.transition(
+          swapchain_img, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+          VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT,
+          VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
       state_.flush_barriers();
       render_imgui(cmd, {swapchain_.dims.x, swapchain_.dims.y},
                    swapchain_.img_views[curr_swapchain_img_idx()]);
@@ -364,7 +374,7 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path) {
           vk2::Buffer{vk2::BufferCreateInfo{
               .size = res.vertices_size,
               .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-              .buffer_device_address = true,
+              // .buffer_device_address = true,
           }},
           vk2::Buffer{vk2::BufferCreateInfo{
               .size = res.indices_size,
