@@ -76,6 +76,11 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info)
     instance_builder.request_validation_layers(true);
 #endif
 
+#if defined(__APPLE__)
+    instance_builder.add_validation_feature_disable(VK_VALIDATION_FEATURE_DISABLE_SHADERS_EXT);
+    instance_builder.add_validation_feature_disable(
+        VK_VALIDATION_FEATURE_DISABLE_SHADER_VALIDATION_CACHE_EXT);
+#endif
     auto instance_ret = instance_builder.build();
     if (!instance_ret) {
       LCRITICAL("Failed to acquire Vulkan Instance: {}", instance_ret.error().message());

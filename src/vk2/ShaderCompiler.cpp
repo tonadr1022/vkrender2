@@ -488,8 +488,8 @@ bool compile_glsl_to_spirv(std::string path, VkShaderStageFlagBits stage,
   int ss = strlen(shader_source);
   shader.setStringsWithLengths(&shader_source, &ss, 1);
   shader.setEnvInput(glslang::EShSourceGlsl, glslang_stage, glslang::EShClientVulkan, 100);
-  shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_2);
-  shader.setEnvTarget(glslang::EShTargetLanguage::EShTargetSpv, glslang::EShTargetSpv_1_5);
+  shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_3);
+  shader.setEnvTarget(glslang::EShTargetLanguage::EShTargetSpv, glslang::EShTargetSpv_1_6);
   std::string preamble = "#extension GL_GOOGLE_include_directive : enable\n";
   // preamble += "";
   shader.setPreamble(preamble.c_str());

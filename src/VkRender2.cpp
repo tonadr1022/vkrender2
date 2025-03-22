@@ -1,7 +1,10 @@
 #include "VkRender2.hpp"
 
+// clang-format off
 #include <volk.h>
 #include <vulkan/vulkan_core.h>
+#include <imgui_impl_vulkan.h>
+// clang-format on
 
 #include <cassert>
 #include <filesystem>
@@ -9,13 +12,14 @@
 #include <tracy/TracyVulkan.hpp>
 
 #include "GLFW/glfw3.h"
-#include "Logger.hpp"
 #include "SceneLoader.hpp"
 #include "StateTracker.hpp"
 #include "glm/packing.hpp"
+#include "imgui.h"
 #include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Device.hpp"
 #include "vk2/Fence.hpp"
+#include "vk2/Hash.hpp"
 #include "vk2/Initializers.hpp"
 #include "vk2/PipelineManager.hpp"
 #include "vk2/SamplerCache.hpp"
@@ -131,7 +135,7 @@ VkRender2::VkRender2(const InitInfo& info)
   vk2::StagingBufferPool::get().free(staging);
 
   // TODO: this is cringe
-  SamplerCache::get().get_or_create_sampler(VkSamplerCreateInfo{
+  nearest_sampler_ = SamplerCache::get().get_or_create_sampler(VkSamplerCreateInfo{
       .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
       .magFilter = VK_FILTER_NEAREST,
       .minFilter = VK_FILTER_NEAREST,
@@ -139,10 +143,9 @@ VkRender2::VkRender2(const InitInfo& info)
       .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
       .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
       .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-      .minLod = 0,
+      .minLod = -1000,
       .maxLod = 1000,
       .borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
-
   });
 }
 
@@ -234,9 +237,14 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
           u32 vbaddr;
           u32 instance_buffer;
           u32 materials_buffer;
-        } pc{vp, scene.resources->vertex_buffer.resource_info_->handle,
+          u32 material_id_buffer;
+          u32 sampler_idx;
+        } pc{vp,
+             scene.resources->vertex_buffer.resource_info_->handle,
              scene.resources->instance_buffer.resource_info_->handle,
-             scene.resources->materials_buffer.resource_info_->handle};
+             scene.resources->materials_buffer.resource_info_->handle,
+             scene.resources->material_indices.resource_info_->handle,
+             nearest_sampler_->resource_info.handle};
         ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
         vkCmdBindIndexBuffer(cmd, scene.resources->index_buffer.buffer(), 0, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexedIndirect(cmd, scene.resources->draw_indirect_buffer.buffer(), 0,
@@ -298,7 +306,27 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
   VK_CHECK(vkQueueSubmit2KHR(queues_.graphics_queue, 1, &submit, curr_frame().render_fence));
 }
 
-void VkRender2::on_gui() {}
+void VkRender2::on_gui() {
+  if (ImGui::Begin("Renderer")) {
+    if (ImGui::CollapsingHeader("textures")) {
+      for (const auto& obj : loaded_scenes_) {
+        for (const auto& t : obj.resources->textures) {
+          ImGui::PushID(&t);
+          if (ImGui::CollapsingHeader("a")) {
+            ImVec2 window_size = ImGui::GetContentRegionAvail();
+            float scale_width = window_size.x / t.extent_2d().width;
+            float scaled_height = t.extent_2d().height * scale_width;
+            ImGui::Image(reinterpret_cast<ImTextureID>(
+                             get_imgui_set(nearest_sampler_->sampler, t.view().view())),
+                         ImVec2(window_size.x, scaled_height));
+          }
+          ImGui::PopID();
+        }
+      }
+    }
+  }
+  ImGui::End();
+}
 
 std::string VkRender2::get_shader_path(const std::string& path) const { return shader_dir_ / path; }
 
@@ -353,6 +381,8 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path) {
 
   std::vector<VkDrawIndexedIndirectCommand> cmds;
   std::vector<InstanceData> transforms;
+  std::vector<u32> material_ids;
+  u32 i = 0;
   for (auto& node : res.scene_graph_data.node_datas) {
     for (auto& mesh_indices : node.meshes) {
       auto& mesh = res.mesh_draw_infos[mesh_indices.mesh_idx];
@@ -361,12 +391,16 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path) {
                                        .instanceCount = 1,
                                        .firstIndex = mesh.first_index,
                                        .vertexOffset = static_cast<i32>(mesh.first_vertex),
-                                       .firstInstance = 0});
-      transforms.emplace_back(node.world_transform, mesh_indices.material_id);
+                                       .firstInstance = i++});
+      transforms.emplace_back(node.world_transform);
+      material_ids.emplace_back(mesh_indices.material_id);
+      // transforms.emplace_back(node.world_transform, mesh_indices.material_id);
+      // i++;
     }
   }
   u64 draw_indirect_buf_size = cmds.size() * sizeof(VkDrawIndexedIndirectCommand);
   u64 instance_buf_size = transforms.size() * sizeof(InstanceData);
+  u64 material_indices_size = material_ids.size() * sizeof(u32);
   SceneHandle handle{loaded_scenes_.size()};
   loaded_scenes_.emplace_back(LoadedScene{
       std::move(res.scene_graph_data),
@@ -387,6 +421,10 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path) {
           vk2::Buffer{vk2::BufferCreateInfo{
               .size = draw_indirect_buf_size,
               .usage = VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+          }},
+          vk2::Buffer{vk2::BufferCreateInfo{
+              .size = material_indices_size,
+              .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
           }},
           vk2::Buffer{vk2::BufferCreateInfo{
               .size = instance_buf_size,
@@ -414,13 +452,17 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path) {
   };
 
   u64 materials_size = res.materials.size() * sizeof(gfx::Material);
-  vk2::Buffer* staging = vk2::StagingBufferPool::get().acquire(draw_indirect_buf_size +
-                                                               instance_buf_size + materials_size);
+  vk2::Buffer* staging = vk2::StagingBufferPool::get().acquire(
+      draw_indirect_buf_size + instance_buf_size + materials_size + material_indices_size);
+  u64 offset = 0;
   memcpy(staging->mapped_data(), cmds.data(), draw_indirect_buf_size);
-  memcpy((char*)staging->mapped_data() + draw_indirect_buf_size, transforms.data(),
-         instance_buf_size);
-  memcpy((char*)staging->mapped_data() + draw_indirect_buf_size + instance_buf_size,
-         res.materials.data(), materials_size);
+  offset += draw_indirect_buf_size;
+  memcpy((char*)staging->mapped_data() + offset, transforms.data(), instance_buf_size);
+  offset += instance_buf_size;
+  memcpy((char*)staging->mapped_data() + offset, res.materials.data(), materials_size);
+  offset += materials_size;
+  memcpy((char*)staging->mapped_data() + offset, material_ids.data(), material_indices_size);
+
   {
     immediate_submit([&](VkCommandBuffer cmd) {
       copy_buffer(cmd, res.vert_idx_staging->buffer(), resources->vertex_buffer.buffer(), 0, 0,
@@ -433,6 +475,9 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path) {
                   draw_indirect_buf_size, 0, instance_buf_size);
       copy_buffer(cmd, staging->buffer(), resources->materials_buffer.buffer(),
                   draw_indirect_buf_size + instance_buf_size, 0, materials_size);
+      copy_buffer(cmd, staging->buffer(), resources->material_indices.buffer(),
+                  draw_indirect_buf_size + instance_buf_size + materials_size, 0,
+                  material_indices_size);
     });
   }
 
@@ -456,10 +501,11 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path) {
   //       transfer_q_state_.reset(cmd)
   //           .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
   //                                  VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT,
-  //                                  resources->vertex_buffer.buffer(), queues_.transfer_queue_idx,
-  //                                  queues_.graphics_queue_idx)
+  //                                  resources->vertex_buffer.buffer(),
+  //                                  queues_.transfer_queue_idx, queues_.graphics_queue_idx)
   //           .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT,
-  //                                  VK_ACCESS_2_INDEX_READ_BIT, resources->index_buffer.buffer(),
+  //                                  VK_ACCESS_2_INDEX_READ_BIT,
+  //                                  resources->index_buffer.buffer(),
   //                                  queues_.transfer_queue_idx, queues_.graphics_queue_idx)
   //           .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
   //                                  VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT,
@@ -508,4 +554,15 @@ void VkRender2::immediate_submit(std::function<void(VkCommandBuffer cmd)>&& func
   VK_CHECK(vkQueueSubmit2KHR(queues_.graphics_queue, 1, &submit, imm_fence));
   VK_CHECK(vkWaitForFences(device_, 1, &imm_fence, true, 99999999999));
   FencePool::get().free(imm_fence);
+}
+VkDescriptorSet VkRender2::get_imgui_set(VkSampler sampler, VkImageView view) {
+  auto tup = std::make_tuple(sampler, view);
+  auto hash = vk2::detail::hashing::hash<decltype(tup)>{}(tup);
+  auto it = imgui_desc_sets_.find(hash);
+  if (it != imgui_desc_sets_.end()) {
+    return it->second;
+  }
+  VkDescriptorSet imgui_set =
+      ImGui_ImplVulkan_AddTexture(sampler, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  return imgui_desc_sets_.emplace(hash, imgui_set).first->second;
 }

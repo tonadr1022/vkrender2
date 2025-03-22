@@ -3,6 +3,7 @@
 #include <ktx.h>
 #include <ktxvulkan.h>
 #include <volk.h>
+#include <vulkan/vk_enum_string_helper.h>
 #include <vulkan/vulkan_core.h>
 
 #include <cstddef>
@@ -327,79 +328,83 @@ void load_cpu_img_data(const fastgltf::Asset& asset, const fastgltf::Image& imag
           result != KTX_SUCCESS) {
         assert(false);
       }
+      // LINFO("{} format", string_VkFormat((VkFormat)ktx_tex->vkFormat));
+      result.format = static_cast<VkFormat>(ktx_tex->vkFormat);
     } else {
       result.format = static_cast<VkFormat>(ktx_tex->vkFormat);
     }
   };
 
-  std::visit(
-      fastgltf::visitor{
-          [&](const fastgltf::sources::Array& arr) {
-            result.is_ktx = arr.mimeType == fastgltf::MimeType::KTX2;
-            if (result.is_ktx) {
-              load_ktx(arr.bytes.data(), arr.bytes.size() * sizeof(std::byte));
-            } else {
-              load_non_ktx(arr.bytes.data(), arr.bytes.size_bytes());
-            }
-          },
-          [&](const fastgltf::sources::Vector& vector) {
-            result.is_ktx = vector.mimeType == fastgltf::MimeType::KTX2;
-            if (result.is_ktx) {
-              load_ktx(vector.bytes.data(), vector.bytes.size() * sizeof(std::byte));
-            } else {
-              load_non_ktx(vector.bytes.data(), vector.bytes.size() * sizeof(std::byte));
-            }
-          },
-          [&](const fastgltf::sources::URI&) {
-            assert(0);
-            // assert(file_path.fileByteOffset == 0);
-            // const std::string path(file_path.uri.path().begin(),
-            // file_path.uri.path().end()); auto full_path = directory / path;
-            // if
-            // (!std::filesystem::exists(full_path)) {
-            //   LERROR("glTF Image load fail: path does not exist {}",
-            //   full_path.string());
-            // }
-            // if (file_path.mimeType == fastgltf::MimeType::KTX2) {
-            //   result.is_ktx = true;
-            //   LERROR("URI ktx unhandled");
-            // } else if (file_path.mimeType == fastgltf::MimeType::PNG ||
-            //            file_path.mimeType == fastgltf::MimeType::JPEG) {
-            //   data = stbi_load(full_path.string().c_str(), &w, &h,
-            //   &channels, 4);
-            // } else {
-            //   LERROR("unhandled uri type for loading image");
-            // }
-          },
-          [&](const fastgltf::sources::BufferView& view) {
-            result.is_ktx = view.mimeType == fastgltf::MimeType::KTX2;
-            const auto& buffer_view = asset.bufferViews[view.bufferViewIndex];
-            const auto& buffer = asset.buffers[buffer_view.bufferIndex];
-            std::visit(
-                fastgltf::visitor{
-                    [](auto&) {},
-                    [&](const fastgltf::sources::Array& arr) {
-                      if (result.is_ktx) {
-                        load_ktx(arr.bytes.data(), arr.bytes.size() * sizeof(std::byte));
-                      } else {
-                        load_non_ktx(arr.bytes.data(), arr.bytes.size_bytes());
-                      }
-                    },
-                    [&](const fastgltf::sources::Vector& vector) {
-                      if (result.is_ktx) {
-                        load_ktx(vector.bytes.data(), vector.bytes.size() * sizeof(std::byte));
-                      } else {
-                        load_non_ktx(vector.bytes.data(), vector.bytes.size() * sizeof(std::byte));
-                      }
-                    },
-                },
-                buffer.data);
-          },
-          [](auto&) {
-            LERROR("not valid image path uh oh spaghettio");
-            assert(0);
-          }},
-      image.data);
+  std::visit(fastgltf::visitor{
+                 [&](const fastgltf::sources::Array& arr) {
+                   result.is_ktx = arr.mimeType == fastgltf::MimeType::KTX2;
+                   if (result.is_ktx) {
+                     load_ktx(arr.bytes.data(), arr.bytes.size() * sizeof(std::byte));
+                   } else {
+                     load_non_ktx(arr.bytes.data(), arr.bytes.size_bytes());
+                   }
+                 },
+                 [&](const fastgltf::sources::Vector& vector) {
+                   result.is_ktx = vector.mimeType == fastgltf::MimeType::KTX2;
+                   if (result.is_ktx) {
+                     load_ktx(vector.bytes.data(), vector.bytes.size() * sizeof(std::byte));
+                   } else {
+                     load_non_ktx(vector.bytes.data(), vector.bytes.size() * sizeof(std::byte));
+                   }
+                 },
+                 [&](const fastgltf::sources::URI&) {
+                   assert(0);
+                   // assert(file_path.fileByteOffset == 0);
+                   // const std::string path(file_path.uri.path().begin(),
+                   // file_path.uri.path().end()); auto full_path = directory / path;
+                   // if
+                   // (!std::filesystem::exists(full_path)) {
+                   //   LERROR("glTF Image load fail: path does not exist {}",
+                   //   full_path.string());
+                   // }
+                   // if (file_path.mimeType == fastgltf::MimeType::KTX2) {
+                   //   result.is_ktx = true;
+                   //   LERROR("URI ktx unhandled");
+                   // } else if (file_path.mimeType == fastgltf::MimeType::PNG ||
+                   //            file_path.mimeType == fastgltf::MimeType::JPEG) {
+                   //   data = stbi_load(full_path.string().c_str(), &w, &h,
+                   //   &channels, 4);
+                   // } else {
+                   //   LERROR("unhandled uri type for loading image");
+                   // }
+                 },
+                 [&](const fastgltf::sources::BufferView& view) {
+                   result.is_ktx = view.mimeType == fastgltf::MimeType::KTX2;
+                   const auto& buffer_view = asset.bufferViews[view.bufferViewIndex];
+                   const auto& buffer = asset.buffers[buffer_view.bufferIndex];
+                   std::visit(fastgltf::visitor{
+                                  [](auto&) {},
+                                  [&](const fastgltf::sources::Array& arr) {
+                                    if (result.is_ktx) {
+                                      load_ktx(arr.bytes.data() + buffer_view.byteOffset,
+                                               buffer_view.byteLength);
+                                    } else {
+                                      load_non_ktx(arr.bytes.data() + buffer_view.byteOffset,
+                                                   buffer_view.byteLength);
+                                    }
+                                  },
+                                  [&](const fastgltf::sources::Vector& vector) {
+                                    if (result.is_ktx) {
+                                      load_ktx(vector.bytes.data() + buffer_view.byteOffset,
+                                               buffer_view.byteLength);
+                                    } else {
+                                      load_non_ktx(vector.bytes.data() + buffer_view.byteOffset,
+                                                   buffer_view.byteLength);
+                                    }
+                                  },
+                              },
+                              buffer.data);
+                 },
+                 [](auto&) {
+                   LERROR("not valid image path uh oh spaghettio");
+                   assert(0);
+                 }},
+             image.data);
 }
 
 }  // namespace
@@ -617,6 +622,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
         state.flush_barriers();
       });
 
+      curr_staging_offset += max_batch_upload_size;
       start_copy_idx = img_i;
     };
     while (bytes_remaining > 0) {
@@ -643,6 +649,22 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
     // TODO: remove?
     for (auto& f : futures) {
       if (f.valid()) f.get();
+    }
+    futures.clear();
+  }
+  // for (u64 i = 1; i < images.size(); i++) {
+  //   LINFO("{}", memcmp(images[i].ktx_data->pData, images[i - 1].ktx_data->pData, 128));
+  // }
+  {
+    ZoneScopedN("free imgs");
+    for (auto& image : images) {
+      futures.push_back(threads::pool.submit_task([&image]() {
+        image.ktx_data.reset();
+        image.non_ktx_data.reset();
+      }));
+    }
+    for (u64 i = 0; i < images.size(); i++) {
+      futures[i].get();
     }
     futures.clear();
   }

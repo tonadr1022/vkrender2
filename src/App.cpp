@@ -67,7 +67,9 @@ App::App(const InitInfo& info) : cam(cam_data, .1) {
 }
 void App::run() {
   float last_time{};
-  VkRender2::get().load_scene("/Users/tony/models/Models/Sponza/output2.glb");
+  // VkRender2::get().load_scene("/Users/tony/models/Models/Sponza/glTF/Sponza.gltf");
+  VkRender2::get().load_scene("/Users/tony/models/Models/Sponza/output.glb");
+  // VkRender2::get().load_scene("/Users/tony/models/Models/Sponza/output2.glb");
   // VkRender2::get().load_scene(
   // "/home/tony/models/Models/MetalRoughSpheres/glTF/MetalRoughSpheres.gltf");
   // VkRender2::get().load_scene("/home/tony/models/Models/ABeautifulGame/glTF/ABeautifulGame.gltf");

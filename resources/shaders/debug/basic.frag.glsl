@@ -30,11 +30,14 @@ layout(scalar, push_constant) uniform PC {
     uint vertex_buffer_idx;
     uint instance_buffer;
     uint materials_buffer;
+    uint sampler_idx;
 } pc;
 
 void main() {
     Material material = materials[pc.materials_buffer].materials[nonuniformEXT(material_id)];
     vec4 color = texture(sampler2D(textures[nonuniformEXT(material.albedo_id)], samplers[1]), in_uv);
+    // out_frag_color = vec4(vec3(float(material_id)), 1.);
+    // out_frag_color = vec4(vec2(in_uv), 0., 1.);
     out_frag_color = vec4(color.rgb, 1.);
     // out_frag_color = vec4(in_normal, 1.);
 }

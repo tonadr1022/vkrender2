@@ -64,7 +64,8 @@ struct VkRender2 final : public BaseRenderer {
 
   struct InstanceData {
     mat4 transform;
-    u32 material_id;
+    // u32 material_id;
+    // u8 padding[108];
   };
 
   // TODO: refactor
@@ -73,8 +74,8 @@ struct VkRender2 final : public BaseRenderer {
     vk2::Buffer index_buffer;
     vk2::Buffer materials_buffer;
     vk2::Buffer draw_indirect_buffer;
+    vk2::Buffer material_indices;
     vk2::Buffer instance_buffer;
-    // std::vector<u32> material_indices;
     std::vector<vk2::Sampler> samplers;
     std::vector<vk2::Texture> textures;
     u32 draw_cnt{};
@@ -95,6 +96,7 @@ struct VkRender2 final : public BaseRenderer {
   StateTracker transfer_q_state_;
   std::optional<vk2::Texture> depth_img_;
   std::optional<vk2::Texture> img_;
+  std::optional<vk2::Sampler> nearest_sampler_;
   struct DefaultData {
     std::optional<vk2::Texture> white_img;
   } default_data_;
@@ -109,6 +111,8 @@ struct VkRender2 final : public BaseRenderer {
 
   std::vector<vk2::Buffer> free_staging_buffers_;
 
+  std::unordered_map<u64, VkDescriptorSet> imgui_desc_sets_;
+  VkDescriptorSet get_imgui_set(VkSampler sampler, VkImageView view);
   // non owning
   VkDescriptorSet main_set_{};
   VkDescriptorSet main_set2_{};

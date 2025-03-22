@@ -17,15 +17,18 @@ struct Vertex {
     float uv_y;
 };
 
-layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING, std430) restrict readonly buffer VertexBuffer {
+layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING) restrict readonly buffer VertexBuffer {
     Vertex vertices[];
 } vertex_buffers[];
 
 // TODO: more indirection?
 struct InstanceData {
     mat4 model;
-    uint material_id;
 };
+
+layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING, std430) restrict readonly buffer MaterialIDBuffer {
+    uint material_ids[];
+} material_ids[];
 
 layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING, std430) restrict readonly buffer InstanceBuffers {
     InstanceData instances[];
@@ -36,12 +39,14 @@ layout(push_constant) uniform PC {
     uint vertex_buffer_idx;
     uint instance_buffer;
     uint materials_buffer;
+    uint material_id_buffer;
 } pc;
 
 void main() {
-    InstanceData data = instance_buffers[pc.instance_buffer].instances[gl_InstanceIndex];
+    InstanceData data = instance_buffers[pc.instance_buffer].instances[gl_BaseInstance];
     Vertex v = vertex_buffers[pc.vertex_buffer_idx].vertices[gl_VertexIndex];
     gl_Position = pc.view_proj * data.model * vec4(v.pos, 1.);
     out_normal = normalize(v.normal) * .5 + .5;
     out_uv = vec2(v.uv_x, v.uv_y);
+    material_id = material_ids[pc.material_id_buffer].material_ids[gl_BaseInstance];
 }
