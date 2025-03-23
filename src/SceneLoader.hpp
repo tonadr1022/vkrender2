@@ -37,12 +37,6 @@ struct PrimitiveDrawInfo {
   u32 mesh_idx;
 };
 
-// struct RawMesh {
-//   std::vector<Vertex> vertices;
-//   std::vector<u32> indices;
-//   // Box3D bbox;
-// };
-
 struct LoadedSceneData {
   SceneLoadData scene_graph_data;
   std::vector<vk2::Sampler> samplers;

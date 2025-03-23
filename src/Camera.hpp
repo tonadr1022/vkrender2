@@ -12,6 +12,25 @@ struct Camera {
   vec3 up{0, 1, 0};
   float pitch{}, yaw{-90.f};
   [[nodiscard]] mat4 get_view() const { return glm::lookAt(pos, pos + front, {0, 1, 0}); }
+
+  void set_rotation(quat rot) {
+    glm::vec3 forward = rot * glm::vec3(0, 0, -1);
+    pitch = glm::degrees(glm::asin(glm::clamp(forward.y, -1.f, 1.f)));
+    yaw = glm::degrees(glm::atan(-forward.z, forward.x));
+    front = glm::normalize(forward);
+    right = glm::normalize(glm::cross(front, {0, 1, 0}));
+    up = glm::normalize(glm::cross(right, front));
+  }
+
+  void update_vectors() {
+    glm::vec3 dir;
+    dir.x = glm::cos(glm::radians(yaw)) * glm::cos(glm::radians(pitch));
+    dir.y = glm::sin(glm::radians(pitch));
+    dir.z = glm::sin(glm::radians(yaw)) * glm::cos(glm::radians(pitch));
+    front = glm::normalize(dir);
+    right = glm::normalize(glm::cross(front, {0, 1, 0}));
+    up = glm::normalize(glm::cross(right, front));
+  }
 };
 
 struct CameraController {
@@ -23,13 +42,7 @@ struct CameraController {
     cam.yaw += offset.x;
     cam.pitch += offset.y;
     cam.pitch = glm::clamp(cam.pitch, -89.f, 89.f);
-    glm::vec3 dir;
-    dir.x = glm::cos(glm::radians(cam.yaw)) * glm::cos(glm::radians(cam.pitch));
-    dir.y = glm::sin(glm::radians(cam.pitch));
-    dir.z = glm::sin(glm::radians(cam.yaw)) * glm::cos(glm::radians(cam.pitch));
-    cam.front = glm::normalize(dir);
-    cam.right = glm::normalize(glm::cross(cam.front, {0, 1, 0}));
-    cam.up = glm::normalize(glm::cross(cam.right, cam.front));
+    cam.update_vectors();
   }
 
   void update_pos(GLFWwindow*, float dt) {

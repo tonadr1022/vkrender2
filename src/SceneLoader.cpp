@@ -15,6 +15,7 @@
 #include <fastgltf/types.hpp>
 #include <future>
 
+#include "Camera.hpp"
 #include "Scene.hpp"
 #include "StateTracker.hpp"
 #include "ThreadPool.hpp"
@@ -56,6 +57,15 @@ std::vector<uint8_t> read_file(const std::string& full_path) {
 
   return buffer;
 }
+
+void decompose_matrix(const glm::mat4& m, glm::vec3& pos, glm::quat& rot, glm::vec3& scale) {
+  pos = m[3];
+  for (int i = 0; i < 3; i++) scale[i] = glm::length(glm::vec3(m[i]));
+  const glm::mat3 rot_mtx(glm::vec3(m[0]) / scale[0], glm::vec3(m[1]) / scale[1],
+                          glm::vec3(m[2]) / scale[2]);
+  rot = glm::quat_cast(rot_mtx);
+}
+
 // VkFilter gltf_to_vk_filter(fastgltf::Filter filter) {
 //   switch (filter) {
 //     // nearest
@@ -232,6 +242,7 @@ void load_scene_graph_data(SceneLoadData& result, fastgltf::Asset& gltf, u32 def
     }
   }
   result.node_datas.reserve(gltf.nodes.size());
+  std::vector<u32> camera_node_indices;
   for (u32 node_idx = 0; node_idx < gltf.nodes.size(); node_idx++) {
     fastgltf::Node& gltf_node = gltf.nodes[node_idx];
     NodeData new_node;
@@ -243,9 +254,11 @@ void load_scene_graph_data(SceneLoadData& result, fastgltf::Asset& gltf, u32 def
             .material_id = static_cast<u32>(primitive.materialIndex.value_or(default_mat_idx)),
             .mesh_idx = prim_offsets_of_meshes[mesh_idx] + prim_idx++});
       }
-    }
-    if (gltf_node.meshIndex.has_value()) {
       result.mesh_node_indices.emplace_back(node_idx);
+    }
+    if (auto cam_idx = gltf_node.cameraIndex.value_or(NodeData::null_idx);
+        cam_idx != NodeData::null_idx) {
+      camera_node_indices.emplace_back(cam_idx);
     }
     new_node.name = gltf_node.name;
     set_node_transform_from_gltf_node(new_node, gltf_node);
@@ -271,6 +284,25 @@ void load_scene_graph_data(SceneLoadData& result, fastgltf::Asset& gltf, u32 def
     }
   }
   update_node_transforms(result.node_datas, result.root_node_indices);
+  for (auto& node_idx : camera_node_indices) {
+    auto& node = result.node_datas[node_idx];
+
+    vec3 pos, scale;
+    quat rotation;
+    decompose_matrix(node.world_transform, pos, rotation, scale);
+    Camera c;
+    c.pos = pos;
+    c.set_rotation(rotation);
+    result.cameras.emplace_back(c);
+    // const auto& cam = gltf.cameras[node_idx];
+    // std::visit(fastgltf::visitor{
+    //                [&result, &node](const fastgltf::Camera::Perspective&) {},
+    //                [](const fastgltf::Camera::Orthographic&) {
+    //
+    //                },
+    //            },
+    //            cam.camera);
+  }
 }
 
 // void load_samplers(const fastgltf::Asset& gltf, std::vector<vk2::Sampler>& samplers) {
@@ -707,7 +739,6 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
   result->materials.reserve(gltf.materials.size());
   for (size_t i = 0; i < gltf.materials.size(); i++) {
     const auto& gltf_mat = gltf.materials[i];
-    ZoneScopedN("determine usages");
     auto get_idx = [&gltf, &default_mat, &result](const fastgltf::TextureInfo& info) -> u32 {
       const auto& tex = gltf.textures[info.textureIndex];
       auto gltf_idx = tex.basisuImageIndex.value_or(tex.imageIndex.value_or(UINT32_MAX));
@@ -716,17 +747,12 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
       }
       return default_mat.white_img_handle;
     };
-    // TODO: pass default data as args
-    u32 default_img_idx =
-        VkRender2::get().get_default_data().white_img->view().sampled_img_resource().handle;
-    Material mat{.albedo_idx = default_img_idx, .normal_idx = default_img_idx};
+    Material mat{.albedo_idx = default_mat.white_img_handle,
+                 .normal_idx = default_mat.white_img_handle};
 
     if (gltf_mat.pbrData.baseColorTexture.has_value()) {
       mat.albedo_idx = get_idx(gltf_mat.pbrData.baseColorTexture.value());
-    } else {
-      mat.albedo_idx = default_img_idx;
     }
-    LINFO("{} {}", gltf_mat.name, mat.albedo_idx);
     if (gltf_mat.normalTexture.has_value()) {
       mat.normal_idx = get_idx(gltf_mat.normalTexture.value());
     }

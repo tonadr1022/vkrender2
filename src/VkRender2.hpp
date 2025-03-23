@@ -34,8 +34,6 @@ struct MaterialData {
   u32 albedo_tex;
 };
 
-VK2_DEFINE_HANDLE(Scene);
-
 struct VkRender2 final : public BaseRenderer {
   static VkRender2& get();
   static void init(const InitInfo& info);
@@ -81,8 +79,12 @@ struct VkRender2 final : public BaseRenderer {
     std::unique_ptr<SceneGPUResources> resources;
   };
 
+  // TODO: move ownership elsewhere. renderer shuld only
+  // own gpu resources
+ public:
   std::vector<LoadedScene> loaded_scenes_;
 
+ private:
   VkCommandPool imm_cmd_pool_;
   VkCommandBuffer imm_cmd_buf_;
   // VkFence imm_fence_;

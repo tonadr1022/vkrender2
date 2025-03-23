@@ -4,6 +4,7 @@
 
 #include "Camera.hpp"
 #include "Common.hpp"
+#include "Scene.hpp"
 struct GLFWwindow;
 
 struct App {
@@ -30,6 +31,7 @@ struct App {
   bool hide_mouse{false};
   std::filesystem::path resource_dir;
   std::filesystem::path local_models_dir;
+  std::vector<SceneHandle> scenes_;
 
  private:
   void shutdown() const;

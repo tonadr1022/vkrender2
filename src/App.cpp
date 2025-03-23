@@ -68,8 +68,7 @@ App::App(const InitInfo& info) : cam(cam_data, .1) {
 }
 void App::run() {
   float last_time{};
-
-  // VkRender2::get().load_scene(local_models_dir / "sponza.glb");
+  // scenes_.emplace_back(VkRender2::get().load_scene(local_models_dir / "sponza.glb"));
   // VkRender2::get().load_scene("/Users/tony/models/Models/ABeautifulGame/glTF/ABeautifulGame.gltf");
   VkRender2::get().load_scene(local_models_dir / "ABeautifulGame.glb");
 
@@ -95,7 +94,14 @@ void App::shutdown() const {
   glfwTerminate();
 }
 
-void App::update(float dt) { cam.update_pos(window, dt); }
+void App::update(float dt) {
+  cam.update_pos(window, dt);
+  // static glm::quat rot = glm::quat(1, 0, 0, 0);                     // Identity quaternion
+  // glm::quat delta_rot = glm::angleAxis(dt, glm::vec3(0., 1., 0.));  // Small rotation step
+  //
+  // rot = glm::normalize(delta_rot * rot);  // Accumulate rotation
+  // cam_data.set_rotation(rot);
+}
 
 void App::on_key_event([[maybe_unused]] int key, [[maybe_unused]] int scancode,
                        [[maybe_unused]] int action, [[maybe_unused]] int mods) {
@@ -145,8 +151,13 @@ uvec2 App::window_dims() const {
 
 void App::on_imgui() {
   ImGui::Begin("hello");
-  ImGui::Text("world");
-  static char text[100] = "";
-  ImGui::InputText("input text", text, 100);
+  for (auto scene_handle : scenes_) {
+    auto& scene = VkRender2::get().loaded_scenes_[(int)scene_handle.get()];
+    for (auto& c : scene.scene_graph_data.cameras) {
+      if (ImGui::Button("set cam")) {
+        cam_data = c;
+      }
+    }
+  }
   ImGui::End();
 }
