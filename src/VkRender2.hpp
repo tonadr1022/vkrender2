@@ -16,6 +16,22 @@
 #include "vk2/SamplerCache.hpp"
 #include "vk2/Texture.hpp"
 
+struct LinearAllocator {
+  explicit LinearAllocator(u64 size) : size(size) {}
+  u64 size;
+  u64 curr_offset{};
+
+  u64 alloc(u64 size) {
+    u64 offset = curr_offset;
+    curr_offset += size;
+    return offset;
+  }
+
+  void free() {
+    size = 0;
+    curr_offset = 0;
+  }
+};
 struct CmdEncoder {
   explicit CmdEncoder(VkCommandBuffer cmd) : cmd_(cmd) {}
   void dispatch(u32 work_groups_x, u32 work_groups_y, u32 work_groups_z);
@@ -41,7 +57,7 @@ struct VkRender2 final : public BaseRenderer {
   explicit VkRender2(const InitInfo& info);
   ~VkRender2() override;
 
-  SceneHandle load_scene(const std::filesystem::path& path);
+  SceneHandle load_scene(const std::filesystem::path& path, bool dynamic = false);
   void submit_static(SceneHandle scene, mat4 transform = mat4{1});
 
   // TODO: private
@@ -69,7 +85,6 @@ struct VkRender2 final : public BaseRenderer {
     vk2::Buffer draw_indirect_buffer;
     vk2::Buffer material_indices;
     vk2::Buffer instance_buffer;
-    std::vector<vk2::Sampler> samplers;
     std::vector<vk2::Texture> textures;
     u32 draw_cnt{};
   };
@@ -82,7 +97,7 @@ struct VkRender2 final : public BaseRenderer {
   // TODO: move ownership elsewhere. renderer shuld only
   // own gpu resources
  public:
-  std::vector<LoadedScene> loaded_scenes_;
+  std::vector<LoadedScene> loaded_dynamic_scenes_;
 
  private:
   struct FrameData {
@@ -99,13 +114,46 @@ struct VkRender2 final : public BaseRenderer {
 
   VkCommandPool imm_cmd_pool_;
   VkCommandBuffer imm_cmd_buf_;
-  // VkFence imm_fence_;
+
+  // TODO: tune or make adjustable
+  struct LinearBuffer {
+    explicit LinearBuffer(const vk2::BufferCreateInfo& info) : buffer(info), allocator(info.size) {}
+    explicit LinearBuffer(vk2::Buffer buffer)
+        : buffer(std::move(buffer)), allocator(buffer.size()) {}
+    vk2::Buffer buffer;
+    LinearAllocator allocator;
+    u64 alloc(u64 size) { return allocator.alloc(size); }
+  };
+
+  struct LinearStagingBuffer {
+    explicit LinearStagingBuffer(vk2::Buffer* buffer) : buffer_(buffer) {}
+
+    u64 copy(const void* data, u64 size) {
+      memcpy((char*)buffer_->mapped_data() + offset_, data, size);
+      offset_ += size;
+      return offset_ - size;
+    }
+    [[nodiscard]] vk2::Buffer* get_buffer() const { return buffer_; }
+
+   private:
+    u64 offset_{};
+    vk2::Buffer* buffer_{};
+  };
+
+  u64 draw_cnt_{};
+  std::optional<LinearBuffer> static_vertex_buf_;
+  std::optional<LinearBuffer> static_index_buf_;
+  std::optional<LinearBuffer> static_materials_buf_;
+  std::optional<LinearBuffer> static_material_indices_buf_;
+  std::optional<LinearBuffer> static_draw_cmds_buf_;
+  std::optional<LinearBuffer> static_transforms_buf_;
+  std::vector<vk2::Texture> static_textures_;
 
   StateTracker state_;
   StateTracker transfer_q_state_;
   std::optional<vk2::Texture> depth_img_;
   std::optional<vk2::Texture> img_;
-  std::optional<vk2::Sampler> nearest_sampler_;
+  std::optional<vk2::Sampler> linear_sampler_;
   struct DefaultData {
     std::optional<vk2::Texture> white_img;
   } default_data_;

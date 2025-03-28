@@ -795,21 +795,13 @@ std::optional<LoadedSceneData> load_gltf(const std::filesystem::path& path,
   }
 
   LoadedSceneBaseData& base_scene_data = base_scene_data_ret.value();
-  u64 vertices_size = base_scene_data.vertices.size() * sizeof(Vertex);
-  u64 indices_size = base_scene_data.indices.size() * sizeof(u32);
-  vk2::Buffer* staging = vk2::StagingBufferPool::get().acquire(vertices_size + indices_size);
-  memcpy(staging->mapped_data(), base_scene_data.vertices.data(), vertices_size);
-  memcpy((char*)staging->mapped_data() + vertices_size, base_scene_data.indices.data(),
-         indices_size);
   return LoadedSceneData{
       .scene_graph_data = std::move(base_scene_data.scene_graph_data),
-      .samplers = std::move(base_scene_data.samplers),
       .materials = std::move(base_scene_data.materials),
       .textures = std::move(base_scene_data.textures),
       .mesh_draw_infos = std::move(base_scene_data.mesh_draw_infos),
-      .vert_idx_staging = staging,
-      .vertices_size = vertices_size,
-      .indices_size = indices_size,
+      .vertices = std::move(base_scene_data.vertices),
+      .indices = std::move(base_scene_data.indices),
   };
 }
 }  // namespace gfx
