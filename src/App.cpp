@@ -70,7 +70,8 @@ void App::run() {
   float last_time{};
   // scenes_.emplace_back(VkRender2::get().load_scene(local_models_dir / "sponza.glb"));
   // VkRender2::get().load_scene("/Users/tony/models/Models/ABeautifulGame/glTF/ABeautifulGame.gltf");
-  VkRender2::get().load_scene(local_models_dir / "ABeautifulGame.glb");
+  VkRender2::get().load_scene(local_models_dir / "DamagedHelmet.glb");
+  // VkRender2::get().load_scene(local_models_dir / "ABeautifulGame.glb");
 
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();

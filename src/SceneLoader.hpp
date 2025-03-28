@@ -9,6 +9,7 @@
 #include "vk2/Buffer.hpp"
 #include "vk2/SamplerCache.hpp"
 #include "vk2/Texture.hpp"
+
 namespace gfx {
 
 struct Vertex {
@@ -16,7 +17,6 @@ struct Vertex {
   float uv_x;
   vec3 normal;
   float uv_y;
-  // vec2 uv;
 };
 
 struct Box3D {
@@ -27,6 +27,8 @@ struct Box3D {
 struct Material {
   u32 albedo_idx;
   u32 normal_idx;
+  u32 metal_rough_idx;
+  u32 emissive_idx;
 };
 
 struct PrimitiveDrawInfo {

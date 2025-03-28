@@ -285,12 +285,10 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
   }
   VK_CHECK(vkEndCommandBuffer(cmd));
 
-  // wait for swapchain to be ready
   std::array<VkSemaphoreSubmitInfo, 10> wait_semaphores{};
   u32 next_wait_sem_idx{0};
   wait_semaphores[next_wait_sem_idx++] = vk2::init::semaphore_submit_info(
       curr_frame().swapchain_semaphore, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT);
-  // signal the render semaphore so presentation can wait on it
   auto signal_info = vk2::init::semaphore_submit_info(curr_frame().render_semaphore,
                                                       VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT);
   if (transfer_queue_manager_->submit_signaled_) {
@@ -402,9 +400,16 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path) {
   loaded_scenes_.emplace_back(LoadedScene{
       std::move(res.scene_graph_data),
       std::make_unique<SceneGPUResources>(
-          create_storage_buffer(res.vertices_size), create_storage_buffer(res.indices_size),
+          create_storage_buffer(res.vertices_size),
+          Buffer{BufferCreateInfo{
+              .size = res.indices_size,
+              .usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+          }},
           create_storage_buffer(res.materials.size() * sizeof(gfx::Material)),
-          create_storage_buffer(draw_indirect_buf_size),
+          Buffer{BufferCreateInfo{
+              .size = draw_indirect_buf_size,
+              .usage = VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+          }},
           create_storage_buffer(material_indices_size), create_storage_buffer(instance_buf_size),
           std::move(res.samplers), std::move(res.textures), cmds.size()),
   });
@@ -438,24 +443,6 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path) {
   memcpy((char*)staging->mapped_data() + offset, res.materials.data(), materials_size);
   offset += materials_size;
   memcpy((char*)staging->mapped_data() + offset, material_ids.data(), material_indices_size);
-
-  // {
-  //   immediate_submit([&](VkCommandBuffer cmd) {
-  //     copy_buffer(cmd, res.vert_idx_staging->buffer(), resources->vertex_buffer.buffer(), 0, 0,
-  //                 res.vertices_size);
-  //     copy_buffer(cmd, res.vert_idx_staging->buffer(), resources->index_buffer.buffer(),
-  //                 res.vertices_size, 0, res.indices_size);
-  //     copy_buffer(cmd, staging->buffer(), resources->draw_indirect_buffer.buffer(), 0, 0,
-  //                 draw_indirect_buf_size);
-  //     copy_buffer(cmd, staging->buffer(), resources->instance_buffer.buffer(),
-  //                 draw_indirect_buf_size, 0, instance_buf_size);
-  //     copy_buffer(cmd, staging->buffer(), resources->materials_buffer.buffer(),
-  //                 draw_indirect_buf_size + instance_buf_size, 0, materials_size);
-  //     copy_buffer(cmd, staging->buffer(), resources->material_indices.buffer(),
-  //                 draw_indirect_buf_size + instance_buf_size + materials_size, 0,
-  //                 material_indices_size);
-  //   });
-  // }
 
   {
     VkCommandBuffer cmd = transfer_queue_manager_->get_cmd_buffer();

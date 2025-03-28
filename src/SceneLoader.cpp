@@ -305,26 +305,6 @@ void load_scene_graph_data(SceneLoadData& result, fastgltf::Asset& gltf, u32 def
   }
 }
 
-// void load_samplers(const fastgltf::Asset& gltf, std::vector<vk2::Sampler>& samplers) {
-//   ZoneScoped;
-//   samplers.reserve(gltf.samplers.size());
-//   for (const auto& sampler : gltf.samplers) {
-//     samplers.emplace_back(VkSamplerCreateInfo{
-//         .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-//         .magFilter = gltf_to_vk_filter(sampler.magFilter.value_or(fastgltf::Filter::Linear)),
-//         .minFilter = gltf_to_vk_filter(sampler.magFilter.value_or(fastgltf::Filter::Linear)),
-//         .mipmapMode = gltf_to_vk_mipmap_mode(
-//             sampler.minFilter.value_or(fastgltf::Filter::LinearMipMapLinear)),
-//         .addressModeU = gltf_to_vk_wrap_mode(sampler.wrapS),
-//         .addressModeV = gltf_to_vk_wrap_mode(sampler.wrapT),
-//         .addressModeW = gltf_to_vk_wrap_mode(fastgltf::Wrap::Repeat),
-//         .minLod = -1000,
-//         .maxLod = 100,
-//         .borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
-//     });
-//   }
-// }
-
 struct CpuImageData {
   u32 w, h, channels;
   bool is_ktx{};
@@ -748,7 +728,9 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
       return default_mat.white_img_handle;
     };
     Material mat{.albedo_idx = default_mat.white_img_handle,
-                 .normal_idx = default_mat.white_img_handle};
+                 .normal_idx = default_mat.white_img_handle,
+                 .metal_rough_idx = default_mat.white_img_handle,
+                 .emissive_idx = default_mat.white_img_handle};
 
     if (gltf_mat.pbrData.baseColorTexture.has_value()) {
       mat.albedo_idx = get_idx(gltf_mat.pbrData.baseColorTexture.value());
@@ -756,8 +738,12 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
     if (gltf_mat.normalTexture.has_value()) {
       mat.normal_idx = get_idx(gltf_mat.normalTexture.value());
     }
-
-    // TODO: others
+    if (gltf_mat.pbrData.metallicRoughnessTexture.has_value()) {
+      mat.metal_rough_idx = get_idx(gltf_mat.pbrData.metallicRoughnessTexture.value());
+    }
+    if (gltf_mat.emissiveTexture.has_value()) {
+      mat.emissive_idx = get_idx(gltf_mat.emissiveTexture.value());
+    }
 
     result->materials.emplace_back(mat);
   }
