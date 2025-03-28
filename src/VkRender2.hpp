@@ -141,6 +141,15 @@ struct VkRender2 final : public BaseRenderer {
   };
 
   u64 draw_cnt_{};
+  struct DrawStats {
+    u32 vertices;
+    u32 indices;
+    u32 draw_cmds;
+    u32 textures;
+    u32 materials;
+  };
+
+  DrawStats static_draw_stats_{};
   std::optional<LinearBuffer> static_vertex_buf_;
   std::optional<LinearBuffer> static_index_buf_;
   std::optional<LinearBuffer> static_materials_buf_;

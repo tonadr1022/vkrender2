@@ -31,6 +31,8 @@
 #include "vk2/Texture.hpp"
 #include "vk2/VkCommon.hpp"
 
+using gfx::Vertex;
+
 namespace {
 VkRender2* instance{};
 
@@ -173,9 +175,9 @@ VkRender2::VkRender2(const InitInfo& info)
     }
   }
 
-  static_vertex_buf_ = LinearBuffer{create_storage_buffer(10'00'000 * sizeof(gfx::Vertex))};
+  static_vertex_buf_ = LinearBuffer{create_storage_buffer(10'000'000 * sizeof(gfx::Vertex))};
   static_index_buf_ = LinearBuffer{BufferCreateInfo{
-      .size = 10'000'00 * sizeof(u32),
+      .size = 10'000'000 * sizeof(u32),
       .usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
   }};
   static_materials_buf_ = LinearBuffer{create_storage_buffer(10'000 * sizeof(gfx::Material))};
@@ -367,6 +369,17 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
 
 void VkRender2::on_gui() {
   if (ImGui::Begin("Renderer")) {
+    if (ImGui::TreeNodeEx("stats", ImGuiTreeNodeFlags_DefaultOpen)) {
+      if (ImGui::TreeNodeEx("static geometry", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Text("Vertices %u", static_draw_stats_.vertices);
+        ImGui::Text("Indices: %u", static_draw_stats_.indices);
+        ImGui::Text("Draw Cmds: %u", static_draw_stats_.draw_cmds);
+        ImGui::Text("Materials: %u", static_draw_stats_.materials);
+        ImGui::Text("Textures: %u", static_draw_stats_.textures);
+        ImGui::TreePop();
+      }
+      ImGui::TreePop();
+    }
     if (ImGui::CollapsingHeader("textures")) {
       for (const auto& obj : loaded_dynamic_scenes_) {
         for (const auto& t : obj.resources->textures) {
@@ -442,10 +455,11 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
   std::vector<u32> material_ids;
   transforms.reserve(res.scene_graph_data.mesh_node_indices.size());
   material_ids.reserve(res.scene_graph_data.mesh_node_indices.size());
+  u32 material_id_ofset = static_draw_stats_.materials;
   for (auto& node : res.scene_graph_data.node_datas) {
     for (auto& mesh_indices : node.meshes) {
       transforms.emplace_back(node.world_transform);
-      material_ids.emplace_back(mesh_indices.material_id);
+      material_ids.emplace_back(mesh_indices.material_id + material_id_ofset);
     }
   }
   u64 transforms_size = transforms.size() * sizeof(mat4);
@@ -460,21 +474,21 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
   if (!dynamic) {
     u64 vertices_gpu_offset = static_vertex_buf_->alloc(vertices_size);
     u64 indices_gpu_offset = static_index_buf_->alloc(indices_size);
-    u32 i = 0;
+    u32 i = draw_cnt_;
     for (auto& node : res.scene_graph_data.node_datas) {
       for (auto& mesh_indices : node.meshes) {
         auto& mesh = res.mesh_draw_infos[mesh_indices.mesh_idx];
         cmds.emplace_back(VkDrawIndexedIndirectCommand{
             .indexCount = mesh.index_count,
             .instanceCount = 1,
-            .firstIndex = static_cast<u32>((indices_gpu_offset / sizeof(u32)) + mesh.first_index),
-            .vertexOffset = static_cast<i32>(vertices_gpu_offset + mesh.first_vertex),
+            .firstIndex = static_cast<u32>((indices_gpu_offset / sizeof(u32) + mesh.first_index)),
+            .vertexOffset =
+                static_cast<i32>((vertices_gpu_offset / sizeof(Vertex)) + mesh.first_vertex),
             .firstInstance = i++});
       }
     }
+    // TODO: split staging?
     u64 cmds_buf_size = cmds.size() * sizeof(VkDrawIndexedIndirectCommand);
-    // add transforms to static gpu buffer
-
     auto staging = LinearStagingBuffer{vk2::StagingBufferPool::get().acquire(
         cmds_buf_size + transforms_size + material_indices_size + material_data_size +
         vertices_size + indices_size)};
@@ -499,6 +513,11 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
       vkCmdCopyBuffer2KHR(cmd, &copy_info);
     };
 
+    static_draw_stats_.draw_cmds += cmds.size();
+    static_draw_stats_.vertices += res.vertices.size();
+    static_draw_stats_.indices += res.indices.size();
+    static_draw_stats_.textures += res.textures.size();
+    static_draw_stats_.materials += res.materials.size();
     immediate_submit([&, this](VkCommandBuffer cmd) {
       u64 cmds_gpu_offset = static_draw_cmds_buf_->alloc(cmds_buf_size);
       copy_buffer(cmd, *staging.get_buffer(), static_draw_cmds_buf_->buffer, cmds_staging_offset,
