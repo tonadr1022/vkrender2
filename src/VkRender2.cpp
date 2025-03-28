@@ -18,6 +18,7 @@
 #include "glm/packing.hpp"
 #include "imgui.h"
 #include "shaders/debug/basic_common.h.glsl"
+#include "util/CVar.hpp"
 #include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/Device.hpp"
@@ -32,7 +33,12 @@
 
 namespace {
 VkRender2* instance{};
-}
+
+AutoCVarInt ao_map_enabled{"renderer.ao_map", "AO Map", 1, CVarFlags::EditCheckbox};
+
+// AutoCVarInt vsync{"renderer.vsync", "display vsync", 1, CVarFlags::EditCheckbox};
+
+}  // namespace
 
 VkRender2& VkRender2::get() {
   assert(instance);
@@ -141,8 +147,8 @@ VkRender2::VkRender2(const InitInfo& info)
   // TODO: this is cringe
   nearest_sampler_ = SamplerCache::get().get_or_create_sampler(VkSamplerCreateInfo{
       .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-      .magFilter = VK_FILTER_NEAREST,
-      .minFilter = VK_FILTER_NEAREST,
+      .magFilter = VK_FILTER_LINEAR,
+      .minFilter = VK_FILTER_LINEAR,
       .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
       .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
       .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
@@ -153,9 +159,39 @@ VkRender2::VkRender2(const InitInfo& info)
   });
   default_mat_data_.white_img_handle =
       default_data_.white_img->view().sampled_img_resource().handle;
+
+  {
+    // per frame scene uniforms
+    per_frame_data_2_.resize(frames_in_flight_);
+    for (u32 i = 0; i < frames_in_flight_; i++) {
+      auto& d = per_frame_data_2_[i];
+      d.scene_uniform_buf = vk2::Buffer{vk2::BufferCreateInfo{
+          .size = sizeof(SceneUniforms),
+          .usage = VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT,
+          .alloc_flags = VMA_ALLOCATION_CREATE_MAPPED_BIT |
+                         VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT}};
+    }
+  }
 }
 
 void VkRender2::on_draw(const SceneDrawInfo& info) {
+  ZoneScoped;
+  {
+    ZoneScopedN("scene uniform buffer");
+    auto& d = curr_frame_2();
+    SceneUniforms data;
+    mat4 proj = info.proj;
+    proj[1][1] *= -1;
+    mat4 vp = proj * info.view;
+    data.view_proj = vp;
+    data.debug_flags = uvec4{};
+    if (ao_map_enabled.get()) {
+      data.debug_flags.x |= AO_ENABLED_BIT;
+    }
+    data.view_pos = info.view_pos;
+    memcpy(d.scene_uniform_buf->mapped_data(), &data, sizeof(SceneUniforms));
+  }
+
   while (!pending_buffer_transfers_.empty()) {
     auto& f = pending_buffer_transfers_.front();
     if (!f.fence) {
@@ -229,16 +265,12 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
       vkCmdBeginRenderingKHR(cmd, &rendering_info);
       set_viewport_and_scissor(cmd, img_->extent_2d());
 
-      mat4 proj = info.proj;
-      proj[1][1] *= -1;
-
-      mat4 vp = proj * info.view;
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                         PipelineManager::get().get(draw_pipeline_)->pipeline);
 
       // TODO: uniform buffer lol
       for (auto& scene : loaded_scenes_) {
-        BasicPushConstants pc{vp,
+        BasicPushConstants pc{curr_frame_2().scene_uniform_buf->resource_info_->handle,
                               scene.resources->vertex_buffer.resource_info_->handle,
                               scene.resources->instance_buffer.resource_info_->handle,
                               scene.resources->materials_buffer.resource_info_->handle,

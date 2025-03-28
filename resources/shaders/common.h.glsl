@@ -1,12 +1,16 @@
-#ifdef __cplusplus
+#ifndef VK2_COMMON_H
+#define VK2_COMMON_H
 
-#define TUINT32 uint32_t
-#define TUINT64 uint64_t
+#include "./resources.h.glsl"
 
-#define TDECL_SHARED_PUSH_CONSTANT(name) \
-    struct name
-#else
+struct SceneData {
+    mat4 view_proj;
+    uvec4 debug_flags;
+    vec3 view_pos;
+};
 
-#define TDECL_SHARED_PUSH_CONSTANT(name) \
-    layout (push_constant, scalar) uniform name
-#endif // __cplusplus
+VK2_DECLARE_STORAGE_BUFFERS_RO(SceneUniforms){
+SceneData data;
+} scene_data_buffer[];
+
+#endif

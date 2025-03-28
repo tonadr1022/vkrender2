@@ -1,10 +1,14 @@
 #include "App.hpp"
 
+#include <fstream>
+
+#include "Camera.hpp"
 #include "GLFW/glfw3.h"
 #include "Input.hpp"
 #include "Logger.hpp"
 #include "VkRender2.hpp"
 #include "imgui.h"
+#include "util/CVar.hpp"
 namespace {
 
 std::optional<std::filesystem::path> get_resource_dir() {
@@ -66,7 +70,39 @@ App::App(const InitInfo& info) : cam(cam_data, .1) {
                                       .on_gui_callback = [this]() { this->on_imgui(); }});
   local_models_dir = resource_dir / "local_models/";
 }
+
+namespace {
+
+std::filesystem::path cache_dir{"./.cache"};
+std::filesystem::path cam_data_path{cache_dir / "camera.bin"};
+
+void save_cam(const Camera& cam) {
+  if (!std::filesystem::exists(cache_dir)) {
+    std::filesystem::create_directory(cache_dir);
+  }
+  std::ofstream file(cam_data_path, std::ios::binary);
+  if (!file.is_open()) {
+    LERROR("failed to save camera");
+    return;
+  }
+  file.write((const char*)&cam, sizeof(Camera));
+}
+
+void load_cam(Camera& cam) {
+  if (std::filesystem::exists(cam_data_path)) {
+    std::ifstream file(cam_data_path, std::ios::binary);
+    if (!file.is_open()) {
+      LERROR("failed to load camera data");
+      return;
+    }
+    file.read((char*)&cam, sizeof(Camera));
+  }
+}
+
+}  // namespace
+
 void App::run() {
+  load_cam(cam_data);
   float last_time{};
   // scenes_.emplace_back(VkRender2::get().load_scene(local_models_dir / "sponza.glb"));
   // VkRender2::get().load_scene("/Users/tony/models/Models/ABeautifulGame/glTF/ABeautifulGame.gltf");
@@ -81,9 +117,10 @@ void App::run() {
     update(dt);
 
     mat4 proj = glm::perspective(glm::radians(70.f), aspect_ratio(), 0.1f, 1000.f);
-    VkRender2::get().draw({.view = cam_data.get_view(), .proj = proj});
+    VkRender2::get().draw({.view = cam_data.get_view(), .proj = proj, .view_pos = cam_data.pos});
   }
 
+  save_cam(cam_data);
   shutdown();
 }
 
@@ -97,9 +134,8 @@ void App::shutdown() const {
 
 void App::update(float dt) {
   cam.update_pos(window, dt);
-  // static glm::quat rot = glm::quat(1, 0, 0, 0);                     // Identity quaternion
-  // glm::quat delta_rot = glm::angleAxis(dt, glm::vec3(0., 1., 0.));  // Small rotation step
-  //
+  // static glm::quat rot = glm::quat(1, 0, 0, 0);
+  // glm::quat delta_rot = glm::angleAxis(dt, glm::vec3(0., 1., 0.));
   // rot = glm::normalize(delta_rot * rot);  // Accumulate rotation
   // cam_data.set_rotation(rot);
 }
@@ -152,6 +188,7 @@ uvec2 App::window_dims() const {
 
 void App::on_imgui() {
   ImGui::Begin("hello");
+  CVarSystem::get().draw_imgui_editor();
   for (auto scene_handle : scenes_) {
     auto& scene = VkRender2::get().loaded_scenes_[(int)scene_handle.get()];
     for (auto& c : scene.scene_graph_data.cameras) {

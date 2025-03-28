@@ -25,10 +25,9 @@ struct Box3D {
 };
 
 struct Material {
-  u32 albedo_idx;
-  u32 normal_idx;
-  u32 metal_rough_idx;
-  u32 emissive_idx;
+  vec4 emissive_factors;
+  uvec4 ids1;  // albedo, normal, metal_rough, emissive
+  uvec4 ids2;  // ao
 };
 
 struct PrimitiveDrawInfo {

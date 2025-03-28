@@ -7,11 +7,13 @@
 #include <vulkan/vk_enum_string_helper.h>
 #include <vulkan/vulkan_core.h>
 
+#include <algorithm>
 #include <cassert>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
 #include <print>
+#include <ranges>
 #include <string>
 #include <tracy/Tracy.hpp>
 #include <unordered_set>

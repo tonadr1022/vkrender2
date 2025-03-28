@@ -85,6 +85,18 @@ struct VkRender2 final : public BaseRenderer {
   std::vector<LoadedScene> loaded_scenes_;
 
  private:
+  struct FrameData {
+    std::optional<vk2::Buffer> scene_uniform_buf;
+  };
+  std::vector<FrameData> per_frame_data_2_;
+  FrameData& curr_frame_2() { return per_frame_data_2_[curr_frame_num() % 2]; }
+
+  struct SceneUniforms {
+    mat4 view_proj;
+    uvec4 debug_flags;
+    vec3 view_pos;
+  };
+
   VkCommandPool imm_cmd_pool_;
   VkCommandBuffer imm_cmd_buf_;
   // VkFence imm_fence_;

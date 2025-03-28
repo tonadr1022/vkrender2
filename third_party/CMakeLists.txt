@@ -100,10 +100,12 @@ add_library(lib_imgui
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
     ${imgui_SOURCE_DIR}/imgui_widgets.cpp
     ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/misc/cpp/imgui_stdlib.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp)
 target_include_directories(lib_imgui PUBLIC
     ${imgui_SOURCE_DIR}
+    ${imgui_SOURCE_DIR}/misc/cpp
     ${imgui_SOURCE_DIR}/backends
     ${Vulkan_INCLUDE_DIRS}
     )

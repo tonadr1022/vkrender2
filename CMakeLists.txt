@@ -15,6 +15,7 @@ src/StateTracker.cpp
 src/VkRender2.cpp
 src/ThreadPool.cpp
 src/util/IndexAllocator.cpp
+src/util/CVar.cpp
 
 src/vk2/StagingBufferPool.cpp
 src/vk2/Fence.cpp

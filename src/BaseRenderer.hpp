@@ -82,6 +82,7 @@ struct QueueManager {
 struct SceneDrawInfo {
   mat4 view;
   mat4 proj;
+  vec3 view_pos;
 };
 
 class BaseRenderer {

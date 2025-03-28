@@ -4,7 +4,7 @@
 #include "../resources.h.glsl"
 
 VK2_DECLARE_ARGUMENTS(BasicPushConstants){
-mat4 view_proj;
+uint scene_buffer;
 uint vertex_buffer_idx;
 uint instance_buffer;
 uint materials_buffer;

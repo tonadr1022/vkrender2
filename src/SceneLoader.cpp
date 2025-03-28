@@ -727,23 +727,26 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
       }
       return default_mat.white_img_handle;
     };
-    Material mat{.albedo_idx = default_mat.white_img_handle,
-                 .normal_idx = default_mat.white_img_handle,
-                 .metal_rough_idx = default_mat.white_img_handle,
-                 .emissive_idx = default_mat.white_img_handle};
+    Material mat{.ids1 = uvec4{default_mat.white_img_handle},
+                 .ids2 = uvec4(default_mat.white_img_handle)};
 
     if (gltf_mat.pbrData.baseColorTexture.has_value()) {
-      mat.albedo_idx = get_idx(gltf_mat.pbrData.baseColorTexture.value());
+      mat.ids1.x = get_idx(gltf_mat.pbrData.baseColorTexture.value());
     }
     if (gltf_mat.normalTexture.has_value()) {
-      mat.normal_idx = get_idx(gltf_mat.normalTexture.value());
+      mat.ids1.y = get_idx(gltf_mat.normalTexture.value());
     }
     if (gltf_mat.pbrData.metallicRoughnessTexture.has_value()) {
-      mat.metal_rough_idx = get_idx(gltf_mat.pbrData.metallicRoughnessTexture.value());
+      mat.ids1.z = get_idx(gltf_mat.pbrData.metallicRoughnessTexture.value());
     }
     if (gltf_mat.emissiveTexture.has_value()) {
-      mat.emissive_idx = get_idx(gltf_mat.emissiveTexture.value());
+      mat.ids1.w = get_idx(gltf_mat.emissiveTexture.value());
     }
+    if (gltf_mat.occlusionTexture.has_value()) {
+      mat.ids2.x = get_idx(gltf_mat.occlusionTexture.value());
+    }
+    mat.emissive_factors = vec4(gltf_mat.emissiveFactor.x(), gltf_mat.emissiveFactor.y(),
+                                gltf_mat.emissiveFactor.z(), gltf_mat.emissiveStrength);
 
     result->materials.emplace_back(mat);
   }
