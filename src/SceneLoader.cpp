@@ -21,6 +21,7 @@
 #include "ThreadPool.hpp"
 #include "Timer.hpp"
 #include "VkRender2.hpp"
+#include "shaders/common.h.glsl"
 #include "vk2/StagingBufferPool.hpp"
 #include "vk2/VkCommon.hpp"
 
@@ -728,7 +729,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
       return default_mat.white_img_handle;
     };
     Material mat{.ids1 = uvec4{default_mat.white_img_handle},
-                 .ids2 = uvec4(default_mat.white_img_handle)};
+                 .ids2 = uvec4(default_mat.white_img_handle, 0, 0, 0)};
 
     if (gltf_mat.pbrData.baseColorTexture.has_value()) {
       mat.ids1.x = get_idx(gltf_mat.pbrData.baseColorTexture.value());
@@ -744,6 +745,12 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
     }
     if (gltf_mat.occlusionTexture.has_value()) {
       mat.ids2.x = get_idx(gltf_mat.occlusionTexture.value());
+    } else if (gltf_mat.packedOcclusionRoughnessMetallicTextures &&
+               gltf_mat.packedOcclusionRoughnessMetallicTextures->occlusionRoughnessMetallicTexture
+                   .has_value()) {
+      mat.ids2.x = get_idx(gltf_mat.packedOcclusionRoughnessMetallicTextures
+                               ->occlusionRoughnessMetallicTexture.value());
+      mat.ids2.w |= PACKED_OCCLUSION_ROUGHNESS_METALLIC;
     }
     mat.emissive_factors = vec4(gltf_mat.emissiveFactor.x(), gltf_mat.emissiveFactor.y(),
                                 gltf_mat.emissiveFactor.z(), gltf_mat.emissiveStrength);

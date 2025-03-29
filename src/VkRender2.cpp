@@ -17,6 +17,7 @@
 #include "StateTracker.hpp"
 #include "glm/packing.hpp"
 #include "imgui.h"
+#include "shaders/common.h.glsl"
 #include "shaders/debug/basic_common.h.glsl"
 #include "util/CVar.hpp"
 #include "vk2/BindlessResourceAllocator.hpp"
@@ -30,8 +31,6 @@
 #include "vk2/StagingBufferPool.hpp"
 #include "vk2/Texture.hpp"
 #include "vk2/VkCommon.hpp"
-
-using gfx::Vertex;
 
 namespace {
 VkRender2* instance{};
@@ -205,6 +204,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
     if (ao_map_enabled.get()) {
       data.debug_flags.x |= AO_ENABLED_BIT;
     }
+    data.debug_flags.w = debug_mode_;
     data.view_pos = info.view_pos;
     memcpy(d.scene_uniform_buf->mapped_data(), &data, sizeof(SceneUniforms));
   }
@@ -371,6 +371,9 @@ void VkRender2::on_gui() {
   if (ImGui::Begin("Renderer")) {
     if (ImGui::TreeNodeEx("stats", ImGuiTreeNodeFlags_DefaultOpen)) {
       if (ImGui::TreeNodeEx("static geometry", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Text("Total vertices: %llu", static_draw_stats_.total_vertices);
+        ImGui::Text("Total indices: %llu", static_draw_stats_.total_indices);
+        ImGui::Text("Total triangles: %llu", static_draw_stats_.total_vertices / 3);
         ImGui::Text("Vertices %u", static_draw_stats_.vertices);
         ImGui::Text("Indices: %u", static_draw_stats_.indices);
         ImGui::Text("Draw Cmds: %u", static_draw_stats_.draw_cmds);
@@ -379,6 +382,15 @@ void VkRender2::on_gui() {
         ImGui::TreePop();
       }
       ImGui::TreePop();
+    }
+
+    if (ImGui::BeginCombo("Debug Mode", debug_mode_to_string(debug_mode_))) {
+      for (u32 mode = 0; mode < DEBUG_MODE_COUNT; mode++) {
+        if (ImGui::Selectable(debug_mode_to_string(mode), mode == debug_mode_)) {
+          debug_mode_ = mode;
+        }
+      }
+      ImGui::EndCombo();
     }
     if (ImGui::CollapsingHeader("textures")) {
       for (const auto& obj : loaded_dynamic_scenes_) {
@@ -444,7 +456,179 @@ void VkRender2::set_viewport_and_scissor(VkCommandBuffer cmd, VkExtent2D extent)
   vkCmdSetScissor(cmd, 0, 1, &scissor);
 }
 
-SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynamic) {
+SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynamic,
+                                  const mat4& transform) {
+  auto copy_buffer = [](VkCommandBuffer cmd, const Buffer& src_buffer, const Buffer& dst_buffer,
+                        u64 src_offset, u64 dst_offset, u64 size) {
+    VkBufferCopy2KHR copy{.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2_KHR,
+                          .srcOffset = src_offset,
+                          .dstOffset = dst_offset,
+                          .size = size};
+    VkCopyBufferInfo2KHR copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+                                   .srcBuffer = src_buffer.buffer(),
+                                   .dstBuffer = dst_buffer.buffer(),
+                                   .regionCount = 1,
+                                   .pRegions = &copy};
+    vkCmdCopyBuffer2KHR(cmd, &copy_info);
+  };
+
+  if (!dynamic) {
+    auto it = static_scenes_.find(path);
+    StaticSceneGPUResources* resources{};
+    if (it != static_scenes_.end()) {
+      resources = &it->second;
+    } else {
+      auto ret = gfx::load_gltf(path, default_mat_data_);
+      if (!ret.has_value()) {
+        return {};
+      }
+      auto res = std::move(ret.value());
+
+      u64 material_data_size = res.materials.size() * sizeof(gfx::Material);
+      u64 vertices_size = res.vertices.size() * sizeof(gfx::Vertex);
+      u64 indices_size = res.indices.size() * sizeof(u32);
+      u64 vertices_gpu_offset = static_vertex_buf_->alloc(vertices_size);
+      u64 indices_gpu_offset = static_index_buf_->alloc(indices_size);
+
+      auto staging = LinearStagingBuffer{
+          vk2::StagingBufferPool::get().acquire(material_data_size + vertices_size + indices_size)};
+      u64 material_data_staging_offset = staging.copy(res.materials.data(), material_data_size);
+      u64 vertices_staging_offset = staging.copy(res.vertices.data(), vertices_size);
+      u64 indices_staging_offset = staging.copy(res.indices.data(), indices_size);
+
+      static_draw_stats_.vertices += res.vertices.size();
+      static_draw_stats_.indices += res.indices.size();
+      static_draw_stats_.textures += res.textures.size();
+      static_draw_stats_.materials += res.materials.size();
+      u64 material_data_gpu_offset = static_materials_buf_->alloc(material_data_size);
+
+      transfer_submit([&, this](VkCommandBuffer cmd, VkFence fence) {
+        copy_buffer(cmd, *staging.get_buffer(), static_materials_buf_->buffer,
+                    material_data_staging_offset, material_data_gpu_offset, material_data_size);
+        copy_buffer(cmd, *staging.get_buffer(), static_vertex_buf_->buffer, vertices_staging_offset,
+                    vertices_gpu_offset, vertices_size);
+        copy_buffer(cmd, *staging.get_buffer(), static_index_buf_->buffer, indices_staging_offset,
+                    indices_gpu_offset, indices_size);
+
+        transfer_q_state_.reset(cmd)
+            .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
+                                   VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT,
+                                   static_vertex_buf_->buffer.buffer(), queues_.transfer_queue_idx,
+                                   queues_.graphics_queue_idx)
+            .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT,
+                                   VK_ACCESS_2_INDEX_READ_BIT, static_vertex_buf_->buffer.buffer(),
+                                   queues_.transfer_queue_idx, queues_.graphics_queue_idx)
+            .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+                                   VK_ACCESS_2_SHADER_READ_BIT,
+                                   static_materials_buf_->buffer.buffer(),
+                                   queues_.transfer_queue_idx, queues_.graphics_queue_idx)
+            .flush_barriers();
+        pending_buffer_transfers_.emplace(staging.get_buffer(), fence);
+      });
+
+      static_textures_.reserve(static_textures_.size() + res.textures.size());
+      for (auto& t : res.textures) {
+        static_textures_.emplace_back(std::move(t));
+      }
+      // StagingBufferPool::get().free(staging.get_buffer());
+      resources = &static_scenes_
+                       .emplace(path.string(),
+                                StaticSceneGPUResources{
+                                    .scene_graph_data = std::move(res.scene_graph_data),
+                                    .mesh_draw_infos = std::move(res.mesh_draw_infos),
+                                    .first_vertex = vertices_gpu_offset / sizeof(gfx::Vertex),
+                                    .first_index = indices_gpu_offset / sizeof(u32),
+                                    .num_vertices = res.vertices.size(),
+                                    .num_indices = res.indices.size(),
+                                    .materials_idx_offset =
+                                        material_data_gpu_offset / sizeof(gfx::Material),
+                                    .base_instance = 0})
+                       .first->second;
+    }
+    static_draw_stats_.total_vertices += resources->num_vertices;
+    static_draw_stats_.total_indices += resources->num_indices;
+
+    std::vector<mat4> transforms;
+    std::vector<u32> material_ids;
+    transforms.reserve(resources->scene_graph_data.mesh_node_indices.size());
+    material_ids.reserve(resources->scene_graph_data.mesh_node_indices.size());
+    bool mult_transform = transform != mat4{1};
+    for (auto& node : resources->scene_graph_data.node_datas) {
+      for (auto& mesh_indices : node.meshes) {
+        transforms.emplace_back(mult_transform ? transform * node.world_transform
+                                               : node.world_transform);
+        material_ids.emplace_back(mesh_indices.material_id + resources->materials_idx_offset);
+      }
+    }
+
+    u64 transforms_size = transforms.size() * sizeof(mat4);
+    u64 material_indices_size = material_ids.size() * sizeof(u32);
+
+    std::vector<VkDrawIndexedIndirectCommand> cmds;
+    cmds.reserve(resources->scene_graph_data.mesh_node_indices.size());
+
+    u32 i = draw_cnt_;
+    for (auto& node : resources->scene_graph_data.node_datas) {
+      for (auto& mesh_indices : node.meshes) {
+        auto& mesh = resources->mesh_draw_infos[mesh_indices.mesh_idx];
+        cmds.emplace_back(VkDrawIndexedIndirectCommand{
+            .indexCount = mesh.index_count,
+            .instanceCount = 1,
+            .firstIndex = static_cast<u32>(resources->first_index + mesh.first_index),
+            .vertexOffset = static_cast<i32>(resources->first_vertex + mesh.first_vertex),
+            .firstInstance = i++});
+      }
+    }
+
+    u64 cmds_buf_size = cmds.size() * sizeof(VkDrawIndexedIndirectCommand);
+
+    auto staging = LinearStagingBuffer{vk2::StagingBufferPool::get().acquire(
+        cmds_buf_size + transforms_size + material_indices_size)};
+    u64 cmds_staging_offset = staging.copy(cmds.data(), cmds_buf_size);
+    u64 transforms_staging_offset = staging.copy(transforms.data(), transforms_size);
+    u64 material_ids_staging_offset = staging.copy(material_ids.data(), material_indices_size);
+
+    transfer_submit([&, this](VkCommandBuffer cmd, VkFence fence) {
+      // transfer_q_state_.reset(cmd)
+      //     .buffer_barrier(static_draw_cmds_buf_->buffer.buffer(),
+      //     VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+      //                     VK_ACCESS_2_TRANSFER_WRITE_BIT)
+      //     .flush_barriers();
+      u64 cmds_gpu_offset = static_draw_cmds_buf_->alloc(cmds_buf_size);
+      copy_buffer(cmd, *staging.get_buffer(), static_draw_cmds_buf_->buffer, cmds_staging_offset,
+                  cmds_gpu_offset, cmds_buf_size);
+      u64 transforms_gpu_offset = static_transforms_buf_->alloc(transforms_size);
+      copy_buffer(cmd, *staging.get_buffer(), static_transforms_buf_->buffer,
+                  transforms_staging_offset, transforms_gpu_offset, transforms_size);
+      u64 material_ids_gpu_offset = static_material_indices_buf_->alloc(material_indices_size);
+      copy_buffer(cmd, *staging.get_buffer(), static_material_indices_buf_->buffer,
+                  material_ids_staging_offset, material_ids_gpu_offset, material_indices_size);
+
+      transfer_q_state_.reset(cmd)
+          .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
+                                 VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT,
+                                 static_draw_cmds_buf_->buffer.buffer(), queues_.transfer_queue_idx,
+                                 queues_.graphics_queue_idx)
+          .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+                                 VK_ACCESS_2_SHADER_READ_BIT,
+                                 static_transforms_buf_->buffer.buffer(),
+                                 queues_.transfer_queue_idx, queues_.graphics_queue_idx)
+          .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+                                 VK_ACCESS_2_SHADER_READ_BIT,
+                                 static_material_indices_buf_->buffer.buffer(),
+                                 queues_.transfer_queue_idx, queues_.graphics_queue_idx)
+          .flush_barriers();
+      // TODO: fence?
+      pending_buffer_transfers_.emplace(staging.get_buffer(), fence);
+    });
+
+    draw_cnt_ += cmds.size();
+    static_draw_stats_.draw_cmds += cmds.size();
+
+    return {};
+  }
+
+  // TODO: refactor
   auto ret = gfx::load_gltf(path, default_mat_data_);
   if (!ret.has_value()) {
     return {};
@@ -455,11 +639,11 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
   std::vector<u32> material_ids;
   transforms.reserve(res.scene_graph_data.mesh_node_indices.size());
   material_ids.reserve(res.scene_graph_data.mesh_node_indices.size());
-  u32 material_id_ofset = static_draw_stats_.materials;
+  u32 material_id_offset = static_draw_stats_.materials;
   for (auto& node : res.scene_graph_data.node_datas) {
     for (auto& mesh_indices : node.meshes) {
       transforms.emplace_back(node.world_transform);
-      material_ids.emplace_back(mesh_indices.material_id + material_id_ofset);
+      material_ids.emplace_back(mesh_indices.material_id + material_id_offset);
     }
   }
   u64 transforms_size = transforms.size() * sizeof(mat4);
@@ -470,81 +654,6 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
 
   std::vector<VkDrawIndexedIndirectCommand> cmds;
   cmds.reserve(res.scene_graph_data.mesh_node_indices.size());
-
-  if (!dynamic) {
-    u64 vertices_gpu_offset = static_vertex_buf_->alloc(vertices_size);
-    u64 indices_gpu_offset = static_index_buf_->alloc(indices_size);
-    u32 i = draw_cnt_;
-    for (auto& node : res.scene_graph_data.node_datas) {
-      for (auto& mesh_indices : node.meshes) {
-        auto& mesh = res.mesh_draw_infos[mesh_indices.mesh_idx];
-        cmds.emplace_back(VkDrawIndexedIndirectCommand{
-            .indexCount = mesh.index_count,
-            .instanceCount = 1,
-            .firstIndex = static_cast<u32>((indices_gpu_offset / sizeof(u32) + mesh.first_index)),
-            .vertexOffset =
-                static_cast<i32>((vertices_gpu_offset / sizeof(Vertex)) + mesh.first_vertex),
-            .firstInstance = i++});
-      }
-    }
-    // TODO: split staging?
-    u64 cmds_buf_size = cmds.size() * sizeof(VkDrawIndexedIndirectCommand);
-    auto staging = LinearStagingBuffer{vk2::StagingBufferPool::get().acquire(
-        cmds_buf_size + transforms_size + material_indices_size + material_data_size +
-        vertices_size + indices_size)};
-    u64 cmds_staging_offset = staging.copy(cmds.data(), cmds_buf_size);
-    u64 transforms_staging_offset = staging.copy(transforms.data(), transforms_size);
-    u64 material_ids_staging_offset = staging.copy(material_ids.data(), material_indices_size);
-    u64 material_data_staging_offset = staging.copy(res.materials.data(), material_data_size);
-    u64 vertices_staging_offset = staging.copy(res.vertices.data(), vertices_size);
-    u64 indices_staging_offset = staging.copy(res.indices.data(), indices_size);
-
-    auto copy_buffer = [](VkCommandBuffer cmd, const Buffer& src_buffer, const Buffer& dst_buffer,
-                          u64 src_offset, u64 dst_offset, u64 size) {
-      VkBufferCopy2KHR copy{.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2_KHR,
-                            .srcOffset = src_offset,
-                            .dstOffset = dst_offset,
-                            .size = size};
-      VkCopyBufferInfo2KHR copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
-                                     .srcBuffer = src_buffer.buffer(),
-                                     .dstBuffer = dst_buffer.buffer(),
-                                     .regionCount = 1,
-                                     .pRegions = &copy};
-      vkCmdCopyBuffer2KHR(cmd, &copy_info);
-    };
-
-    static_draw_stats_.draw_cmds += cmds.size();
-    static_draw_stats_.vertices += res.vertices.size();
-    static_draw_stats_.indices += res.indices.size();
-    static_draw_stats_.textures += res.textures.size();
-    static_draw_stats_.materials += res.materials.size();
-    immediate_submit([&, this](VkCommandBuffer cmd) {
-      u64 cmds_gpu_offset = static_draw_cmds_buf_->alloc(cmds_buf_size);
-      copy_buffer(cmd, *staging.get_buffer(), static_draw_cmds_buf_->buffer, cmds_staging_offset,
-                  cmds_gpu_offset, cmds_buf_size);
-      u64 transforms_gpu_offset = static_transforms_buf_->alloc(transforms_size);
-      copy_buffer(cmd, *staging.get_buffer(), static_transforms_buf_->buffer,
-                  transforms_staging_offset, transforms_gpu_offset, transforms_size);
-      u64 material_ids_gpu_offset = static_material_indices_buf_->alloc(material_indices_size);
-      copy_buffer(cmd, *staging.get_buffer(), static_material_indices_buf_->buffer,
-                  material_ids_staging_offset, material_ids_gpu_offset, material_indices_size);
-      u64 material_data_gpu_offset = static_materials_buf_->alloc(material_data_size);
-      copy_buffer(cmd, *staging.get_buffer(), static_materials_buf_->buffer,
-                  material_data_staging_offset, material_data_gpu_offset, material_data_size);
-      copy_buffer(cmd, *staging.get_buffer(), static_vertex_buf_->buffer, vertices_staging_offset,
-                  vertices_gpu_offset, vertices_size);
-      copy_buffer(cmd, *staging.get_buffer(), static_index_buf_->buffer, indices_staging_offset,
-                  indices_gpu_offset, indices_size);
-    });
-    draw_cnt_ += cmds.size();
-    static_textures_.reserve(static_textures_.size() + res.textures.size());
-    for (auto& t : res.textures) {
-      static_textures_.emplace_back(std::move(t));
-    }
-    StagingBufferPool::get().free(staging.get_buffer());
-
-    return {};
-  }
 
   u32 i = 0;
   for (auto& node : res.scene_graph_data.node_datas) {
@@ -581,20 +690,6 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
 
   auto* resources = gltf_result.resources.get();
 
-  auto copy_buffer = [](VkCommandBuffer cmd, VkBuffer src_buffer, VkBuffer dst_buffer,
-                        u64 src_offset, u64 dst_offset, u64 size) {
-    VkBufferCopy2KHR copy{.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2_KHR,
-                          .srcOffset = src_offset,
-                          .dstOffset = dst_offset,
-                          .size = size};
-    VkCopyBufferInfo2KHR copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
-                                   .srcBuffer = src_buffer,
-                                   .dstBuffer = dst_buffer,
-                                   .regionCount = 1,
-                                   .pRegions = &copy};
-    vkCmdCopyBuffer2KHR(cmd, &copy_info);
-  };
-
   vk2::Buffer* staging = vk2::StagingBufferPool::get().acquire(
       draw_indirect_buf_size + transforms_size + material_data_size + material_indices_size +
       vertices_size + indices_size);
@@ -614,22 +709,16 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
   memcpy((char*)staging->mapped_data() + offset, res.indices.data(), indices_size);
 
   {
-    VkCommandBuffer cmd = transfer_queue_manager_->get_cmd_buffer();
-    {
-      auto info = vk2::init::command_buffer_begin_info();
-      VK_CHECK(vkResetCommandBuffer(cmd, 0));
-      VK_CHECK(vkBeginCommandBuffer(cmd, &info));
-      copy_buffer(cmd, staging->buffer(), resources->vertex_buffer.buffer(),
-                  vertices_staging_offset, 0, vertices_size);
-      copy_buffer(cmd, staging->buffer(), resources->index_buffer.buffer(), indices_staging_offset,
-                  0, indices_size);
-      copy_buffer(cmd, staging->buffer(), resources->draw_indirect_buffer.buffer(), 0, 0,
-                  draw_indirect_buf_size);
-      copy_buffer(cmd, staging->buffer(), resources->instance_buffer.buffer(),
-                  draw_indirect_buf_size, 0, transforms_size);
-      copy_buffer(cmd, staging->buffer(), resources->materials_buffer.buffer(),
+    transfer_submit([&, this](VkCommandBuffer cmd, VkFence fence) {
+      copy_buffer(cmd, *staging, resources->vertex_buffer, vertices_staging_offset, 0,
+                  vertices_size);
+      copy_buffer(cmd, *staging, resources->index_buffer, indices_staging_offset, 0, indices_size);
+      copy_buffer(cmd, *staging, resources->draw_indirect_buffer, 0, 0, draw_indirect_buf_size);
+      copy_buffer(cmd, *staging, resources->instance_buffer, draw_indirect_buf_size, 0,
+                  transforms_size);
+      copy_buffer(cmd, *staging, resources->materials_buffer,
                   draw_indirect_buf_size + transforms_size, 0, material_data_size);
-      copy_buffer(cmd, staging->buffer(), resources->material_indices.buffer(),
+      copy_buffer(cmd, *staging, resources->material_indices,
                   draw_indirect_buf_size + transforms_size + material_data_size, 0,
                   material_indices_size);
       {
@@ -658,19 +747,8 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
                                    queues_.graphics_queue_idx)
             .flush_barriers();
       }
-      VK_CHECK(vkEndCommandBuffer(cmd));
-
-      VkFence transfer_fence = vk2::FencePool::get().allocate(true);
-      auto cmd_buf_submit_info = vk2::init::command_buffer_submit_info(cmd);
-
-      auto wait_info = vk2::init::semaphore_submit_info(transfer_queue_manager_->submit_semaphore_,
-                                                        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT);
-      auto submit = init::queue_submit_info(SPAN1(cmd_buf_submit_info), {}, SPAN1(wait_info));
-      LINFO("submit main graphics queue");
-      VK_CHECK(vkQueueSubmit2KHR(queues_.transfer_queue, 1, &submit, transfer_fence));
-      transfer_queue_manager_->submit_signaled_ = true;
-      pending_buffer_transfers_.emplace(staging, nullptr);
-    }
+      pending_buffer_transfers_.emplace(staging, fence);
+    });
   }
   return handle;
 }
@@ -700,4 +778,32 @@ VkDescriptorSet VkRender2::get_imgui_set(VkSampler sampler, VkImageView view) {
   VkDescriptorSet imgui_set =
       ImGui_ImplVulkan_AddTexture(sampler, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
   return imgui_desc_sets_.emplace(hash, imgui_set).first->second;
+}
+const char* VkRender2::debug_mode_to_string(u32 mode) {
+  switch (mode) {
+    case DEBUG_MODE_AO_MAP:
+      return "AO Map";
+    default:
+      return "None";
+  }
+}
+
+void VkRender2::transfer_submit(
+    std::function<void(VkCommandBuffer cmd, VkFence fence)>&& function) {
+  VkCommandBuffer cmd = transfer_queue_manager_->get_cmd_buffer();
+  VK_CHECK(vkResetCommandBuffer(cmd, 0));
+  auto info = vk2::init::command_buffer_begin_info();
+  VK_CHECK(vkBeginCommandBuffer(cmd, &info));
+  VkFence transfer_fence = vk2::FencePool::get().allocate(true);
+  function(cmd, transfer_fence);
+  VK_CHECK(vkEndCommandBuffer(cmd));
+
+  auto cmd_buf_submit_info = vk2::init::command_buffer_submit_info(cmd);
+
+  auto wait_info = vk2::init::semaphore_submit_info(transfer_queue_manager_->submit_semaphore_,
+                                                    VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT);
+  auto submit = init::queue_submit_info(SPAN1(cmd_buf_submit_info), {}, SPAN1(wait_info));
+  LINFO("submit main graphics queue");
+  VK_CHECK(vkQueueSubmit2KHR(queues_.transfer_queue, 1, &submit, transfer_fence));
+  transfer_queue_manager_->submit_signaled_ = true;
 }

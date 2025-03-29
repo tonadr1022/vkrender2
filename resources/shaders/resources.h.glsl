@@ -1,8 +1,6 @@
 #ifndef VK2_RESOURCES
 #define VK2_RESOURCES
 
-#define AO_ENABLED_BIT 0x1
-
 #ifdef __cplusplus
 
 #define vmat4 glm::mat4

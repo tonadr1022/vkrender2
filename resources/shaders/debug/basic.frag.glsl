@@ -15,7 +15,7 @@ layout(location = 0) out vec4 out_frag_color;
 struct Material {
     vec4 emissive_factors;
     uvec4 ids; // albedo, normal, metal_rough, emissive
-    uvec4 ids2; // ao
+    uvec4 ids2; // ao, w is flags
 };
 
 VK2_DECLARE_SAMPLED_IMAGES(texture2D);
@@ -34,7 +34,15 @@ void main() {
     float ao = 1.0;
     // TODO: packed ao metal rough
     if ((debug_flags.x & AO_ENABLED_BIT) != 0) {
-        ao = texture(vk2_sampler2D(material.ids2.x, sampler_idx), in_uv).r;
+        if ((material.ids2.w & METALLIC_ROUGHNESS_TEX_MASK) == PACKED_OCCLUSION_ROUGHNESS_METALLIC) {
+            ao = texture(vk2_sampler2D(material.ids.z, sampler_idx), in_uv).r;
+        } else {
+            ao = texture(vk2_sampler2D(material.ids2.x, sampler_idx), in_uv).r;
+        }
+        if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_AO_MAP) {
+            out_frag_color = vec4(vec3(ao), 1.);
+            return;
+        }
     }
     vec3 metal_rough = texture(vk2_sampler2D(material.ids.z, sampler_idx), in_uv).rgb;
     vec3 V = normalize(scene_data.view_pos - in_frag_pos);
@@ -44,8 +52,5 @@ void main() {
     vec3 light_out = color_pbr(N, L, V, vec4(color.rgb, 1.), metal_rough.b, metal_rough.g, vec3(1.));
 
     out_frag_color = vec4((light_out + color.rgb * .2) * ao + emissive, 1.);
-    // if ((debug_flags.x & AO_ENABLED_BIT) == 0) {
-    //     out_frag_color = vec4(metal_rough, 1.);
-    // }
     // out_frag_color = vec4(normal.rgb, 1.);
 }

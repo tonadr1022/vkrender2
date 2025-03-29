@@ -10,6 +10,7 @@
 #include "Scene.hpp"
 #include "SceneLoader.hpp"
 #include "StateTracker.hpp"
+#include "shaders/common.h.glsl"
 #include "vk2/Buffer.hpp"
 #include "vk2/DeletionQueue.hpp"
 #include "vk2/PipelineManager.hpp"
@@ -57,11 +58,13 @@ struct VkRender2 final : public BaseRenderer {
   explicit VkRender2(const InitInfo& info);
   ~VkRender2() override;
 
-  SceneHandle load_scene(const std::filesystem::path& path, bool dynamic = false);
+  SceneHandle load_scene(const std::filesystem::path& path, bool dynamic = false,
+                         const mat4& transform = mat4{1});
   void submit_static(SceneHandle scene, mat4 transform = mat4{1});
 
   // TODO: private
   void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
+  void transfer_submit(std::function<void(VkCommandBuffer cmd, VkFence fence)>&& function);
   [[nodiscard]] const QueueFamilies& get_queues() const { return queues_; }
 
  private:
@@ -142,12 +145,28 @@ struct VkRender2 final : public BaseRenderer {
 
   u64 draw_cnt_{};
   struct DrawStats {
+    u64 total_vertices;
+    u64 total_indices;
+
     u32 vertices;
     u32 indices;
     u32 draw_cmds;
     u32 textures;
     u32 materials;
   };
+
+  struct StaticSceneGPUResources {
+    SceneLoadData scene_graph_data;
+    std::vector<gfx::PrimitiveDrawInfo> mesh_draw_infos;
+    u64 first_vertex;
+    u64 first_index;
+    u64 num_vertices;
+    u64 num_indices;
+    u64 materials_idx_offset;
+    u64 base_instance;
+  };
+
+  std::unordered_map<std::string, StaticSceneGPUResources> static_scenes_;
 
   DrawStats static_draw_stats_{};
   std::optional<LinearBuffer> static_vertex_buf_;
@@ -185,6 +204,10 @@ struct VkRender2 final : public BaseRenderer {
   VkDescriptorSet main_set2_{};
   VmaAllocator allocator_;
   // end non owning
+
+  u32 debug_mode_{DEBUG_MODE_NONE};
+  const char* debug_mode_to_string(u32 mode);
+
  public:
   [[nodiscard]] const DefaultData& get_default_data() const { return default_data_; }
 };

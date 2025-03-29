@@ -12,6 +12,7 @@ add_executable(vkrender2
 src/main.cpp
 src/BaseRenderer.cpp
 src/StateTracker.cpp
+src/Camera.cpp
 src/VkRender2.cpp
 src/ThreadPool.cpp
 src/util/IndexAllocator.cpp

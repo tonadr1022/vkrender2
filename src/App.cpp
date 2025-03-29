@@ -104,10 +104,19 @@ void load_cam(Camera& cam) {
 void App::run() {
   load_cam(cam_data);
   float last_time{};
-  // VkRender2::get().load_scene(local_models_dir / "sponza.glb", false);
   // VkRender2::get().load_scene("/Users/tony/models/Models/ABeautifulGame/glTF/ABeautifulGame.gltf");
-  VkRender2::get().load_scene(local_models_dir / "ABeautifulGame.glb", false);
-  VkRender2::get().load_scene(local_models_dir / "DamagedHelmet.glb", false);
+  vec3 iter{};
+  float spacing = 40;
+  int len = 1;
+  for (iter.x = -len; iter.x <= len; iter.x++) {
+    for (iter.z = -len; iter.z <= len; iter.z++) {
+      // VkRender2::get().load_scene(local_models_dir / "sponza.glb", false,
+      //                             glm::translate(mat4{1}, iter * spacing));
+      VkRender2::get().load_scene(local_models_dir / "ABeautifulGame.glb", false,
+                                  glm::translate(mat4{1}, iter * spacing * .1f + vec3{0, 30, 0}));
+    }
+  }
+  // VkRender2::get().load_scene(local_models_dir / "DamagedHelmet.glb", false);
 
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
@@ -188,6 +197,16 @@ uvec2 App::window_dims() const {
 
 void App::on_imgui() {
   ImGui::Begin("hello");
+  if (ImGui::TreeNodeEx("Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
+    cam.on_imgui();
+    ImGui::TreePop();
+  }
+  if (ImGui::Button("add sponza")) {
+    static int offset = 1;
+    VkRender2::get().load_scene(local_models_dir / "sponza.glb", false,
+                                glm::translate(mat4{1}, vec3{0, 0, offset * 40}));
+    offset++;
+  }
   CVarSystem::get().draw_imgui_editor();
   for (auto scene_handle : scenes_) {
     auto& scene = VkRender2::get().loaded_dynamic_scenes_[(int)scene_handle.get()];

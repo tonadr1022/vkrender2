@@ -34,6 +34,7 @@ struct Camera {
 };
 
 struct CameraController {
+  void on_imgui();
   explicit CameraController(Camera& cam, float sensitivity = .1)
       : cam(cam), sensivity(sensitivity) {}
 
@@ -66,6 +67,12 @@ struct CameraController {
     }
     if (get_key(GLFW_KEY_H) || get_key(GLFW_KEY_F)) {
       vert -= 1;
+    }
+    if (get_key(GLFW_KEY_B)) {
+      move_speed += 0.1;
+    }
+    if (get_key(GLFW_KEY_V)) {
+      move_speed -= 0.1;
     }
     cam.pos += offset * move_speed * dt;
     cam.pos.y += vert * move_speed * dt;
