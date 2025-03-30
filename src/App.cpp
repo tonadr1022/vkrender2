@@ -104,19 +104,18 @@ void load_cam(Camera& cam) {
 void App::run() {
   load_cam(cam_data);
   float last_time{};
-  // VkRender2::get().load_scene("/Users/tony/models/Models/ABeautifulGame/glTF/ABeautifulGame.gltf");
   vec3 iter{};
   float spacing = 40;
-  int len = 1;
+  int len = 0;
   for (iter.x = -len; iter.x <= len; iter.x++) {
     for (iter.z = -len; iter.z <= len; iter.z++) {
       // VkRender2::get().load_scene(local_models_dir / "sponza.glb", false,
       //                             glm::translate(mat4{1}, iter * spacing));
       VkRender2::get().load_scene(local_models_dir / "ABeautifulGame.glb", false,
                                   glm::translate(mat4{1}, iter * spacing * .1f + vec3{0, 30, 0}));
+      // VkRender2::get().load_scene(local_models_dir / "DamagedHelmet.glb", false);
     }
   }
-  // VkRender2::get().load_scene(local_models_dir / "DamagedHelmet.glb", false);
 
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
