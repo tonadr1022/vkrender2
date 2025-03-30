@@ -15,6 +15,7 @@
 #include <fastgltf/types.hpp>
 #include <future>
 
+#include "BS_thread_pool.hpp"
 #include "Camera.hpp"
 #include "Scene.hpp"
 #include "StateTracker.hpp"
@@ -112,12 +113,12 @@ u32 populate_indices(const fastgltf::Primitive& primitive, const fastgltf::Asset
   if (!primitive.indicesAccessor.has_value()) {
     return 0;
   }
-  u64 first_idx = indices.size();
+  // u64 first_idx = indices.size();
   const auto& index_accessor = gltf.accessors[primitive.indicesAccessor.value()];
-  indices.resize(indices.size() + index_accessor.count);
-  size_t i = first_idx;
+  // indices.reserve(indices.size() + index_accessor.count);
+  // size_t i = first_idx;
   fastgltf::iterateAccessor<u32>(gltf, index_accessor,
-                                 [&](uint32_t index) { indices[i++] = index; });
+                                 [&](uint32_t index) { indices.emplace_back(index); });
   return index_accessor.count;
 }
 
@@ -328,6 +329,7 @@ enum class ImageUsage : u8 {
 void load_cpu_img_data(const fastgltf::Asset& asset, const fastgltf::Image& image,
                        const std::filesystem::path& directory, CpuImageData& result,
                        ImageUsage usage) {
+  ZoneScoped;
   auto get_vk_format = [&](bool is_ktx) {
     switch (usage) {
       case ImageUsage::BaseColor:
@@ -623,7 +625,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
         }
       }
       futures.clear();
-      // TODO: SYNC LOL
+      // TODO: SYNC LOL, img upload buffer needs to be returned
       VkRender2::get().transfer_submit([start_copy_idx, end_copy_idx = img_i - 1, &img_upload_infos,
                                         &img_staging_buf, &result, &state,
                                         curr_staging_offset](VkCommandBuffer cmd, VkFence fence) {
@@ -717,85 +719,165 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
     }
     futures.clear();
   }
+  for (auto& f : futures) {
+    if (f.valid()) {
+      f.get();
+    }
+  }
+  futures.clear();
 
-  result->materials.reserve(gltf.materials.size());
-  for (size_t i = 0; i < gltf.materials.size(); i++) {
-    const auto& gltf_mat = gltf.materials[i];
-    auto get_idx = [&gltf, &default_mat, &result](const fastgltf::TextureInfo& info) -> u32 {
-      const auto& tex = gltf.textures[info.textureIndex];
-      auto gltf_idx = tex.basisuImageIndex.value_or(tex.imageIndex.value_or(UINT32_MAX));
-      if (gltf_idx != UINT32_MAX) {
-        return result->textures[gltf_idx].view().sampled_img_resource().handle;
+  {
+    ZoneScopedN("load gltf materials");
+    result->materials.reserve(gltf.materials.size());
+    for (size_t i = 0; i < gltf.materials.size(); i++) {
+      const auto& gltf_mat = gltf.materials[i];
+      auto get_idx = [&gltf, &default_mat, &result](const fastgltf::TextureInfo& info) -> u32 {
+        const auto& tex = gltf.textures[info.textureIndex];
+        auto gltf_idx = tex.basisuImageIndex.value_or(tex.imageIndex.value_or(UINT32_MAX));
+        if (gltf_idx != UINT32_MAX) {
+          return result->textures[gltf_idx].view().sampled_img_resource().handle;
+        }
+        return default_mat.white_img_handle;
+      };
+      Material mat{.ids1 = uvec4{default_mat.white_img_handle},
+                   .ids2 = uvec4(default_mat.white_img_handle, 0, 0, 0)};
+
+      if (gltf_mat.pbrData.baseColorTexture.has_value()) {
+        mat.ids1.x = get_idx(gltf_mat.pbrData.baseColorTexture.value());
       }
-      return default_mat.white_img_handle;
-    };
-    Material mat{.ids1 = uvec4{default_mat.white_img_handle},
-                 .ids2 = uvec4(default_mat.white_img_handle, 0, 0, 0)};
+      if (gltf_mat.normalTexture.has_value()) {
+        mat.ids1.y = get_idx(gltf_mat.normalTexture.value());
+      }
+      if (gltf_mat.pbrData.metallicRoughnessTexture.has_value()) {
+        mat.ids1.z = get_idx(gltf_mat.pbrData.metallicRoughnessTexture.value());
+      }
+      if (gltf_mat.emissiveTexture.has_value()) {
+        mat.ids1.w = get_idx(gltf_mat.emissiveTexture.value());
+      }
+      if (gltf_mat.occlusionTexture.has_value()) {
+        mat.ids2.x = get_idx(gltf_mat.occlusionTexture.value());
+      } else if (gltf_mat.packedOcclusionRoughnessMetallicTextures &&
+                 gltf_mat.packedOcclusionRoughnessMetallicTextures
+                     ->occlusionRoughnessMetallicTexture.has_value()) {
+        mat.ids2.x = get_idx(gltf_mat.packedOcclusionRoughnessMetallicTextures
+                                 ->occlusionRoughnessMetallicTexture.value());
+        mat.ids2.w |= PACKED_OCCLUSION_ROUGHNESS_METALLIC;
+      }
+      mat.emissive_factors = vec4(gltf_mat.emissiveFactor.x(), gltf_mat.emissiveFactor.y(),
+                                  gltf_mat.emissiveFactor.z(), gltf_mat.emissiveStrength);
 
-    if (gltf_mat.pbrData.baseColorTexture.has_value()) {
-      mat.ids1.x = get_idx(gltf_mat.pbrData.baseColorTexture.value());
+      result->materials.emplace_back(mat);
     }
-    if (gltf_mat.normalTexture.has_value()) {
-      mat.ids1.y = get_idx(gltf_mat.normalTexture.value());
-    }
-    if (gltf_mat.pbrData.metallicRoughnessTexture.has_value()) {
-      mat.ids1.z = get_idx(gltf_mat.pbrData.metallicRoughnessTexture.value());
-    }
-    if (gltf_mat.emissiveTexture.has_value()) {
-      mat.ids1.w = get_idx(gltf_mat.emissiveTexture.value());
-    }
-    if (gltf_mat.occlusionTexture.has_value()) {
-      mat.ids2.x = get_idx(gltf_mat.occlusionTexture.value());
-    } else if (gltf_mat.packedOcclusionRoughnessMetallicTextures &&
-               gltf_mat.packedOcclusionRoughnessMetallicTextures->occlusionRoughnessMetallicTexture
-                   .has_value()) {
-      mat.ids2.x = get_idx(gltf_mat.packedOcclusionRoughnessMetallicTextures
-                               ->occlusionRoughnessMetallicTexture.value());
-      mat.ids2.w |= PACKED_OCCLUSION_ROUGHNESS_METALLIC;
-    }
-    mat.emissive_factors = vec4(gltf_mat.emissiveFactor.x(), gltf_mat.emissiveFactor.y(),
-                                gltf_mat.emissiveFactor.z(), gltf_mat.emissiveStrength);
-
-    result->materials.emplace_back(mat);
   }
-  // std::array<std::future<void>, 2> scene_load_futures;
-  // u32 scene_load_future_idx = 0;
-  // scene_load_futures[scene_load_future_idx++] = threads::pool.submit_task([&]() { });
-  size_t total_num_gltf_primitives = 0;
-  for (const auto& m : gltf.meshes) {
-    total_num_gltf_primitives += m.primitives.size();
-  }
-  result->mesh_draw_infos.resize(total_num_gltf_primitives);
-
-  u32 primitive_idx{0};
-  u32 mesh_idx{0};
-  for (const auto& gltf_mesh : gltf.meshes) {
-    for (const auto& gltf_prim : gltf_mesh.primitives) {
-      u32 first_index = result->indices.size();
-      u32 index_count = populate_indices(gltf_prim, gltf, result->indices);
-      u32 first_vertex = result->vertices.size();
-      u32 vertex_count = populate_vertices(gltf_prim, gltf, result->vertices);
-      result->mesh_draw_infos[primitive_idx++] = {.first_index = first_index,
-                                                  .index_count = index_count,
-                                                  .first_vertex = first_vertex,
-                                                  .vertex_count = vertex_count,
-                                                  .mesh_idx = mesh_idx};
+  {
+    ZoneScopedN("gltf load geometry");
+    size_t total_num_gltf_primitives = 0;
+    for (const auto& m : gltf.meshes) {
+      total_num_gltf_primitives += m.primitives.size();
     }
-    mesh_idx++;
-  };
-  // scene_load_futures[scene_load_future_idx++] = threads::pool.submit_task([&result,
-  // &gltf]() {});
+    result->mesh_draw_infos.resize(total_num_gltf_primitives);
+    futures.resize(total_num_gltf_primitives);
+
+    u32 num_indices{};
+    u32 num_vertices{};
+    {
+      u32 primitive_idx{0};
+      u32 mesh_idx{0};
+      u32 index_offset{};
+      u32 vertex_offset{};
+      for (const auto& gltf_mesh : gltf.meshes) {
+        for (const auto& gltf_prim : gltf_mesh.primitives) {
+          u32 first_index = index_offset;
+          const auto& index_accessor = gltf.accessors[gltf_prim.indicesAccessor.value()];
+          u32 index_count = index_accessor.count;
+          index_offset += index_count;
+          u32 first_vertex = vertex_offset;
+          const auto* pos_attrib = gltf_prim.findAttribute("POSITION");
+          if (pos_attrib == gltf_prim.attributes.end()) {
+            return {};
+          }
+          u32 vertex_count = gltf.accessors[pos_attrib->accessorIndex].count;
+          vertex_offset += vertex_count;
+          num_vertices += vertex_count;
+          num_indices += index_count;
+          result->mesh_draw_infos[primitive_idx++] = {.first_index = first_index,
+                                                      .index_count = index_count,
+                                                      .first_vertex = first_vertex,
+                                                      .vertex_count = vertex_count,
+                                                      .mesh_idx = mesh_idx};
+        }
+        mesh_idx++;
+      };
+    }
+
+    result->indices.resize(num_indices);
+    result->vertices.resize(num_vertices);
+
+    {
+      futures.clear();
+      u64 mesh_draw_idx = 0;
+      for (u64 mesh_idx = 0; mesh_idx < gltf.meshes.size(); mesh_idx++) {
+        for (u64 primitive_idx = 0; primitive_idx < gltf.meshes[mesh_idx].primitives.size();
+             primitive_idx++, mesh_draw_idx++) {
+          futures.emplace_back(threads::pool.submit_task([&gltf, mesh_idx, primitive_idx, &result,
+                                                          mesh_draw_idx]() {
+            const auto& primitive = gltf.meshes[mesh_idx].primitives[primitive_idx];
+            const auto& index_accessor = gltf.accessors[primitive.indicesAccessor.value()];
+            const auto& mesh_draw_info = result->mesh_draw_infos[mesh_draw_idx];
+            u32 start_idx = mesh_draw_info.first_index;
+            fastgltf::iterateAccessorWithIndex<u32>(
+                gltf, index_accessor,
+                [&](uint32_t index, u32 i) { result->indices[start_idx + i] = index; });
+            const auto* pos_attrib = primitive.findAttribute("POSITION");
+            if (pos_attrib == primitive.attributes.end()) {
+              assert(0);
+            }
+            u64 start_i = mesh_draw_info.first_vertex;
+            const auto& pos_accessor = gltf.accessors[pos_attrib->accessorIndex];
+            fastgltf::iterateAccessorWithIndex<vec3>(
+                gltf, pos_accessor,
+                [&result, start_i](vec3 pos, u32 i) { result->vertices[start_i + i].pos = pos; });
+
+            const auto* uv_attrib = primitive.findAttribute("TEXCOORD_0");
+            if (uv_attrib != primitive.attributes.end()) {
+              const auto& accessor = gltf.accessors[uv_attrib->accessorIndex];
+
+              assert(accessor.count == pos_accessor.count);
+              u64 i = start_i;
+              for (glm::vec2 uv : fastgltf::iterateAccessor<glm::vec2>(gltf, accessor)) {
+                result->vertices[i].uv_x = uv.x;
+                result->vertices[i++].uv_y = uv.y;
+              }
+            }
+
+            const auto* normal_attrib = primitive.findAttribute("NORMAL");
+            if (normal_attrib != primitive.attributes.end()) {
+              const auto& normal_accessor = gltf.accessors[normal_attrib->accessorIndex];
+              u64 i = start_i;
+              assert(normal_accessor.count == pos_accessor.count);
+              for (glm::vec3 normal : fastgltf::iterateAccessor<glm::vec3>(gltf, normal_accessor)) {
+                result->vertices[i++].normal = normal;
+              }
+            }
+          }));
+        }
+      }
+      for (auto& f : futures) {
+        if (f.valid()) {
+          f.get();
+        }
+      }
+    }
+  }
 
   load_scene_graph_data(result->scene_graph_data, gltf, 0);
-  // for (auto& f : scene_load_futures) {
-  //   f.get();
-  // }
 
   return result;
 }
 
 std::optional<LoadedSceneData> load_gltf(const std::filesystem::path& path,
                                          const DefaultMaterialData& default_mat) {
+  ZoneScoped;
   PrintTimerMS t;
   auto base_scene_data_ret = load_gltf_base(path, default_mat);
   if (!base_scene_data_ret.has_value()) {

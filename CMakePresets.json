@@ -27,8 +27,7 @@
       "name": "Release",
       "inherits": "default",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "TRACY_ENABLE": false
+        "CMAKE_BUILD_TYPE": "Release"
       }
     }
   ],
