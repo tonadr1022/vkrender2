@@ -156,7 +156,7 @@ VkRender2::VkRender2(const InitInfo& info)
       .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
       .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
       .minLod = -1000,
-      .maxLod = 1000,
+      .maxLod = 1,
       .borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
   });
   default_mat_data_.white_img_handle =
@@ -372,9 +372,9 @@ void VkRender2::on_gui() {
   if (ImGui::Begin("Renderer")) {
     if (ImGui::TreeNodeEx("stats", ImGuiTreeNodeFlags_DefaultOpen)) {
       if (ImGui::TreeNodeEx("static geometry", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Text("Total vertices: %llu", static_draw_stats_.total_vertices);
-        ImGui::Text("Total indices: %llu", static_draw_stats_.total_indices);
-        ImGui::Text("Total triangles: %llu", static_draw_stats_.total_vertices / 3);
+        ImGui::Text("Total vertices: %lu", static_draw_stats_.total_vertices);
+        ImGui::Text("Total indices: %lu", static_draw_stats_.total_indices);
+        ImGui::Text("Total triangles: %lu", static_draw_stats_.total_vertices / 3);
         ImGui::Text("Vertices %u", static_draw_stats_.vertices);
         ImGui::Text("Indices: %u", static_draw_stats_.indices);
         ImGui::Text("Draw Cmds: %u", static_draw_stats_.draw_cmds);
@@ -796,6 +796,8 @@ const char* VkRender2::debug_mode_to_string(u32 mode) {
   switch (mode) {
     case DEBUG_MODE_AO_MAP:
       return "AO Map";
+    case DEBUG_MODE_NORMALS:
+      return "Normals";
     default:
       return "None";
   }
