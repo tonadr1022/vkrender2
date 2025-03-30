@@ -623,9 +623,10 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
         }
       }
       futures.clear();
-      VkRender2::get().immediate_submit([start_copy_idx, end_copy_idx = img_i - 1,
-                                         &img_upload_infos, &img_staging_buf, &result, &state,
-                                         curr_staging_offset](VkCommandBuffer cmd) {
+      // TODO: SYNC LOL
+      VkRender2::get().transfer_submit([start_copy_idx, end_copy_idx = img_i - 1, &img_upload_infos,
+                                        &img_staging_buf, &result, &state,
+                                        curr_staging_offset](VkCommandBuffer cmd, VkFence fence) {
         state.reset(cmd);
         for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
           const auto& img_upload = img_upload_infos[i];
