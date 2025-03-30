@@ -10,7 +10,8 @@
 
 #define DEBUG_MODE_NONE 0
 #define DEBUG_MODE_AO_MAP 1
-#define DEBUG_MODE_COUNT 2
+#define DEBUG_MODE_NORMALS 2
+#define DEBUG_MODE_COUNT 3
 
 #ifndef __cplusplus
 struct SceneData {

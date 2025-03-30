@@ -29,6 +29,9 @@ void main() {
     uvec4 debug_flags = scene_data.debug_flags;
     Material material = materials[materials_buffer].mats[nonuniformEXT(material_id)];
     vec4 color = texture(vk2_sampler2D(material.ids.x, sampler_idx), in_uv);
+    if (color.a < .5) {
+        discard;
+    }
     vec3 emissive = texture(vk2_sampler2D(material.ids.w, sampler_idx), in_uv).rgb *
             material.emissive_factors.w * material.emissive_factors.rgb;
     float ao = 1.0;
@@ -46,8 +49,12 @@ void main() {
     }
     vec3 metal_rough = texture(vk2_sampler2D(material.ids.z, sampler_idx), in_uv).rgb;
     vec3 V = normalize(scene_data.view_pos - in_frag_pos);
-    vec3 N = normalize(in_normal);
+    vec3 N = normalize((in_normal - .5) * 2.);
     vec3 L = normalize(vec3(0.5, 0.5, 0.0));
+    if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_NORMALS) {
+        out_frag_color = vec4(N, 1.);
+        return;
+    }
     // blue is metalness
     vec3 light_out = color_pbr(N, L, V, vec4(color.rgb, 1.), metal_rough.b, metal_rough.g, vec3(1.));
 
