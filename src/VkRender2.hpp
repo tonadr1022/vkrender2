@@ -128,6 +128,7 @@ struct VkRender2 final : public BaseRenderer {
 
   struct SceneUniforms {
     mat4 view_proj;
+    mat4 view;
     uvec4 debug_flags;
     vec3 view_pos;
     float _p1;

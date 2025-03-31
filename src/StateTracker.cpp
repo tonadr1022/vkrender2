@@ -1,6 +1,7 @@
 #include "StateTracker.hpp"
 
 #include <volk.h>
+#include <vulkan/vk_enum_string_helper.h>
 #include <vulkan/vulkan_core.h>
 
 #include <algorithm>
@@ -8,6 +9,7 @@
 #include "Common.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/Initializers.hpp"
+#include "vk2/VkCommon.hpp"
 
 void StateTracker::flush_barriers() {
   if (buffer_barriers_.empty() && img_barriers_.empty()) return;
@@ -74,11 +76,12 @@ StateTracker& StateTracker::buffer_barrier(VkBuffer buffer, VkPipelineStageFlags
                                  [buffer](const BufferState& buf) { return buf.buffer == buffer; });
   if (it == tracked_buffers_.end()) {
     tracked_buffers_.push_back(
-        BufferState{buffer, VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT});
+        BufferState{buffer, VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT});
     it = std::prev(tracked_buffers_.end());
   }
+  // LINFO("{} {}", string_VkPipelineStageFlags2(dst_stage), string_VkAccessFlags2(dst_access));
   buffer_barriers_.emplace_back(VkBufferMemoryBarrier2{
-      .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+      .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
       .srcStageMask = it->curr_stage,
       .srcAccessMask = it->curr_access,
       .dstStageMask = dst_stage,
@@ -142,4 +145,29 @@ StateTracker& StateTracker::flush_transfers(u32 queue_idx) {
   vkCmdPipelineBarrier2KHR(cmd_, &info);
   buffer_transfer_barriers_[queue_idx].clear();
   return *this;
+}
+
+StateTracker& StateTracker::reset(VkCommandBuffer cmd) {
+  assert(img_barriers_.empty());
+  assert(buffer_barriers_.empty());
+  cmd_ = cmd;
+  tracked_buffers_.clear();
+  tracked_imgs_.clear();
+  img_barriers_.clear();
+  buffer_barriers_.clear();
+  return *this;
+}
+void StateTracker::barrier() {
+  vkCmdPipelineBarrier2KHR(
+      cmd_, vk2::addr(VkDependencyInfo{
+                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                .memoryBarrierCount = 1,
+                .pMemoryBarriers = vk2::addr(VkMemoryBarrier2{
+                    .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                    .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                    .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                    .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                    .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                }),
+            }));
 }

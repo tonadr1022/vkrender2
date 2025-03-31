@@ -4,6 +4,7 @@
 #include "../common.h.glsl"
 #include "../pbr/pbr.h.glsl"
 #include "./basic_common.h.glsl"
+#include "../shadows/shadows.h.glsl"
 
 layout(location = 0) in vec3 in_normal;
 layout(location = 1) in vec2 in_uv;
@@ -35,7 +36,6 @@ void main() {
     vec3 emissive = texture(vk2_sampler2D(material.ids.w, sampler_idx), in_uv).rgb *
             material.emissive_factors.w * material.emissive_factors.rgb;
     float ao = 1.0;
-    // TODO: packed ao metal rough
     if ((debug_flags.x & AO_ENABLED_BIT) != 0) {
         if ((material.ids2.w & METALLIC_ROUGHNESS_TEX_MASK) == PACKED_OCCLUSION_ROUGHNESS_METALLIC) {
             ao = texture(vk2_sampler2D(material.ids.z, sampler_idx), in_uv).r;
@@ -64,7 +64,9 @@ void main() {
     // float shadowAmbient = 0.05;
     float sunIntensity = 2.5;
     vec3 outputColor = color.rgb * (ndotl * 2.5 + ambient) * ao + vec3(specular) * color.rgb * sunIntensity + emissive;
+    float shadow = calc_shadow(shadow_datas[shadow_buffer_idx].data, scene_data, shadow_img_idx, shadow_sampler_idx, N, in_frag_pos);
     out_frag_color = vec4(tonemap(outputColor), 1.);
+    out_frag_color = vec4(vec3(shadow), 1.);
     return;
 
     vec3 light_out = color_pbr(N, scene_data.light_dir, V, vec4(color.rgb, 1.), metal_rough.b, metal_rough.g, scene_data.light_color);

@@ -10,6 +10,9 @@ uint instance_buffer;
 uint materials_buffer;
 uint material_id_buffer;
 uint sampler_idx;
+uint shadow_buffer_idx;
+uint shadow_sampler_idx;
+uint shadow_img_idx;
 } ;
 
 #endif // BASIC_COMMON_H

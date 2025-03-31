@@ -192,6 +192,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
     proj[1][1] *= -1;
     mat4 vp = proj * info.view;
     data.view_proj = vp;
+    data.view = info.view;
     data.debug_flags = uvec4{};
     if (ao_map_enabled.get()) {
       data.debug_flags.x |= AO_ENABLED_BIT;
@@ -253,44 +254,6 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
       ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
       ctx.dispatch((img_->extent().width + 16) / 16, (img_->extent().height + 16) / 16, 1);
     }
-
-    /*
-    *
-
-  // for each cascade, draw to the respective layer using the respective image view.
-  for (int i = 0; i < settings.shadow.cascade_count; i++) {
-    VkRenderingAttachmentInfo depth_attachment =
-        vk::init::DepthAttachmentInfo(shadow_cascade_depth_views_[i]);
-    depth_attachment.clearValue.depthStencil.depth = 1.0;
-    VkExtent2D shadow_extent{shadow_cascade_depth_img_.extent.width,
-                             shadow_cascade_depth_img_.extent.height};
-    VkRenderingInfo render_info =
-        vk::init::RenderingInfo(shadow_extent, nullptr, &depth_attachment, nullptr);
-    vkCmdBeginRendering(cmd, &render_info);
-    vkCmdSetDepthBias(cmd, settings.shadow.depth_bias_constant_factor, 0.f,
-                      settings.shadow.depth_bias_slope_factor);
-    SetViewportAndScissor(cmd, shadow_extent);
-    PushConstantInfo push_constant_info{.data = &shadow_uniform_matrices_.light_space_matrices[i],
-                                        .size = sizeof(glm::mat4),
-                                        .shader_stages = VK_SHADER_STAGE_VERTEX_BIT,
-                                        .offset = 0};
-    if (!render_scene_.passes[kShadowPass].IsEmpty()) {
-      ExecuteDrawCmds(cmd, render_scene_.passes[kShadowPass],
-                      WriteIndirectObjectDataDescriptorSet(render_scene_.passes[kShadowPass]),
-                      &push_constant_info);
-    }
-    vkCmdEndRendering(cmd);
-  }
-  // make depth image readable
-  PipelineBarrier(
-      cmd, 0,
-      ImageBarrier(
-          shadow_cascade_depth_img_.image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-          VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-          VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-          VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-          VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT));
-    */
     {
       TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "CascadeShadowPass");
       csm_->render(
@@ -314,6 +277,10 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
           img_->image(), VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
           VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
           VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
+      state_.buffer_barrier(csm_->get_shadow_data_buffer().buffer(),
+                            VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT);
+      state_.transition(csm_->get_shadow_img().image(), VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                        VK_ACCESS_2_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
       state_.transition(depth_img_->image(),
                         VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
                             VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
@@ -341,7 +308,10 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
                               instance_buffer.resource_info_->handle,
                               material_data_buffer.resource_info_->handle,
                               material_indices_buffer.resource_info_->handle,
-                              linear_sampler_->resource_info.handle};
+                              linear_sampler_->resource_info.handle,
+                              csm_->get_shadow_data_buffer().resource_info_->handle,
+                              csm_->get_shadow_sampler().resource_info.handle,
+                              csm_->get_shadow_img().view().sampled_img_resource().handle};
         ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
         vkCmdBindIndexBuffer(cmd, index_buffer.buffer(), 0, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexedIndirect(cmd, draw_indirect_buffer.buffer(), 0, draw_cnt,
@@ -432,7 +402,7 @@ void VkRender2::on_gui() {
       ImGui::TreePop();
     }
     if (ImGui::TreeNode("CSM")) {
-      csm_->on_imgui(get_imgui_set(linear_sampler_->sampler, csm_->get_debug_img().view().view()));
+      csm_->on_imgui(linear_sampler_->sampler);
       ImGui::TreePop();
     }
 

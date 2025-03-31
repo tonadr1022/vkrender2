@@ -31,6 +31,8 @@
 #define VK2_DECLARE_SAMPLED_IMAGES(type) \
   layout(set = 0, binding = BINDLESS_SAMPLED_IMAGE_BINDING) uniform type t_sampledImages_##type[]
 
+#define VK2_DECLARE_UNIFORM_BUFFERS(blockname) \
+  layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING, std430) uniform blockname
 #define VK2_DECLARE_STORAGE_BUFFERS(blockname) \
   layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING, std430) buffer blockname
 #define VK2_DECLARE_STORAGE_BUFFERS_RO(blockname) \
@@ -47,7 +49,7 @@
   nonuniformEXT(sampler2D(vk2_get_sampled_img(texture2D, tex_idx), vk2_get_sampler(sampler_idx)))
 
 #define vk2_sampler2DArray(tex_idx, sampler_idx) \
-  nonuniformEXT(sampler2DArray(vk2_get_sampled_img(texture2DArray, tex_idx), vk2_get_sampler(sampler_idx)))
+  sampler2DArray(vk2_get_sampled_img(texture2DArray, tex_idx), vk2_get_sampler(sampler_idx))
 
 #define VK2_DECLARE_ARGUMENTS(name) \
     layout(push_constant, scalar) uniform name

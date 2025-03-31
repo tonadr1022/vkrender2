@@ -53,21 +53,13 @@ class StateTracker {
                            const VkImageSubresourceRange& range);
   StateTracker& buffer_barrier(VkBuffer buffer, VkPipelineStageFlags2 dst_stage,
                                VkAccessFlags2 dst_access);
+  void barrier();
 
   StateTracker& queue_transfer_buffer(StateTracker& dst_tracker, VkPipelineStageFlags2 dst_stage,
                                       VkAccessFlags2 dst_access, VkBuffer buffer, u32 src_queue,
                                       u32 dst_queue, u64 offset = 0, u64 size = VK_WHOLE_SIZE);
 
-  StateTracker& reset(VkCommandBuffer cmd) {
-    assert(img_barriers_.empty());
-    assert(buffer_barriers_.empty());
-    cmd_ = cmd;
-    tracked_buffers_.clear();
-    tracked_imgs_.clear();
-    img_barriers_.clear();
-    buffer_barriers_.clear();
-    return *this;
-  }
+  StateTracker& reset(VkCommandBuffer cmd);
   StateTracker& flush_transfers(u32 queue_idx);
 
  private:

@@ -1,11 +1,13 @@
 #include "CSM.hpp"
 
 #include <volk.h>
+#include <vulkan/vulkan_core.h>
 
 #include <tracy/Tracy.hpp>
 
 #include "StateTracker.hpp"
 #include "imgui.h"
+#include "imgui_impl_vulkan.h"
 #include "vk2/Initializers.hpp"
 #include "vk2/Rendering.hpp"
 
@@ -71,7 +73,8 @@ void calc_csm_light_space_matrices(std::span<mat4> matrices, std::span<float> le
   vec3 dir = glm::normalize(light_dir);
   matrices[0] = calc_light_space_matrix(cam_view, get_proj(cam_near, levels[0]), dir, z_mult);
   for (u32 i = 1; i < matrices.size() - 1; i++) {
-    calc_light_space_matrix(cam_view, get_proj(levels[i - 1], levels[i]), dir, z_mult);
+    matrices[i] =
+        calc_light_space_matrix(cam_view, get_proj(levels[i - 1], levels[i]), dir, z_mult);
   }
   matrices[matrices.size() - 1] =
       calc_light_space_matrix(cam_view, get_proj(levels[levels.size() - 1], cam_far), dir, z_mult);
@@ -80,7 +83,8 @@ void calc_csm_light_space_matrices(std::span<mat4> matrices, std::span<float> le
 }  // namespace
 
 CSM::CSM(VkPipelineLayout pipeline_layout)
-    : shadow_map_img_(
+    : shadow_data_buf_(create_storage_buffer(sizeof(ShadowData))),
+      shadow_map_img_(
           vk2::Texture{TextureCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
                                          .format = VK_FORMAT_D32_SFLOAT,
                                          .extent = {shadow_map_res_.x, shadow_map_res_.y, 1},
@@ -136,7 +140,7 @@ CSM::CSM(VkPipelineLayout pipeline_layout)
 
 void CSM::debug_shadow_pass(StateTracker& state, VkCommandBuffer cmd,
                             const vk2::Sampler& linear_sampler) {
-  if (!shadow_map_debug_enabled_) return;
+  if (!debug_render_enabled_) return;
   state.transition(shadow_map_debug_img_.image(), VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                    VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
@@ -170,7 +174,6 @@ void CSM::debug_shadow_pass(StateTracker& state, VkCommandBuffer cmd,
 void CSM::render(StateTracker& state, VkCommandBuffer cmd, const mat4& cam_view, vec3 light_dir,
                  float aspect_ratio, float fov_deg, const DrawFunc& draw) {
   // draw shadows
-
   std::array<float, max_cascade_levels - 1> levels;
   for (u32 i = 0; i < cascade_count_ - 1; i++) {
     float log_dist = shadow_z_far_ / std::pow(2.0f, static_cast<float>(i + 2));
@@ -183,12 +186,27 @@ void CSM::render(StateTracker& state, VkCommandBuffer cmd, const mat4& cam_view,
   calc_csm_light_space_matrices(std::span(light_matrices_.data(), cascade_count_),
                                 std::span(levels.data(), cascade_count_ - 1), cam_view, light_dir,
                                 z_mult_, fov_deg, aspect_ratio, shadow_z_near_, shadow_z_far_);
+  ShadowData data{.biases = {0., 0., 0., shadow_z_far_}};
+  for (u32 i = 0; i < cascade_count_; i++) {
+    data.light_space_matrices[i] = light_matrices_[i];
+  }
+  for (u32 i = 0; i < cascade_count_ - 1; i++) {
+    data.cascade_levels[i] = levels[i];
+  }
+  data.setting_bits = 0;
+  data.cascade_count = cascade_count_;
+
+  state.buffer_barrier(shadow_data_buf_.buffer(), VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                       VK_ACCESS_2_TRANSFER_WRITE_BIT);
+  state.flush_barriers();
+  vkCmdUpdateBuffer(cmd, shadow_data_buf_.buffer(), 0, sizeof(ShadowData), &data);
   state.transition(
       shadow_map_img_.image(),
       VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
       VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
       VK_IMAGE_ASPECT_DEPTH_BIT);
   state.flush_barriers();
+
   for (u32 i = 0; i < cascade_count_; i++) {
     VkClearValue depth_clear{.depthStencil = {.depth = 1.f}};
     VkRenderingAttachmentInfo depth_att = init::rendering_attachment_info(
@@ -202,13 +220,21 @@ void CSM::render(StateTracker& state, VkCommandBuffer cmd, const mat4& cam_view,
     vkCmdEndRenderingKHR(cmd);
   }
 }
-void CSM::on_imgui(VkDescriptorSet imgui_render_set) {
-  ImGui::SliderInt("tex level", &debug_cascade_idx_, 0, cascade_count_ - 1);
-  if (shadow_map_debug_enabled_) {
-    ImVec2 window_size = ImGui::GetContentRegionAvail();
-    float scale_width = window_size.x / shadow_map_debug_img_.extent_2d().width;
-    float scaled_height = shadow_map_debug_img_.extent_2d().height * scale_width;
-    ImGui::Image(reinterpret_cast<ImTextureID>(imgui_render_set),
-                 ImVec2(window_size.x, scaled_height));
+void CSM::on_imgui(VkSampler sampler) {
+  if (!imgui_set_) {
+    imgui_set_ = ImGui_ImplVulkan_AddTexture(sampler, shadow_map_debug_img_.view().view(),
+                                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  }
+  ImGui::Checkbox("shadow map debug", &debug_render_enabled_);
+  if (ImGui::TreeNode("shadow map")) {
+    ImGui::SliderInt("view level", &debug_cascade_idx_, 0, cascade_count_ - 1);
+    if (debug_render_enabled_) {
+      ImVec2 window_size = ImGui::GetContentRegionAvail();
+      float scale_width = window_size.x / shadow_map_debug_img_.extent_2d().width;
+      float scaled_height = shadow_map_debug_img_.extent_2d().height * scale_width;
+      ImGui::Image(reinterpret_cast<ImTextureID>(imgui_set_),
+                   ImVec2(window_size.x * .8f, scaled_height * .8f));
+    }
+    ImGui::TreePop();
   }
 }
