@@ -18,6 +18,9 @@ src/ThreadPool.cpp
 src/util/IndexAllocator.cpp
 src/util/CVar.cpp
 
+src/techniques/CSM.cpp
+
+src/vk2/Rendering.cpp
 src/vk2/StagingBufferPool.cpp
 src/vk2/Fence.cpp
 src/vk2/BindlessResourceAllocator.cpp

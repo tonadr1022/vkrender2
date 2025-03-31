@@ -1,6 +1,7 @@
 #include "SamplerCache.hpp"
 
 #include <volk.h>
+#include <vulkan/vulkan_core.h>
 
 #include <tracy/Tracy.hpp>
 

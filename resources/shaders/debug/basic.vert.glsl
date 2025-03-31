@@ -34,7 +34,7 @@ void main() {
     vec4 pos = model * vec4(v.pos, 1.);
     gl_Position = scene_data_buffer[scene_buffer].data.view_proj * pos;
     out_frag_pos = out_frag_pos;
-    out_normal = normalize(v.normal) * .5 + .5;
+    out_normal = normalize(v.normal);
     out_uv = vec2(v.uv_x, v.uv_y);
     material_id = material_ids[material_id_buffer].material_ids[gl_BaseInstance];
 }

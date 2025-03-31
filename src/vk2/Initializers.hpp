@@ -55,7 +55,7 @@ VkSubmitInfo2 queue_submit_info(std::span<VkCommandBufferSubmitInfo> cmds,
 
 VkCommandBufferSubmitInfo command_buffer_submit_info(VkCommandBuffer buffer);
 VkSemaphoreSubmitInfo semaphore_submit_info(VkSemaphore semaphore, VkPipelineStageFlags2 stage_mask,
-                                            u32 value = 1);
+                                            u64 value = 1);
 
 VkImageSubresourceRange image_subresource_range(VkImageAspectFlags aspectMask);
 

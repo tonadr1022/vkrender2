@@ -18,6 +18,8 @@ struct SceneData {
     mat4 view_proj;
     uvec4 debug_flags; // w is debug modes
     vec3 view_pos;
+    vec3 light_dir;
+    vec3 light_color;
 };
 
 VK2_DECLARE_STORAGE_BUFFERS_RO(SceneUniforms){

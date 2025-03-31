@@ -33,7 +33,7 @@ VkCommandBufferSubmitInfo command_buffer_submit_info(VkCommandBuffer buffer) {
 }
 
 VkSemaphoreSubmitInfo semaphore_submit_info(VkSemaphore semaphore, VkPipelineStageFlags2 stage_mask,
-                                            u32 value) {
+                                            u64 value) {
   return {
       .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
       .semaphore = semaphore,
@@ -143,7 +143,7 @@ VkRenderingInfo rendering_info(VkExtent2D render_extent,
   return {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
           .renderArea = VkRect2D{{0, 0}, render_extent},
           .layerCount = 1,
-          .colorAttachmentCount = 1,
+          .colorAttachmentCount = color_attachment != nullptr ? 1u : 0u,
           .pColorAttachments = color_attachment,
           .pDepthAttachment = depth_attachment,
           .pStencilAttachment = stencil_attachment};

@@ -70,6 +70,7 @@ struct QueueManager {
 
   // TODO: bad here
   VkSemaphore submit_semaphore_;
+  u64 semaphore_value_{0};
   bool submit_signaled_{};
 
  private:
@@ -83,6 +84,9 @@ struct SceneDrawInfo {
   mat4 view;
   mat4 proj;
   vec3 view_pos;
+  vec3 light_dir;
+  vec3 light_color;
+  float fov_degrees{70.f};
 };
 
 class BaseRenderer {
@@ -141,7 +145,8 @@ class BaseRenderer {
   [[nodiscard]] u32 curr_swapchain_img_idx() const { return curr_swapchain_img_idx_; }
   [[nodiscard]] u64 curr_frame_num() const { return curr_frame_num_; }
 
-  uvec2 window_dims();
+  [[nodiscard]] uvec2 window_dims() const;
+  [[nodiscard]] float aspect_ratio() const;
 
  private:
   std::function<void()> on_gui_callback_;

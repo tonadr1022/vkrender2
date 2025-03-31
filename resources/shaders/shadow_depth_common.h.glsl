@@ -1,0 +1,9 @@
+#ifndef SHADOW_DEPTH_COMMON_H
+#define SHADOW_DEPTH_COMMON_H
+
+VK2_DECLARE_ARGUMENTS(ShadowDepthPushConstants){
+mat4 vp_matrix;
+uint vertex_buffer_idx;
+uint instance_buffer;
+} ;
+#endif

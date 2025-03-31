@@ -32,6 +32,11 @@ struct App {
   std::filesystem::path resource_dir;
   std::filesystem::path local_models_dir;
   std::vector<SceneHandle> scenes_;
+  struct SceneData {
+    vec3 light_dir{0.5, 0.5, 0.5};
+    vec3 light_color{1.0, 1.0, 1.0};
+  } scene_data;
+  float fov_degrees{70.f};
 
  private:
   void shutdown() const;

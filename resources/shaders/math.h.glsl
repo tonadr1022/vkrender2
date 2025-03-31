@@ -33,4 +33,20 @@ vec3 fromsrgb(vec3 c) {
 vec4 fromsrgb(vec4 c) {
     return vec4(pow(c.xyz, vec3(2.2)), c.w);
 }
+
+// Optimized filmic operator by Jim Hejl and Richard Burgess-Dawson
+// http://filmicworlds.com/blog/filmic-tonemapping-operators/
+vec3 tonemap(vec3 c) {
+    vec3 x = max(vec3(0), c - 0.004);
+    return (x * (6.2 * x + .5)) / (x * (6.2 * x + 1.7) + 0.06);
+}
+// https://64.github.io/tonemapping/
+vec3 ACESFilm(vec3 x) {
+    float a = 2.51;
+    float b = 0.03;
+    float c = 2.43;
+    float d = 0.59;
+    float e = 0.14;
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+}
 #endif

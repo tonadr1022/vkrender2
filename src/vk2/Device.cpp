@@ -47,9 +47,11 @@ void Device::init_impl(const CreateInfo& info) {
   features12.descriptorBindingStorageImageUpdateAfterBind = true;
   features12.descriptorBindingSampledImageUpdateAfterBind = true;
   features12.descriptorBindingStorageBufferUpdateAfterBind = true;
+  features12.descriptorBindingUpdateUnusedWhilePending = true;
   features12.descriptorBindingPartiallyBound = true;
   features12.descriptorBindingVariableDescriptorCount = true;
   features12.runtimeDescriptorArray = true;
+  features12.timelineSemaphore = true;
   VkPhysicalDeviceFeatures features{};
   features.shaderStorageImageWriteWithoutFormat = true;
   features.depthClamp = true;
@@ -62,9 +64,6 @@ void Device::init_impl(const CreateInfo& info) {
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
   features13.dynamicRendering = true;
   features13.synchronization2 = true;
-  VkPhysicalDeviceDescriptorIndexingFeatures desc_indexing{
-      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES};
-  desc_indexing.descriptorBindingUpdateUnusedWhilePending = true;
   VkPhysicalDeviceDynamicRenderingFeatures dynamic_rendering_features{};
   dynamic_rendering_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES;
   dynamic_rendering_features.dynamicRendering = VK_TRUE;
@@ -78,9 +77,7 @@ void Device::init_impl(const CreateInfo& info) {
                                        // #endif
                                        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME}};
 
-  // #ifndef NDEBUG
-  //   extensions.push_back(VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME);
-  // #endif
+  // NOT ON MACOS :(
   // features12.drawIndirectCount = true;
   phys_selector.set_minimum_version(min_api_version_major, min_api_version_minor)
       .set_required_features_12(features12)
@@ -88,7 +85,6 @@ void Device::init_impl(const CreateInfo& info) {
       .add_required_extensions(extensions)
       .add_required_extension_features(dynamic_rendering_features)
       .add_required_extension_features(sync2_features)
-      .add_required_extension_features(desc_indexing)
       .set_required_features(features);
   auto phys_ret = phys_selector.select();
   if (!phys_ret) {
@@ -199,8 +195,17 @@ VkFence Device::create_fence(VkFenceCreateFlags flags) const {
   return fence;
 }
 
-VkSemaphore Device::create_semaphore() const {
-  VkSemaphoreCreateInfo info{.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+VkSemaphore Device::create_semaphore(bool timeline) const {
+  VkSemaphoreTypeCreateInfo timeline_create_info;
+  timeline_create_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO;
+  timeline_create_info.pNext = nullptr;
+  timeline_create_info.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+  timeline_create_info.initialValue = 0;
+
+  VkSemaphoreCreateInfo info{
+      .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+      .pNext = timeline ? &timeline_create_info : nullptr,
+  };
   VkSemaphore semaphore;
   VK_CHECK(vkCreateSemaphore(device_, &info, nullptr, &semaphore));
   return semaphore;

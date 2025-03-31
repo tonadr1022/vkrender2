@@ -35,6 +35,8 @@
   layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING, std430) buffer blockname
 #define VK2_DECLARE_STORAGE_BUFFERS_RO(blockname) \
   layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING, std430) restrict readonly buffer blockname
+#define VK2_DECLARE_STORAGE_BUFFERS_RO_SCALAR(blockname) \
+  layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING, scalar) restrict readonly buffer blockname
 
 #define vk2_get_sampler(idx) \
     s_samplers[nonuniformEXT(idx)]
@@ -43,6 +45,9 @@
 
 #define vk2_sampler2D(tex_idx, sampler_idx) \
   nonuniformEXT(sampler2D(vk2_get_sampled_img(texture2D, tex_idx), vk2_get_sampler(sampler_idx)))
+
+#define vk2_sampler2DArray(tex_idx, sampler_idx) \
+  nonuniformEXT(sampler2DArray(vk2_get_sampled_img(texture2DArray, tex_idx), vk2_get_sampler(sampler_idx)))
 
 #define VK2_DECLARE_ARGUMENTS(name) \
     layout(push_constant, scalar) uniform name

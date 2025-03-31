@@ -49,15 +49,28 @@ void main() {
     }
     vec3 metal_rough = texture(vk2_sampler2D(material.ids.z, sampler_idx), in_uv).rgb;
     vec3 V = normalize(scene_data.view_pos - in_frag_pos);
-    vec3 N = normalize((in_normal - .5) * 2.);
-    vec3 L = normalize(vec3(0.5, 0.5, 0.0));
+    vec3 N = normalize((in_normal));
     if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_NORMALS) {
         out_frag_color = vec4(N, 1.);
         return;
     }
-    // blue is metalness
-    vec3 light_out = color_pbr(N, L, V, vec4(color.rgb, 1.), metal_rough.b, metal_rough.g, vec3(1.));
 
-    out_frag_color = vec4((light_out + color.rgb * .2) * ao + emissive, 1.);
+    vec3 halfv = normalize(V + scene_data.light_dir);
+    float ndoth = max(dot(N, halfv), 0.0);
+    float ndotl = max(dot(N, scene_data.light_dir), 0.0);
+    float gloss = metal_rough.b;
+    float specular = pow(ndoth, mix(1, 64, gloss)) * gloss;
+    float ambient = 0.07;
+    // float shadowAmbient = 0.05;
+    float sunIntensity = 2.5;
+    vec3 outputColor = color.rgb * (ndotl * 2.5 + ambient) * ao + vec3(specular) * color.rgb * sunIntensity + emissive;
+    out_frag_color = vec4(tonemap(outputColor), 1.);
+    return;
+
+    vec3 light_out = color_pbr(N, scene_data.light_dir, V, vec4(color.rgb, 1.), metal_rough.b, metal_rough.g, scene_data.light_color);
+    outputColor = (light_out + color.rgb * .4) * ao + emissive;
+
+    out_frag_color = vec4(ACESFilm(outputColor), 1.);
+    // out_frag_color = vec4(tonemap(outputColor), 1.);
     // out_frag_color = vec4(normal.rgb, 1.);
 }

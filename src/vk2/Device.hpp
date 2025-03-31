@@ -34,7 +34,7 @@ class Device {
   void create_command_buffers(VkCommandPool pool, std::span<VkCommandBuffer> buffers) const;
   [[nodiscard]] VkCommandBuffer create_command_buffer(VkCommandPool pool) const;
   [[nodiscard]] VkFence create_fence(VkFenceCreateFlags flags = VK_FENCE_CREATE_SIGNALED_BIT) const;
-  [[nodiscard]] VkSemaphore create_semaphore() const;
+  [[nodiscard]] VkSemaphore create_semaphore(bool timeline = false) const;
   void destroy_fence(VkFence fence) const;
   void destroy_semaphore(VkSemaphore semaphore) const;
   void destroy_command_pool(VkCommandPool pool) const;

@@ -1,0 +1,214 @@
+#include "CSM.hpp"
+
+#include <volk.h>
+
+#include <tracy/Tracy.hpp>
+
+#include "StateTracker.hpp"
+#include "imgui.h"
+#include "vk2/Initializers.hpp"
+#include "vk2/Rendering.hpp"
+
+using namespace vk2;
+
+namespace {
+
+void calc_frustum_corners_world_space(std::span<vec4> corners, const mat4& vp_matrix) {
+  const auto inv_vp = glm::inverse(vp_matrix);
+  for (u32 z = 0, i = 0; z < 2; z++) {
+    for (u32 y = 0; y < 2; y++) {
+      for (u32 x = 0; x < 2; x++, i++) {
+        vec4 pt = inv_vp * vec4((2.f * x) - 1.f, (2.f * y) - 1.f, (2.f * z) - 1.f, 1.f);
+        corners[i] = pt / pt.w;
+      }
+    }
+  }
+}
+
+mat4 calc_light_space_matrix(const mat4& cam_view, const mat4& proj, vec3 light_dir, float z_mult) {
+  vec3 center{};
+  std::array<vec4, 8> corners;
+  calc_frustum_corners_world_space(corners, proj * cam_view);
+  for (auto v : corners) {
+    center += vec3(v);
+  }
+  center /= 8;
+  mat4 light_view = glm::lookAt(center, center + light_dir, {0, 1, 0});
+  vec3 min{std::numeric_limits<float>::max()};
+  vec3 max{std::numeric_limits<float>::lowest()};
+  for (auto v : corners) {
+    min.x = glm::min(min.x, v.x);
+    max.x = glm::max(max.x, v.x);
+    min.y = glm::min(min.y, v.y);
+    max.y = glm::max(max.y, v.y);
+    min.z = glm::min(min.z, v.z);
+    max.z = glm::max(max.z, v.z);
+  }
+  if (min.z < 0) {
+    min.z *= z_mult;
+  } else {
+    min.z /= z_mult;
+  }
+  if (max.z < 0) {
+    max.z /= z_mult;
+  } else {
+    max.z *= z_mult;
+  }
+  mat4 light_proj = glm::ortho(min.x, max.y, min.y, max.y, min.z, max.z);
+  return light_proj * light_view;
+}
+
+void calc_csm_light_space_matrices(std::span<mat4> matrices, std::span<float> levels,
+                                   const mat4& cam_view, vec3 light_dir, float z_mult,
+                                   float fov_deg, float aspect, float cam_near, float cam_far) {
+  assert(matrices.size() && levels.size() && matrices.size() - 1 == levels.size());
+  auto get_proj = [&](float near, float far) {
+    auto mat = glm::perspective(glm::radians(fov_deg), aspect, near, far);
+    mat[1][1] *= -1;
+    return mat;
+  };
+
+  vec3 dir = glm::normalize(light_dir);
+  matrices[0] = calc_light_space_matrix(cam_view, get_proj(cam_near, levels[0]), dir, z_mult);
+  for (u32 i = 1; i < matrices.size() - 1; i++) {
+    calc_light_space_matrix(cam_view, get_proj(levels[i - 1], levels[i]), dir, z_mult);
+  }
+  matrices[matrices.size() - 1] =
+      calc_light_space_matrix(cam_view, get_proj(levels[levels.size() - 1], cam_far), dir, z_mult);
+}
+
+}  // namespace
+
+CSM::CSM(VkPipelineLayout pipeline_layout)
+    : shadow_map_img_(
+          vk2::Texture{TextureCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+                                         .format = VK_FORMAT_D32_SFLOAT,
+                                         .extent = {shadow_map_res_.x, shadow_map_res_.y, 1},
+                                         .mip_levels = 1,
+                                         .array_layers = cascade_count_,
+                                         .usage = TextureUsage::General}}),
+      shadow_map_debug_img_(
+          vk2::Texture{TextureCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
+                                         .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                                         .extent = {shadow_map_res_.x, shadow_map_res_.y, 1},
+                                         .mip_levels = 1,
+                                         .array_layers = 1,
+                                         .usage = TextureUsage::General}}),
+      pipeline_layout_(pipeline_layout) {
+  ZoneScoped;
+  for (u32 i = 0; i < cascade_count_; i++) {
+    shadow_map_img_views_[i] =
+        vk2::TextureView{shadow_map_img_, vk2::TextureViewCreateInfo{
+                                              shadow_map_img_.format(),
+                                              VkImageSubresourceRange{
+                                                  .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+                                                  .baseMipLevel = 0,
+                                                  .levelCount = 1,
+                                                  .baseArrayLayer = i,
+                                                  .layerCount = 1,
+                                              },
+                                          }};
+  }
+  shadow_sampler_ = SamplerCache::get().get_or_create_sampler(VkSamplerCreateInfo{
+      .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+      .magFilter = VK_FILTER_LINEAR,
+      .minFilter = VK_FILTER_LINEAR,
+      .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+      .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+      .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+      .borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE
+
+  });
+  shadow_depth_pipline_ = PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
+      .vertex_path = "shadow_depth.vert",
+      .layout = pipeline_layout_,
+      .rendering = {{}, shadow_map_img_.format()},
+      .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::Less),
+  });
+  depth_debug_pipeline_ = PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
+      .vertex_path = "fullscreen_quad.vert",
+      .fragment_path = "debug/depth_debug.frag",
+      .layout = pipeline_layout_,
+      .rendering = {{{shadow_map_debug_img_.format()}}},
+      .depth_stencil = GraphicsPipelineCreateInfo::depth_disable(),
+  });
+}
+
+void CSM::debug_shadow_pass(StateTracker& state, VkCommandBuffer cmd,
+                            const vk2::Sampler& linear_sampler) {
+  if (!shadow_map_debug_enabled_) return;
+  state.transition(shadow_map_debug_img_.image(), VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                   VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                   VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  state.flush_barriers();
+
+  VkRenderingAttachmentInfo color_attachment = init::rendering_attachment_info(
+      shadow_map_debug_img_.view().view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, nullptr);
+
+  VkExtent2D extent = shadow_map_debug_img_.extent_2d();
+  VkRenderingInfo render_info = init::rendering_info(extent, &color_attachment, nullptr, nullptr);
+  vkCmdBeginRenderingKHR(cmd, &render_info);
+  set_viewport_and_scissor(cmd, extent);
+  assert(debug_cascade_idx_ >= 0 && (u32)debug_cascade_idx_ < cascade_count_);
+
+  PipelineManager::get().bind_graphics(cmd, depth_debug_pipeline_);
+
+  struct {
+    u32 tex_idx;
+    u32 sampler_idx;
+    u32 array_idx;
+  } pc{shadow_map_img_.view().sampled_img_resource().handle, linear_sampler.resource_info.handle,
+       static_cast<u32>(debug_cascade_idx_)};
+  vkCmdPushConstants(cmd, pipeline_layout_, VK_SHADER_STAGE_ALL, 0, sizeof(pc), &pc);
+  vkCmdDraw(cmd, 3, 1, 0, 0);
+  vkCmdEndRenderingKHR(cmd);
+  state.transition(shadow_map_debug_img_.image(), VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                   VK_ACCESS_2_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  state.flush_barriers();
+}
+
+void CSM::render(StateTracker& state, VkCommandBuffer cmd, const mat4& cam_view, vec3 light_dir,
+                 float aspect_ratio, float fov_deg, const DrawFunc& draw) {
+  // draw shadows
+
+  std::array<float, max_cascade_levels - 1> levels;
+  for (u32 i = 0; i < cascade_count_ - 1; i++) {
+    float log_dist = shadow_z_far_ / std::pow(2.0f, static_cast<float>(i + 2));
+    float linear_dist = shadow_z_far_ * (static_cast<float>(i + 1) / cascade_count_);
+    int j = cascade_count_ - 1 - i - 1;
+    levels[j] = glm::mix(log_dist, linear_dist, cascade_linear_factor_);
+    // shadow_cascade_ubo_data_.plane_distances[j] = levels[j];
+  }
+  // TODO: separate camera z near/far
+  calc_csm_light_space_matrices(std::span(light_matrices_.data(), cascade_count_),
+                                std::span(levels.data(), cascade_count_ - 1), cam_view, light_dir,
+                                z_mult_, fov_deg, aspect_ratio, shadow_z_near_, shadow_z_far_);
+  state.transition(
+      shadow_map_img_.image(),
+      VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+      VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+      VK_IMAGE_ASPECT_DEPTH_BIT);
+  state.flush_barriers();
+  for (u32 i = 0; i < cascade_count_; i++) {
+    VkClearValue depth_clear{.depthStencil = {.depth = 1.f}};
+    VkRenderingAttachmentInfo depth_att = init::rendering_attachment_info(
+        shadow_map_img_views_[i]->view(), VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, &depth_clear);
+    auto rendering_info = init::rendering_info(shadow_map_img_.extent_2d(), nullptr, &depth_att);
+    vkCmdBeginRenderingKHR(cmd, &rendering_info);
+    set_viewport_and_scissor(cmd, shadow_map_img_.extent_2d());
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                      PipelineManager::get().get(shadow_depth_pipline_)->pipeline);
+    draw(light_matrices_[i]);
+    vkCmdEndRenderingKHR(cmd);
+  }
+}
+void CSM::on_imgui(VkDescriptorSet imgui_render_set) {
+  ImGui::SliderInt("tex level", &debug_cascade_idx_, 0, cascade_count_ - 1);
+  if (shadow_map_debug_enabled_) {
+    ImVec2 window_size = ImGui::GetContentRegionAvail();
+    float scale_width = window_size.x / shadow_map_debug_img_.extent_2d().width;
+    float scaled_height = shadow_map_debug_img_.extent_2d().height * scale_width;
+    ImGui::Image(reinterpret_cast<ImTextureID>(imgui_render_set),
+                 ImVec2(window_size.x, scaled_height));
+  }
+}

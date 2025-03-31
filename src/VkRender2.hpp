@@ -11,6 +11,7 @@
 #include "SceneLoader.hpp"
 #include "StateTracker.hpp"
 #include "shaders/common.h.glsl"
+#include "techniques/CSM.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/DeletionQueue.hpp"
 #include "vk2/PipelineManager.hpp"
@@ -51,6 +52,27 @@ struct MaterialData {
   u32 albedo_tex;
 };
 
+template <typename T>
+struct InFlightResource {
+  T data;
+  VkFence fence{};
+};
+
+struct LinearStagingBuffer {
+  explicit LinearStagingBuffer(vk2::Buffer* buffer) : buffer_(buffer) {}
+
+  u64 copy(const void* data, u64 size) {
+    memcpy((char*)buffer_->mapped_data() + offset_, data, size);
+    offset_ += size;
+    return offset_ - size;
+  }
+  [[nodiscard]] vk2::Buffer* get_buffer() const { return buffer_; }
+
+ private:
+  u64 offset_{};
+  vk2::Buffer* buffer_{};
+};
+
 struct VkRender2 final : public BaseRenderer {
   static VkRender2& get();
   static void init(const InitInfo& info);
@@ -64,21 +86,15 @@ struct VkRender2 final : public BaseRenderer {
 
   // TODO: private
   void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
-  void transfer_submit(std::function<void(VkCommandBuffer cmd, VkFence fence)>&& function);
+  void transfer_submit(std::function<void(VkCommandBuffer cmd, VkFence fence,
+                                          std::queue<InFlightResource<vk2::Buffer*>>&)>&& function);
   [[nodiscard]] const QueueFamilies& get_queues() const { return queues_; }
 
  private:
-  template <typename T>
-  struct InFlightResource {
-    T data;
-    VkFence fence{};
-  };
-
   void on_draw(const SceneDrawInfo& info) override;
   void on_gui() override;
   void on_resize() override;
   void create_attachment_imgs();
-  void set_viewport_and_scissor(VkCommandBuffer cmd, VkExtent2D extent);
 
   // TODO: refactor
   struct SceneGPUResources {
@@ -108,11 +124,17 @@ struct VkRender2 final : public BaseRenderer {
   };
   std::vector<FrameData> per_frame_data_2_;
   FrameData& curr_frame_2() { return per_frame_data_2_[curr_frame_num() % 2]; }
+  void init_pipelines();
 
   struct SceneUniforms {
     mat4 view_proj;
     uvec4 debug_flags;
     vec3 view_pos;
+    float _p1;
+    vec3 light_dir;
+    float _p2;
+    vec3 light_color;
+    float _p3;
   };
 
   VkCommandPool imm_cmd_pool_;
@@ -126,21 +148,6 @@ struct VkRender2 final : public BaseRenderer {
     vk2::Buffer buffer;
     LinearAllocator allocator;
     u64 alloc(u64 size) { return allocator.alloc(size); }
-  };
-
-  struct LinearStagingBuffer {
-    explicit LinearStagingBuffer(vk2::Buffer* buffer) : buffer_(buffer) {}
-
-    u64 copy(const void* data, u64 size) {
-      memcpy((char*)buffer_->mapped_data() + offset_, data, size);
-      offset_ += size;
-      return offset_ - size;
-    }
-    [[nodiscard]] vk2::Buffer* get_buffer() const { return buffer_; }
-
-   private:
-    u64 offset_{};
-    vk2::Buffer* buffer_{};
   };
 
   u64 draw_cnt_{};
@@ -181,15 +188,15 @@ struct VkRender2 final : public BaseRenderer {
   StateTracker transfer_q_state_;
   std::optional<vk2::Texture> depth_img_;
   std::optional<vk2::Texture> img_;
+
   std::optional<vk2::Sampler> linear_sampler_;
   struct DefaultData {
     std::optional<vk2::Texture> white_img;
   } default_data_;
   gfx::DefaultMaterialData default_mat_data_;
 
+  std::optional<CSM> csm_;
   vk2::DeletionQueue main_del_q_;
-  std::filesystem::path shader_dir_;
-  [[nodiscard]] std::string get_shader_path(const std::string& path) const;
   vk2::PipelineHandle img_pipeline_;
   vk2::PipelineHandle draw_pipeline_;
   VkPipelineLayout default_pipeline_layout_{};

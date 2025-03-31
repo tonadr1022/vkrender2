@@ -6,6 +6,7 @@
 #include <cassert>
 #include <ranges>
 #include <tracy/Tracy.hpp>
+#include <utility>
 
 #include "Logger.hpp"
 #include "vk2/Hash.hpp"
@@ -132,9 +133,9 @@ PipelineManager& PipelineManager::get() {
   assert(instance);
   return *instance;
 }
-void PipelineManager::init(VkDevice device) {
+void PipelineManager::init(VkDevice device, std::filesystem::path shader_dir) {
   assert(!instance);
-  instance = new PipelineManager(device);
+  instance = new PipelineManager(device, std::move(shader_dir));
 }
 
 void PipelineManager::shutdown() {
@@ -146,7 +147,7 @@ void PipelineManager::shutdown() {
 // TODO: multithread
 PipelineHandle PipelineManager::load_compute_pipeline(const ComputePipelineCreateInfo& info) {
   ZoneScoped;
-  ShaderManager::ShaderCreateInfo shader_create_info = {.path = info.path,
+  ShaderManager::ShaderCreateInfo shader_create_info = {.path = get_shader_path(info.path),
                                                         .stage = VK_SHADER_STAGE_COMPUTE_BIT};
   ShaderManager::LoadProgramResult result =
       shader_manager_.load_program(SPAN1(shader_create_info), info.layout == nullptr);
@@ -231,30 +232,26 @@ std::span<const T> to_span(std::initializer_list<T> list) {
 }
 }  // namespace
 
-PipelineManager::PipelineManager(VkDevice device) : shader_manager_(device), device_(device) {}
+PipelineManager::PipelineManager(VkDevice device, std::filesystem::path shader_dir)
+    : shader_dir_(std::move(shader_dir)), shader_manager_(device), device_(device) {}
 
+std::string PipelineManager::get_shader_path(const std::string& path) const {
+  return shader_dir_ / path;
+}
 PipelineHandle PipelineManager::load_graphics_pipeline(const GraphicsPipelineCreateInfo& info) {
-  ShaderManager::ShaderCreateInfo shader_create_infos[] = {
-      {.path = info.vertex_path, .stage = VK_SHADER_STAGE_VERTEX_BIT},
-      {.path = info.fragment_path, .stage = VK_SHADER_STAGE_FRAGMENT_BIT}};
-  ShaderManager::LoadProgramResult result =
-      shader_manager_.load_program(ARR_SPAN(shader_create_infos), info.layout == nullptr);
-  if (result.module_cnt != 0) {
-    assert(result.module_cnt == 2);
+  std::array<ShaderManager::ShaderCreateInfo, 2> shader_create_infos{
+      {{get_shader_path(info.vertex_path), VK_SHADER_STAGE_VERTEX_BIT},
+       {get_shader_path(info.fragment_path), VK_SHADER_STAGE_FRAGMENT_BIT}}};
+  u32 stage_cnt = 1;
+  if (info.fragment_path.string().length()) {
+    stage_cnt = 2;
   }
-  if (result.module_cnt != 2) {
+  ShaderManager::LoadProgramResult result = shader_manager_.load_program(
+      std::span(shader_create_infos.data(), stage_cnt), info.layout == nullptr);
+  if (result.module_cnt != stage_cnt) {
+    assert(result.module_cnt == stage_cnt);
     return {};
   }
-
-  VkPipelineShaderStageCreateInfo stages[] = {
-      VkPipelineShaderStageCreateInfo{.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                                      .stage = VK_SHADER_STAGE_VERTEX_BIT,
-                                      .module = result.modules[0].module,
-                                      .pName = "main"},
-      VkPipelineShaderStageCreateInfo{.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                                      .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
-                                      .module = result.modules[1].module,
-                                      .pName = "main"}};
 
   VkPipelineInputAssemblyStateCreateInfo input_assembly{
       .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
@@ -333,10 +330,24 @@ PipelineHandle PipelineManager::load_graphics_pipeline(const GraphicsPipelineCre
       .pColorAttachmentFormats = info.rendering.color_formats.data(),
       .depthAttachmentFormat = info.rendering.depth_format,
       .stencilAttachmentFormat = info.rendering.stencil_format};
+
+  std::array<VkPipelineShaderStageCreateInfo, 3> stages;
+  stages[0] =
+      VkPipelineShaderStageCreateInfo{.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                                      .stage = VK_SHADER_STAGE_VERTEX_BIT,
+                                      .module = result.modules[0].module,
+                                      .pName = "main"};
+  if (stage_cnt == 2) {
+    stages[1] = VkPipelineShaderStageCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+        .module = result.modules[1].module,
+        .pName = "main"};
+  }
   VkGraphicsPipelineCreateInfo cinfo{.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
                                      .pNext = &rendering_info,
-                                     .stageCount = 2,
-                                     .pStages = stages,
+                                     .stageCount = stage_cnt,
+                                     .pStages = stages.data(),
                                      .pVertexInputState = &vertex_state,
                                      .pInputAssemblyState = &input_assembly,
                                      .pTessellationState = nullptr,
@@ -347,7 +358,7 @@ PipelineHandle PipelineManager::load_graphics_pipeline(const GraphicsPipelineCre
                                      .pColorBlendState = &blend_state,
                                      .pDynamicState = &dynamic_state,
                                      .layout = info.layout};
-  VkPipeline pipeline;
+  VkPipeline pipeline{};
   VK_CHECK(vkCreateGraphicsPipelines(device_, nullptr, 1, &cinfo, nullptr, &pipeline));
   if (!pipeline) return {};
 
@@ -363,4 +374,12 @@ PipelineHandle PipelineManager::load_graphics_pipeline(const GraphicsPipelineCre
 
   return PipelineHandle{handle};
 }
+void PipelineManager::bind_graphics(VkCommandBuffer cmd, PipelineHandle handle) {
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, get(handle)->pipeline);
+}
+
+void PipelineManager::bind_compute(VkCommandBuffer cmd, PipelineHandle handle) {
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, get(handle)->pipeline);
+}
+
 }  // namespace vk2

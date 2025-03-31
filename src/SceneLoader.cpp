@@ -108,58 +108,6 @@ void decompose_matrix(const glm::mat4& m, glm::vec3& pos, glm::quat& rot, glm::v
 //   }
 // }
 
-u32 populate_indices(const fastgltf::Primitive& primitive, const fastgltf::Asset& gltf,
-                     std::vector<uint32_t>& indices) {
-  if (!primitive.indicesAccessor.has_value()) {
-    return 0;
-  }
-  // u64 first_idx = indices.size();
-  const auto& index_accessor = gltf.accessors[primitive.indicesAccessor.value()];
-  // indices.reserve(indices.size() + index_accessor.count);
-  // size_t i = first_idx;
-  fastgltf::iterateAccessor<u32>(gltf, index_accessor,
-                                 [&](uint32_t index) { indices.emplace_back(index); });
-  return index_accessor.count;
-}
-
-u32 populate_vertices(const fastgltf::Primitive& primitive, const fastgltf::Asset& gltf,
-                      std::vector<Vertex>& vertices) {
-  const auto* pos_attrib = primitive.findAttribute("POSITION");
-  if (pos_attrib == primitive.attributes.end()) {
-    assert(0);
-    return 0;
-  }
-  u64 start_i = vertices.size();
-  const auto& pos_accessor = gltf.accessors[pos_attrib->accessorIndex];
-  vertices.reserve(vertices.size() + pos_accessor.count);
-  for (glm::vec3 pos : fastgltf::iterateAccessor<glm::vec3>(gltf, pos_accessor)) {
-    vertices.emplace_back(Vertex{.pos = pos});
-  }
-
-  const auto* uv_attrib = primitive.findAttribute("TEXCOORD_0");
-  if (uv_attrib != primitive.attributes.end()) {
-    const auto& accessor = gltf.accessors[uv_attrib->accessorIndex];
-
-    assert(accessor.count == pos_accessor.count);
-    u64 i = start_i;
-    for (glm::vec2 uv : fastgltf::iterateAccessor<glm::vec2>(gltf, accessor)) {
-      vertices[i].uv_x = uv.x;
-      vertices[i++].uv_y = uv.y;
-    }
-  }
-
-  const auto* normal_attrib = primitive.findAttribute("NORMAL");
-  if (normal_attrib != primitive.attributes.end()) {
-    const auto& normal_accessor = gltf.accessors[normal_attrib->accessorIndex];
-    u64 i = start_i;
-    assert(normal_accessor.count == pos_accessor.count);
-    for (glm::vec3 normal : fastgltf::iterateAccessor<glm::vec3>(gltf, normal_accessor)) {
-      vertices[i++].normal = normal;
-    }
-  }
-  return pos_accessor.count;
-}
-
 void set_node_transform_from_gltf_node(NodeData& new_node, const fastgltf::Node& gltf_node) {
   std::visit(fastgltf::visitor{[&new_node](fastgltf::TRS matrix) {
                                  glm::vec3 trans(matrix.translation[0], matrix.translation[1],
@@ -564,7 +512,6 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
       auto* ktx = img.ktx_data.get();
       assert(ktx->numLevels > 0);
       u64 tot = 0;
-
       for (u32 level = 0; level < ktx->numLevels; level++) {
         size_t level_offset;
         ktxTexture_GetImageOffset(ktxTexture(ktx), level, 0, 0, &level_offset);
@@ -585,6 +532,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
           img.format, {img.w, img.h, 1}, vk2::TextureUsage::ReadOnly, ktx->numLevels));
 
       assert(tot == ktx->dataSize);
+      (void)tot;
     } else {
       // TODO: mip gen?
       size_t size = vk2::img_to_buffer_size(img.format, {img.w, img.h, 1});
@@ -609,26 +557,30 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
     constexpr size_t max_batch_upload_size = 1'000'000'000;
     size_t batch_upload_size = std::min(max_batch_upload_size, staging_offset);
     assert(batch_upload_size < max_batch_upload_size);
-    vk2::Buffer* img_staging_buf = vk2::StagingBufferPool::get().acquire(batch_upload_size);
     size_t bytes_remaining = staging_offset;
     u64 img_i{};
     u64 curr_staging_offset = 0;
     u64 start_copy_idx{};
+    vk2::Buffer* img_staging_buf = vk2::StagingBufferPool::get().acquire(batch_upload_size);
     // u64 end_copy_idx{};
     StateTracker state;
     auto flush_uploads = [&]() {
+      u32 cnt = 0;
       for (u64 i = 0; i < img_i; i++) {
         if (futures[i].valid()) {
           futures[i].get();
+          cnt++;
         } else {
           break;
         }
       }
+      LINFO("flush uploads {}", cnt);
       futures.clear();
-      // TODO: SYNC LOL, img upload buffer needs to be returned
       VkRender2::get().transfer_submit([start_copy_idx, end_copy_idx = img_i - 1, &img_upload_infos,
-                                        &img_staging_buf, &result, &state,
-                                        curr_staging_offset](VkCommandBuffer cmd, VkFence fence) {
+                                        &result, &state, curr_staging_offset, &img_staging_buf,
+                                        batch_upload_size](
+                                           VkCommandBuffer cmd, VkFence fence,
+                                           std::queue<InFlightResource<vk2::Buffer*>>& transfers) {
         state.reset(cmd);
         for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
           const auto& img_upload = img_upload_infos[i];
@@ -674,6 +626,8 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
                            VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
         }
         state.flush_barriers();
+        transfers.emplace(img_staging_buf, fence);
+        img_staging_buf = vk2::StagingBufferPool::get().acquire(batch_upload_size);
       });
 
       curr_staging_offset += max_batch_upload_size;

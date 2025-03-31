@@ -370,7 +370,7 @@ void BaseRenderer::submit_single_command_buf_to_graphics(VkCommandBuffer cmd) {
   }
 }
 
-uvec2 BaseRenderer::window_dims() {
+uvec2 BaseRenderer::window_dims() const {
   int x, y;
   glfwGetFramebufferSize(window_, &x, &y);
   return {x, y};
@@ -380,7 +380,7 @@ void BaseRenderer::on_resize() {}
 
 // TODO: refactor
 QueueManager::QueueManager(u32 queue_idx, u32 cmd_buffer_cnt)
-    : submit_semaphore_(vk2::get_device().create_semaphore()),
+    : submit_semaphore_(vk2::get_device().create_semaphore(true)),
       cmd_pool_(vk2::get_device().create_command_pool(queue_idx)) {
   free_cmd_buffers_.resize(cmd_buffer_cnt);
   vk2::get_device().create_command_buffers(cmd_pool_.pool(), free_cmd_buffers_);
@@ -426,4 +426,8 @@ void BaseRenderer::render_imgui(VkCommandBuffer cmd, uvec2 draw_extent,
   vkCmdBeginRenderingKHR(cmd, &render_info);
   ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
   vkCmdEndRenderingKHR(cmd);
+}
+float BaseRenderer::aspect_ratio() const {
+  auto dims = window_dims();
+  return (float)dims.x / (float)dims.y;
 }

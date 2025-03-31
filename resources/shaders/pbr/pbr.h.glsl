@@ -75,7 +75,7 @@ vec3 color_pbr(vec3 N, vec3 L, vec3 V, vec4 albedo, float metallic, float roughn
 
     float NdotL = max(dot(N, L), 0.0);
 
-    return ((kD * albedo.rgb / PI + specular) * radiance * NdotL);
+    return ((kD * albedo.rgb + specular) * radiance * NdotL);
 }
 
 #endif

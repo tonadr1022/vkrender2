@@ -276,10 +276,12 @@ struct GraphicsPipelineCreateInfo {
 class PipelineManager {
  public:
   static PipelineManager &get();
-  static void init(VkDevice device);
+  static void init(VkDevice device, std::filesystem::path shader_dir);
   static void shutdown();
 
   void on_shader_update();
+  void bind_graphics(VkCommandBuffer cmd, PipelineHandle handle);
+  void bind_compute(VkCommandBuffer cmd, PipelineHandle handle);
 
   PipelineHandle load_graphics_pipeline(const std::filesystem::path &path,
                                         const char *entry_point = "main");
@@ -295,10 +297,11 @@ class PipelineManager {
   void destroy_pipeline(PipelineHandle handle);
 
  private:
-  explicit PipelineManager(VkDevice device);
+  explicit PipelineManager(VkDevice device, std::filesystem::path shader_dir);
   ~PipelineManager();
   VkPipeline create_compute_pipeline(ShaderManager::LoadProgramResult &result,
                                      const char *entry_point = "main");
+  [[nodiscard]] std::string get_shader_path(const std::string &path) const;
 
   struct PipelineAndMetadata {
     Pipeline pipeline;
@@ -307,6 +310,8 @@ class PipelineManager {
 
   std::unordered_map<std::string, std::vector<PipelineHandle>> shader_name_to_used_pipelines_;
   std::unordered_map<PipelineHandle, PipelineAndMetadata> pipelines_;
+
+  std::filesystem::path shader_dir_;
 
   ShaderManager shader_manager_;
   VkDevice device_;
