@@ -1,4 +1,5 @@
 #version 460
+#extension GL_GOOGLE_include_directive : enable
 
 #include "./common.h.glsl"
 #include "./shadow_depth_common.h.glsl"

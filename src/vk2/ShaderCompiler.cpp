@@ -523,9 +523,11 @@ bool compile_glsl_to_spirv(std::string path, VkShaderStageFlagBits stage,
   // https://github.com/KhronosGroup/glslang/blob/vulkan-sdk-1.3.283.0/StandAlone/StandAlone.cpp#L998-L1016
   // TODO: only in debug?
   auto options = glslang::SpvOptions{
-      .generateDebugInfo = true, .stripDebugInfo = false,
-      // .emitNonSemanticShaderDebugInfo = true,
-      // .emitNonSemanticShaderDebugSource = true,
+      .generateDebugInfo = true,
+      .stripDebugInfo = false,
+      .emitNonSemanticShaderDebugInfo = true,
+      .emitNonSemanticShaderDebugSource = true,
+      // .disableOptimizer = true,
       // .disableOptimizer = true,
   };
 

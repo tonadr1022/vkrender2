@@ -242,7 +242,7 @@ struct GraphicsPipelineCreateInfo {
   struct DepthStencil {
     StencilOpState stencil_front{};
     StencilOpState stencil_back{};
-    float min_depth_bounds{};
+    float min_depth_bounds{0.};
     float max_depth_bounds{1.};
     bool depth_test_enable{false};
     bool depth_write_enable{false};
@@ -261,6 +261,7 @@ struct GraphicsPipelineCreateInfo {
   Blend blend{};
   Multisample multisample{};
   DepthStencil depth_stencil{};
+  std::initializer_list<VkDynamicState> dynamic_state;
 
   static constexpr DepthStencil depth_disable() { return DepthStencil{.depth_test_enable = false}; }
   static constexpr DepthStencil depth_enable(bool write_enable, CompareOp op) {

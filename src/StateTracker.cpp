@@ -47,7 +47,7 @@ StateTracker& StateTracker::transition(VkImage image, VkPipelineStageFlags2 dst_
                                  [image](const ImageState& img) { return img.image == image; });
   if (it == tracked_imgs_.end()) {
     tracked_imgs_.push_back(
-        ImageState{image, 0, VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT, VK_IMAGE_LAYOUT_UNDEFINED});
+        ImageState{image, 0, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_IMAGE_LAYOUT_UNDEFINED});
     it = std::prev(tracked_imgs_.end());
   }
   VkImageMemoryBarrier2 barrier{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,

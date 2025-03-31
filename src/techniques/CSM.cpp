@@ -38,13 +38,14 @@ mat4 calc_light_space_matrix(const mat4& cam_view, const mat4& proj, vec3 light_
   mat4 light_view = glm::lookAt(center, center + light_dir, {0, 1, 0});
   vec3 min{std::numeric_limits<float>::max()};
   vec3 max{std::numeric_limits<float>::lowest()};
-  for (auto v : corners) {
-    min.x = glm::min(min.x, v.x);
-    max.x = glm::max(max.x, v.x);
-    min.y = glm::min(min.y, v.y);
-    max.y = glm::max(max.y, v.y);
-    min.z = glm::min(min.z, v.z);
-    max.z = glm::max(max.z, v.z);
+  for (auto corner : corners) {
+    vec3 c = light_view * corner;
+    min.x = glm::min(min.x, c.x);
+    max.x = glm::max(max.x, c.x);
+    min.y = glm::min(min.y, c.y);
+    max.y = glm::max(max.y, c.y);
+    min.z = glm::min(min.z, c.z);
+    max.z = glm::max(max.z, c.z);
   }
   if (min.z < 0) {
     min.z *= z_mult;
@@ -56,7 +57,7 @@ mat4 calc_light_space_matrix(const mat4& cam_view, const mat4& proj, vec3 light_
   } else {
     max.z *= z_mult;
   }
-  mat4 light_proj = glm::ortho(min.x, max.y, min.y, max.y, min.z, max.z);
+  mat4 light_proj = glm::orthoRH_ZO(min.x, max.y, max.y, min.y, min.z, max.z);
   return light_proj * light_view;
 }
 
@@ -70,7 +71,7 @@ void calc_csm_light_space_matrices(std::span<mat4> matrices, std::span<float> le
     return mat;
   };
 
-  vec3 dir = glm::normalize(light_dir);
+  vec3 dir = -glm::normalize(light_dir);
   matrices[0] = calc_light_space_matrix(cam_view, get_proj(cam_near, levels[0]), dir, z_mult);
   for (u32 i = 1; i < matrices.size() - 1; i++) {
     matrices[i] =
@@ -83,7 +84,8 @@ void calc_csm_light_space_matrices(std::span<mat4> matrices, std::span<float> le
 }  // namespace
 
 CSM::CSM(VkPipelineLayout pipeline_layout)
-    : shadow_data_buf_(create_storage_buffer(sizeof(ShadowData))),
+    : shadow_data_bufs_(
+          {create_storage_buffer(sizeof(ShadowData)), create_storage_buffer(sizeof(ShadowData))}),
       shadow_map_img_(
           vk2::Texture{TextureCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
                                          .format = VK_FORMAT_D32_SFLOAT,
@@ -128,6 +130,8 @@ CSM::CSM(VkPipelineLayout pipeline_layout)
       .layout = pipeline_layout_,
       .rendering = {{}, shadow_map_img_.format()},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::Less),
+      .dynamic_state = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
+                        VK_DYNAMIC_STATE_DEPTH_BIAS},
   });
   depth_debug_pipeline_ = PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
       .vertex_path = "fullscreen_quad.vert",
@@ -142,7 +146,7 @@ void CSM::debug_shadow_pass(StateTracker& state, VkCommandBuffer cmd,
                             const vk2::Sampler& linear_sampler) {
   if (!debug_render_enabled_) return;
   state.transition(shadow_map_debug_img_.image(), VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                   VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                   VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT,
                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
   state.flush_barriers();
 
@@ -171,8 +175,8 @@ void CSM::debug_shadow_pass(StateTracker& state, VkCommandBuffer cmd,
   state.flush_barriers();
 }
 
-void CSM::render(StateTracker& state, VkCommandBuffer cmd, const mat4& cam_view, vec3 light_dir,
-                 float aspect_ratio, float fov_deg, const DrawFunc& draw) {
+void CSM::render(StateTracker& state, VkCommandBuffer cmd, u32 frame_num, const mat4& cam_view,
+                 vec3 light_dir, float aspect_ratio, float fov_deg, const DrawFunc& draw) {
   // draw shadows
   std::array<float, max_cascade_levels - 1> levels;
   for (u32 i = 0; i < cascade_count_ - 1; i++) {
@@ -193,13 +197,20 @@ void CSM::render(StateTracker& state, VkCommandBuffer cmd, const mat4& cam_view,
   for (u32 i = 0; i < cascade_count_ - 1; i++) {
     data.cascade_levels[i] = levels[i];
   }
-  data.setting_bits = 0;
-  data.cascade_count = cascade_count_;
+  data.settings = {};
+  if (pcf_) {
+    data.settings.x |= 0x1;
+  }
+  data.biases.x = min_bias_;
+  data.biases.y = max_bias_;
+  data.biases.z = pcf_scale_;
+  data.settings.w = cascade_count_;
 
-  state.buffer_barrier(shadow_data_buf_.buffer(), VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+  auto& buf = shadow_data_bufs_[frame_num % shadow_data_bufs_.size()];
+  state.buffer_barrier(buf.buffer(), VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                        VK_ACCESS_2_TRANSFER_WRITE_BIT);
   state.flush_barriers();
-  vkCmdUpdateBuffer(cmd, shadow_data_buf_.buffer(), 0, sizeof(ShadowData), &data);
+  vkCmdUpdateBuffer(cmd, buf.buffer(), 0, sizeof(ShadowData), &data);
   state.transition(
       shadow_map_img_.image(),
       VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
@@ -214,6 +225,7 @@ void CSM::render(StateTracker& state, VkCommandBuffer cmd, const mat4& cam_view,
     auto rendering_info = init::rendering_info(shadow_map_img_.extent_2d(), nullptr, &depth_att);
     vkCmdBeginRenderingKHR(cmd, &rendering_info);
     set_viewport_and_scissor(cmd, shadow_map_img_.extent_2d());
+    vkCmdSetDepthBias(cmd, depth_bias_constant_factor_, 0.0f, depth_bias_slope_factor_);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                       PipelineManager::get().get(shadow_depth_pipline_)->pipeline);
     draw(light_matrices_[i]);
@@ -226,6 +238,14 @@ void CSM::on_imgui(VkSampler sampler) {
                                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
   }
   ImGui::Checkbox("shadow map debug", &debug_render_enabled_);
+  ImGui::SliderFloat("Z mult", &z_mult_, 0.0, 20.f);
+  ImGui::SliderFloat("Shadow z far", &shadow_z_far_, 100.f, 10000.f);
+  ImGui::DragFloat("Min Bias", &min_bias_, .00001, 0.00001, max_bias_);
+  ImGui::DragFloat("Max Bias", &max_bias_, .00001, min_bias_, 0.01);
+  ImGui::DragFloat("Depth Bias Constant", &depth_bias_constant_factor_, .001, 0.f, 2.f);
+  ImGui::DragFloat("Depth Bias Slope", &depth_bias_slope_factor_, .00001, .0f, 5.f);
+  ImGui::DragFloat("PCF Scale", &pcf_scale_, .001, .0f, 5.f);
+  ImGui::Checkbox("PCF", &pcf_);
   if (ImGui::TreeNode("shadow map")) {
     ImGui::SliderInt("view level", &debug_cascade_idx_, 0, cascade_count_ - 1);
     if (debug_render_enabled_) {

@@ -316,11 +316,21 @@ PipelineHandle PipelineManager::load_graphics_pipeline(const GraphicsPipelineCre
   viewport_state.scissorCount = 1;
 
   // TODO: configurable dynamic state
-  VkDynamicState default_dynamic_state[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
   VkPipelineDynamicStateCreateInfo dynamic_state{
-      .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-      .dynamicStateCount = 2,
-      .pDynamicStates = default_dynamic_state};
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+
+  std::array<VkDynamicState, 100> states;
+  if (info.dynamic_state.size() == 0) {
+    states = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    dynamic_state.dynamicStateCount = 2;
+  } else {
+    u32 i = 0;
+    for (auto s : info.dynamic_state) {
+      states[i++] = s;
+    }
+    dynamic_state.dynamicStateCount = i;
+  }
+  dynamic_state.pDynamicStates = states.data();
   VkPipelineVertexInputStateCreateInfo vertex_state{
       .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
 

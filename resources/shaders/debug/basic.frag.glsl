@@ -1,5 +1,6 @@
 #version 460
 
+#extension GL_GOOGLE_include_directive : enable
 #include "../math.h.glsl"
 #include "../common.h.glsl"
 #include "../pbr/pbr.h.glsl"
@@ -63,16 +64,24 @@ void main() {
     float ambient = 0.07;
     // float shadowAmbient = 0.05;
     float sunIntensity = 2.5;
-    vec3 outputColor = color.rgb * (ndotl * 2.5 + ambient) * ao + vec3(specular) * color.rgb * sunIntensity + emissive;
+
+    if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_CASCADE_LEVELS) {
+        out_frag_color = vec4(cascade_debug_color(shadow_datas[shadow_buffer_idx].data, scene_data, in_frag_pos), 1.);
+        return;
+    }
+
     float shadow = calc_shadow(shadow_datas[shadow_buffer_idx].data, scene_data, shadow_img_idx, shadow_sampler_idx, N, in_frag_pos);
+    vec3 outputColor = color.rgb * (ndotl * 2.5 * shadow + ambient) * ao + vec3(specular) * color.rgb * shadow * sunIntensity + emissive;
+    out_frag_color = vec4(ACESFilm(outputColor), 1.);
     out_frag_color = vec4(tonemap(outputColor), 1.);
-    out_frag_color = vec4(vec3(shadow), 1.);
+    // out_frag_color = vec4(tonemap(outputColor), 1.);
+    // out_frag_color = vec4(color.rgb * shadow, 1.);
     return;
 
-    vec3 light_out = color_pbr(N, scene_data.light_dir, V, vec4(color.rgb, 1.), metal_rough.b, metal_rough.g, scene_data.light_color);
-    outputColor = (light_out + color.rgb * .4) * ao + emissive;
-
-    out_frag_color = vec4(ACESFilm(outputColor), 1.);
+    // vec3 light_out = color_pbr(N, scene_data.light_dir, V, vec4(color.rgb, 1.), metal_rough.b, metal_rough.g, scene_data.light_color);
+    // outputColor = (light_out + color.rgb * .4) * ao + emissive;
+    //
+    // out_frag_color = vec4(ACESFilm(outputColor), 1.);
     // out_frag_color = vec4(tonemap(outputColor), 1.);
     // out_frag_color = vec4(normal.rgb, 1.);
 }

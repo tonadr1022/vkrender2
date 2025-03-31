@@ -8,16 +8,39 @@ struct ShadowData {
     mat4 light_space_matrices[5];
     vec4 biases; // min = x, max = y, pcf scale, z, z_far: w
     vec4 cascade_levels;
-    uint setting_bits;
-    int cascade_count;
+    uvec4 settings; // w if cascade_count
 };
 
-#define PCF_BIT 1
+#define PCF_BIT 0x1
 VK2_DECLARE_STORAGE_BUFFERS_RO(ShadowUniforms){
 ShadowData data;
 } shadow_datas[];
 
-float shadow_projection(uint shadow_img_idx, uint shadow_sampler_idx, vec4 shadow_coord, vec2 offset, float bias, int layer) {
+const vec3 cascade_colors[5] = vec3[](
+        vec3(1.0, 0.0, 0.0),
+        vec3(0.0, 1.0, 0.0),
+        vec3(0.0, 0.0, 1.0),
+        vec3(1.0, 1.0, 0.0),
+        vec3(0.0, 1.0, 1.0)
+    );
+
+vec3 cascade_debug_color(in ShadowData shadow_ubo, in SceneData data, vec3 fragPosWorldSpace) {
+    vec4 fragPosViewSpace = data.view * vec4(fragPosWorldSpace, 1.0);
+    float depthValue = abs(fragPosViewSpace.z);
+    int layer = -1;
+    for (int i = 0; i < shadow_ubo.settings.w; ++i) {
+        if (depthValue < shadow_ubo.cascade_levels[i]) {
+            layer = i;
+            break;
+        }
+    }
+    if (layer == -1) {
+        return vec3(1.0, 1.0, 1.0);
+    }
+    return cascade_colors[layer];
+}
+
+float shadow_projection(uint shadow_img_idx, uint shadow_sampler_idx, vec4 shadow_coord, vec2 offset, float bias, uint layer) {
     float shadow_factor = 1.0;
     // perspective divide
     shadow_coord = shadow_coord / shadow_coord.w;
@@ -29,6 +52,24 @@ float shadow_projection(uint shadow_img_idx, uint shadow_sampler_idx, vec4 shado
     float pcf_depth = texture(vk2_sampler2DArray(shadow_img_idx, shadow_sampler_idx), vec3(shadow_coord.st + offset, layer)).r;
     return (curr_depth - bias) > pcf_depth ? 0.0 : 1.0;
 }
+
+#define RANGE 2
+#define COUNT 25
+float filter_pcf(in ShadowData shadow_ubo, uint shadow_img_idx, uint shadow_sampler_idx, vec4 shadow_coord, float bias, uint layer) {
+    float scale = shadow_ubo.biases.z;
+    // float scale = 0.75;
+    vec2 dxdy = scale * 1.0 / vec2(textureSize(vk2_sampler2DArray(shadow_img_idx, shadow_sampler_idx), 0).xy);
+
+    // sample nearby for avg
+    float shadow_factor = 0.0;
+    for (int x = -RANGE; x <= RANGE; x++) {
+        for (int y = -RANGE; y <= RANGE; y++) {
+            shadow_factor += shadow_projection(shadow_img_idx, shadow_sampler_idx, shadow_coord, vec2(x, y) * dxdy, bias, layer);
+        }
+    }
+    return shadow_factor / COUNT;
+}
+
 float calc_shadow(in ShadowData shadow_ubo, in SceneData data, uint shadow_img_idx, uint shadow_sampler_idx, vec3 normal, vec3 frag_pos) {
     // get the layer of the cascade depth map using view space depth
     vec4 frag_pos_view_space = data.view * vec4(frag_pos, 1.0);
@@ -36,8 +77,8 @@ float calc_shadow(in ShadowData shadow_ubo, in SceneData data, uint shadow_img_i
     if (depth_val > shadow_ubo.biases.w) {
         return 1.0;
     }
-    int layer = shadow_ubo.cascade_count - 1;
-    for (int i = 0; i < shadow_ubo.cascade_count - 1; i++) {
+    uint layer = shadow_ubo.settings.w - 1;
+    for (uint i = 0; i < shadow_ubo.settings.w - 1; i++) {
         if (depth_val < shadow_ubo.cascade_levels[i]) {
             layer = i;
             break;
@@ -53,15 +94,14 @@ float calc_shadow(in ShadowData shadow_ubo, in SceneData data, uint shadow_img_i
     float bias = max(max_bias * (1.0 - dot(normal, -data.light_dir.xyz)), min_bias);
     const float bias_mod = 0.5;
     // less bias for farther cascade levels
-    if (layer == shadow_ubo.cascade_count - 1) {
+    if (layer == shadow_ubo.settings.w - 1) {
         // z_far is w
         bias *= 1.0 / (shadow_ubo.biases.w * bias_mod);
     } else {
         bias *= 1.0 / (shadow_ubo.cascade_levels[layer] * bias_mod);
     }
-    if ((shadow_ubo.setting_bits & PCF_BIT) != 0) {
-        return 0.0;
-        // return FilterPCF2(shadow_coord, bias, layer);
+    if ((shadow_ubo.settings.x & PCF_BIT) != 0) {
+        return filter_pcf(shadow_ubo, shadow_img_idx, shadow_sampler_idx, shadow_coord, bias, layer);
     } else {
         return shadow_projection(shadow_img_idx, shadow_sampler_idx, shadow_coord, vec2(0.0, 0.0), bias, layer);
     }

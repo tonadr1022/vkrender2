@@ -19,6 +19,7 @@ FetchContent_Declare(
     fastgltf
     GIT_REPOSITORY https://github.com/spnda/fastgltf.git
     GIT_TAG        v0.8.0
+    SYSTEM
 )
 FetchContent_Declare(
     imgui

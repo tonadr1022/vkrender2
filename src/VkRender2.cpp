@@ -257,8 +257,8 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
     {
       TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "CascadeShadowPass");
       csm_->render(
-          state_, cmd, info.view, info.light_dir, aspect_ratio(), info.fov_degrees,
-          [&, this](const mat4& vp_matrix) {
+          state_, cmd, curr_frame_num(), info.view, info.light_dir, aspect_ratio(),
+          info.fov_degrees, [&, this](const mat4& vp_matrix) {
             ShadowDepthPushConstants pc{vp_matrix,
                                         static_vertex_buf_->buffer.resource_info_->handle,
                                         static_transforms_buf_->buffer.resource_info_->handle};
@@ -277,10 +277,11 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
           img_->image(), VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
           VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
           VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
-      state_.buffer_barrier(csm_->get_shadow_data_buffer().buffer(),
+      state_.buffer_barrier(csm_->get_shadow_data_buffer(curr_frame_num()).buffer(),
                             VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT);
       state_.transition(csm_->get_shadow_img().image(), VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                        VK_ACCESS_2_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                        VK_ACCESS_2_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                        VK_IMAGE_ASPECT_DEPTH_BIT);
       state_.transition(depth_img_->image(),
                         VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
                             VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
@@ -309,7 +310,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
                               material_data_buffer.resource_info_->handle,
                               material_indices_buffer.resource_info_->handle,
                               linear_sampler_->resource_info.handle,
-                              csm_->get_shadow_data_buffer().resource_info_->handle,
+                              csm_->get_shadow_data_buffer(curr_frame_num()).resource_info_->handle,
                               csm_->get_shadow_sampler().resource_info.handle,
                               csm_->get_shadow_img().view().sampled_img_resource().handle};
         ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
@@ -805,6 +806,8 @@ const char* VkRender2::debug_mode_to_string(u32 mode) {
       return "AO Map";
     case DEBUG_MODE_NORMALS:
       return "Normals";
+    case DEBUG_MODE_CASCADE_LEVELS:
+      return "Cascade Levels";
     default:
       return "None";
   }

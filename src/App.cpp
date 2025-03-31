@@ -109,10 +109,12 @@ void App::run() {
   int len = 0;
   for (iter.x = -len; iter.x <= len; iter.x++) {
     for (iter.z = -len; iter.z <= len; iter.z++) {
-      // VkRender2::get().load_scene("/users/tony/Bistro_Godot_opt.glb", false,
-      //                             glm::translate(mat4{1}, iter * spacing));
-      VkRender2::get().load_scene(local_models_dir / "sponza.glb", false,
+      VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false,
                                   glm::translate(mat4{1}, iter * spacing));
+      // VkRender2::get().load_scene("/users/tony/Bistro_Godot_opt.glb", false,
+      // glm::translate(mat4{1}, iter * spacing));
+      // VkRender2::get().load_scene(local_models_dir / "sponza.glb", false,
+      //                             glm::translate(mat4{1}, iter * spacing));
       // VkRender2::get().load_scene("/home/tony/models/Models/Sponza/glTF/Sponza.gltf", false,
       //                             glm::translate(mat4{1}, iter * spacing));
       // VkRender2::get().load_scene(local_models_dir / "ABeautifulGame.glb", false,
