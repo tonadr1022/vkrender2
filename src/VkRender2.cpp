@@ -169,7 +169,8 @@ VkRender2::VkRender2(const InitInfo& info)
       .usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
   }};
   static_materials_buf_ = LinearBuffer{create_storage_buffer(10'000 * sizeof(gfx::Material))};
-  u64 num_static_draws = 10'0'000;
+  // TODO: tune and/or resizable buffers
+  u64 num_static_draws = 100'000;
   static_material_indices_buf_ =
       LinearBuffer{create_storage_buffer(num_static_draws * sizeof(u32))};
   static_transforms_buf_ = LinearBuffer{create_storage_buffer(num_static_draws * sizeof(mat4))};
@@ -177,6 +178,9 @@ VkRender2::VkRender2(const InitInfo& info)
       .size = num_static_draws * sizeof(VkDrawIndexedIndirectCommand),
       .usage = VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
   }};
+
+  final_draw_cmd_buf_ =
+      create_storage_buffer(num_static_draws * sizeof(VkDrawIndexedIndirectCommand));
 
   init_pipelines();
   csm_ = CSM(default_pipeline_layout_);

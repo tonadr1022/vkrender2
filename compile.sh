@@ -3,7 +3,7 @@
 
 find_shader_files() {
 	local directory="$1"
-	find "$directory" -type f \( -name "*.vert.glsl" -o -name "*.frag.glsl" \)
+	find "$directory" -type f \( -name "*.vert.glsl" -o -name "*.frag.glsl" -o -name "*.comp.glsl" \)
 }
 
 compile_shader() {

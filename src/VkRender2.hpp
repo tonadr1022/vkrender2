@@ -184,6 +184,7 @@ struct VkRender2 final : public BaseRenderer {
   std::optional<LinearBuffer> static_draw_cmds_buf_;
   std::optional<LinearBuffer> static_transforms_buf_;
   std::vector<vk2::Texture> static_textures_;
+  std::optional<vk2::Buffer> final_draw_cmd_buf_;
 
   StateTracker state_;
   StateTracker transfer_q_state_;

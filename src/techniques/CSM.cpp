@@ -225,7 +225,9 @@ void CSM::render(StateTracker& state, VkCommandBuffer cmd, u32 frame_num, const 
     auto rendering_info = init::rendering_info(shadow_map_img_.extent_2d(), nullptr, &depth_att);
     vkCmdBeginRenderingKHR(cmd, &rendering_info);
     set_viewport_and_scissor(cmd, shadow_map_img_.extent_2d());
-    vkCmdSetDepthBias(cmd, depth_bias_constant_factor_, 0.0f, depth_bias_slope_factor_);
+    if (depth_bias_enabled_) {
+      vkCmdSetDepthBias(cmd, depth_bias_constant_factor_, 0.0f, depth_bias_slope_factor_);
+    }
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                       PipelineManager::get().get(shadow_depth_pipline_)->pipeline);
     draw(light_matrices_[i]);
@@ -242,8 +244,12 @@ void CSM::on_imgui(VkSampler sampler) {
   ImGui::SliderFloat("Shadow z far", &shadow_z_far_, 100.f, 10000.f);
   ImGui::DragFloat("Min Bias", &min_bias_, .00001, 0.00001, max_bias_);
   ImGui::DragFloat("Max Bias", &max_bias_, .00001, min_bias_, 0.01);
-  ImGui::DragFloat("Depth Bias Constant", &depth_bias_constant_factor_, .001, 0.f, 2.f);
-  ImGui::DragFloat("Depth Bias Slope", &depth_bias_slope_factor_, .00001, .0f, 5.f);
+  ImGui::DragFloat("Cascade Split Linear Factor", &cascade_linear_factor_, .001f, 0.f, 1.f);
+  ImGui::Checkbox("Depth Bias", &depth_bias_enabled_);
+  if (depth_bias_enabled_) {
+    ImGui::DragFloat("Depth Bias Constant", &depth_bias_constant_factor_, .001, 0.f, 2.f);
+    ImGui::DragFloat("Depth Bias Slope", &depth_bias_slope_factor_, .00001, .0f, 5.f);
+  }
   ImGui::DragFloat("PCF Scale", &pcf_scale_, .001, .0f, 5.f);
   ImGui::Checkbox("PCF", &pcf_);
   if (ImGui::TreeNode("shadow map")) {

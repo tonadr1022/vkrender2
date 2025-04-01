@@ -36,7 +36,7 @@ class CSM {
   vk2::PipelineHandle shadow_depth_pipline_;
   vk2::PipelineHandle depth_debug_pipeline_;
 
-  uvec2 shadow_map_res_{4096};
+  uvec2 shadow_map_res_{2048};
   u32 cascade_count_{4};
   std::array<vk2::Buffer, 2> shadow_data_bufs_;
   vk2::Texture shadow_map_img_;
@@ -53,6 +53,7 @@ class CSM {
   float shadow_z_far_{1000};
   float depth_bias_constant_factor_{1.25f};
   float depth_bias_slope_factor_{1.75f};
+  bool depth_bias_enabled_{true};
   float pcf_scale_{0.75};
   float min_bias_{0.001};
   float max_bias_{0.005};

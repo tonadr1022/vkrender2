@@ -18,8 +18,8 @@ void main() {
     ivec2 texel_coord = ivec2(gl_GlobalInvocationID.xy);
     ivec2 size = imageSize(images[img_idx]);
     if (texel_coord.x < size.x && texel_coord.y < size.y) {
-        vec3 color = vec3(.1);
-        color.x *= sin(time * 20.) * .5 + .2;
+        vec3 color = vec3(0.7, 1.0, 1.0);
+        // color.x *= sin(time * 20.) * .5 + .2;
         imageStore(images[nonuniformEXT(img_idx)], texel_coord, vec4(color, 1.));
     }
 }

@@ -96,7 +96,7 @@ class BaseRenderer {
     std::filesystem::path resource_dir;
     const char* name = "App";
     bool vsync{true};
-    VkPresentModeKHR present_mode{VK_PRESENT_MODE_FIFO_KHR};
+    // VkPresentModeKHR present_mode{VK_PRESENT_MODE_FIFO_KHR};
     std::function<void()> on_gui_callback;
   };
 

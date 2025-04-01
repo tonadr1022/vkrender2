@@ -109,12 +109,12 @@ void App::run() {
   int len = 0;
   for (iter.x = -len; iter.x <= len; iter.x++) {
     for (iter.z = -len; iter.z <= len; iter.z++) {
-      VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false,
-                                  glm::translate(mat4{1}, iter * spacing));
+      // VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false,
+      //                             glm::translate(mat4{1}, iter * spacing));
       // VkRender2::get().load_scene("/users/tony/Bistro_Godot_opt.glb", false,
       // glm::translate(mat4{1}, iter * spacing));
-      // VkRender2::get().load_scene(local_models_dir / "sponza.glb", false,
-      //                             glm::translate(mat4{1}, iter * spacing));
+      VkRender2::get().load_scene(local_models_dir / "sponza.glb", false,
+                                  glm::translate(mat4{1}, iter * spacing));
       // VkRender2::get().load_scene("/home/tony/models/Models/Sponza/glTF/Sponza.gltf", false,
       //                             glm::translate(mat4{1}, iter * spacing));
       // VkRender2::get().load_scene(local_models_dir / "ABeautifulGame.glb", false,
@@ -127,7 +127,7 @@ void App::run() {
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
     float curr_t = glfwGetTime();
-    float dt = curr_t - last_time;
+    dt = curr_t - last_time;
     last_time = curr_t;
     update(dt);
 
@@ -208,6 +208,8 @@ uvec2 App::window_dims() const {
 
 void App::on_imgui() {
   ImGui::Begin("hello");
+  ImGui::Text("Frame Time: %f ms/frame, FPS: %f", dt * 1000.f, 1.f / dt);
+  ImGui::Text("Front dot L: %f", glm::dot(cam_data.front, scene_data.light_dir));
   if (ImGui::TreeNodeEx("Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
     cam.on_imgui();
     ImGui::TreePop();

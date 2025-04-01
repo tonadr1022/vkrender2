@@ -38,6 +38,8 @@ struct App {
   } scene_data;
   float fov_degrees{70.f};
 
+  float dt{};
+
  private:
   void shutdown() const;
   void update(float dt);

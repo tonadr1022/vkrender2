@@ -149,10 +149,17 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info)
 
   {
     ZoneScopedN("init swapchain");
+#if defined(VK_USE_PLATFORM_WAYLAND_KHR)
+    VkPresentModeKHR presentMode =
+        info.vsync ? VK_PRESENT_MODE_FIFO_KHR : VK_PRESENT_MODE_MAILBOX_KHR;
+#else
+    VkPresentModeKHR present_mode =
+        info.vsync ? VK_PRESENT_MODE_FIFO_KHR : VK_PRESENT_MODE_IMMEDIATE_KHR;
+#endif
     swapchain_.init({.phys_device = vk2::get_device().phys_device(),
                      .device = vk2::get_device().device(),
                      .surface = surface_,
-                     .present_mode = info.present_mode,
+                     .present_mode = present_mode,
                      .dims = window_dims(),
                      .queue_idx = queues_.graphics_queue_idx,
                      .requested_resize = false},
