@@ -31,14 +31,12 @@
 #define VK2_DECLARE_SAMPLED_IMAGES(type) \
   layout(set = 0, binding = BINDLESS_SAMPLED_IMAGE_BINDING) uniform type t_sampledImages_##type[]
 
-#define VK2_DECLARE_UNIFORM_BUFFERS(blockname) \
-  layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING, std430) uniform blockname
 #define VK2_DECLARE_STORAGE_BUFFERS(blockname) \
-  layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING, std430) buffer blockname
+  layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING) buffer blockname
 #define VK2_DECLARE_STORAGE_BUFFERS_WO(blockname) \
-  layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING, std430) writeonly buffer blockname
+  layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING) writeonly buffer blockname
 #define VK2_DECLARE_STORAGE_BUFFERS_RO(blockname) \
-  layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING, std430) restrict readonly buffer blockname
+  layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING) restrict readonly buffer blockname
 #define VK2_DECLARE_STORAGE_BUFFERS_RO_SCALAR(blockname) \
   layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING, scalar) restrict readonly buffer blockname
 

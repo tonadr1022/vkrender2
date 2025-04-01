@@ -53,6 +53,8 @@ class StateTracker {
                            const VkImageSubresourceRange& range);
   StateTracker& buffer_barrier(VkBuffer buffer, VkPipelineStageFlags2 dst_stage,
                                VkAccessFlags2 dst_access);
+  StateTracker& buffer_barrier(const vk2::Buffer& buffer, VkPipelineStageFlags2 dst_stage,
+                               VkAccessFlags2 dst_access);
   void barrier();
 
   StateTracker& queue_transfer_buffer(StateTracker& dst_tracker, VkPipelineStageFlags2 dst_stage,

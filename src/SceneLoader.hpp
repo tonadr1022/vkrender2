@@ -6,11 +6,15 @@
 
 #include "Common.hpp"
 #include "Scene.hpp"
-#include "vk2/Buffer.hpp"
-#include "vk2/SamplerCache.hpp"
 #include "vk2/Texture.hpp"
 
 namespace gfx {
+
+struct ObjectData {
+  mat4 model;
+  vec4 sphere_radius;
+  vec4 extent;
+};
 
 struct Vertex {
   vec3 pos;

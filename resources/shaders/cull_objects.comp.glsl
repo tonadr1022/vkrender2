@@ -11,9 +11,11 @@ layout(push_constant) uniform PC {
     uint in_draw_cmds_buf_idx;
     uint out_draw_cmds_buf_idx;
     uint draw_cnt_buf_idx;
+    uint object_bounds_buf_idx;
 } pc;
 
 struct ObjectBounds {
+    mat4 model;
     vec4 sphere_bounds;
     vec4 extents;
 };
@@ -48,14 +50,15 @@ bool is_visible(in ObjectBounds bounds) {
 
 void main() {
     uint id = gl_GlobalInvocationID.x;
-    if (id > pc.num_objs) {
+    if (id >= pc.num_objs) {
         return;
     }
     DrawCmd cmd = draw_cmds[pc.in_draw_cmds_buf_idx].cmds[id];
-    ObjectBounds bounds = object_bounds[pc.in_draw_cmds_buf_idx].bounds[id];
+    ObjectBounds bounds = object_bounds[pc.object_bounds_buf_idx].bounds[id];
     // get the object. test its frustum against the view frustum
     if (is_visible(bounds)) {
         uint out_idx = atomicAdd(draw_cnts[pc.draw_cnt_buf_idx].cnt, 1);
+        cmd.instance_cnt = 1;
         out_cmds[pc.out_draw_cmds_buf_idx].cmds[out_idx] = cmd;
     }
 }

@@ -125,6 +125,8 @@ struct VkRender2 final : public BaseRenderer {
   std::vector<FrameData> per_frame_data_2_;
   FrameData& curr_frame_2() { return per_frame_data_2_[curr_frame_num() % 2]; }
   void init_pipelines();
+  void init_indirect_drawing();
+  static constexpr u32 max_draws{100'000};
 
   struct SceneUniforms {
     mat4 view_proj;
@@ -152,6 +154,7 @@ struct VkRender2 final : public BaseRenderer {
   };
 
   u64 draw_cnt_{};
+  u64 obj_data_cnt_{};
   struct DrawStats {
     u64 total_vertices;
     u64 total_indices;
@@ -180,11 +183,12 @@ struct VkRender2 final : public BaseRenderer {
   std::optional<LinearBuffer> static_vertex_buf_;
   std::optional<LinearBuffer> static_index_buf_;
   std::optional<LinearBuffer> static_materials_buf_;
-  std::optional<LinearBuffer> static_material_indices_buf_;
+  std::optional<LinearBuffer> static_instance_data_buf_;
   std::optional<LinearBuffer> static_draw_cmds_buf_;
-  std::optional<LinearBuffer> static_transforms_buf_;
+  std::optional<LinearBuffer> static_object_data_buf_;
   std::vector<vk2::Texture> static_textures_;
   std::optional<vk2::Buffer> final_draw_cmd_buf_;
+  std::optional<vk2::Buffer> draw_cnt_buf_;
 
   StateTracker state_;
   StateTracker transfer_q_state_;
@@ -196,11 +200,16 @@ struct VkRender2 final : public BaseRenderer {
     std::optional<vk2::Texture> white_img;
   } default_data_;
   gfx::DefaultMaterialData default_mat_data_;
+  struct InstanceData {
+    u32 material_id;
+    u32 instance_id;
+  };
 
   std::optional<CSM> csm_;
   vk2::DeletionQueue main_del_q_;
   vk2::PipelineHandle img_pipeline_;
   vk2::PipelineHandle draw_pipeline_;
+  vk2::PipelineHandle cull_objs_pipeline_;
   VkPipelineLayout default_pipeline_layout_{};
   std::queue<InFlightResource<vk2::Buffer*>> pending_buffer_transfers_;
 

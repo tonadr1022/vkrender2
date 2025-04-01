@@ -5,5 +5,6 @@ VK2_DECLARE_ARGUMENTS(ShadowDepthPushConstants){
 mat4 vp_matrix;
 uint vertex_buffer_idx;
 uint instance_buffer;
+uint object_data_buffer;
 } ;
 #endif

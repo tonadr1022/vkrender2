@@ -15,6 +15,14 @@ void StateTracker::flush_barriers() {
   if (buffer_barriers_.empty() && img_barriers_.empty()) return;
   VkDependencyInfo info = vk2::init::dependency_info(buffer_barriers_, img_barriers_);
   vkCmdPipelineBarrier2KHR(cmd_, &info);
+  // if (print) {
+  //   for (const auto& b : buffer_barriers_) {
+  //     LINFO("srcStage: {}\tsrcAccess: {}\tdstStage: {}\tdstAccess: {}",
+  //           string_VkPipelineStageFlags2(b.srcStageMask), string_VkAccessFlags2(b.srcAccessMask),
+  //           string_VkPipelineStageFlags2(b.dstStageMask),
+  //           string_VkAccessFlags2(b.dstAccessMask));
+  //   }
+  // }
   buffer_barriers_.clear();
   img_barriers_.clear();
 }
@@ -92,6 +100,8 @@ StateTracker& StateTracker::buffer_barrier(VkBuffer buffer, VkPipelineStageFlags
       .offset = 0,
       .size = VK_WHOLE_SIZE,
   });
+  it->curr_access = dst_access;
+  it->curr_stage = dst_stage;
   return *this;
 }
 
@@ -170,4 +180,9 @@ void StateTracker::barrier() {
                     .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
                 }),
             }));
+}
+StateTracker& StateTracker::buffer_barrier(const vk2::Buffer& buffer,
+                                           VkPipelineStageFlags2 dst_stage,
+                                           VkAccessFlags2 dst_access) {
+  return buffer_barrier(buffer.buffer(), dst_stage, dst_access);
 }

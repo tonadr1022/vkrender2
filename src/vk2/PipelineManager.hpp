@@ -188,7 +188,7 @@ struct ComputePipelineCreateInfo {
 struct GraphicsPipelineCreateInfo {
   struct Rasterization {
     PolygonMode polygon_mode{PolygonMode::Fill};
-    CullMode cull_mode{CullMode::None};
+    CullMode cull_mode{CullMode::Back};
     FrontFace front_face{FrontFace::CounterClockwise};
     bool depth_clamp{false};
     bool depth_bias{false};
@@ -277,7 +277,8 @@ struct GraphicsPipelineCreateInfo {
 class PipelineManager {
  public:
   static PipelineManager &get();
-  static void init(VkDevice device, std::filesystem::path shader_dir);
+  static void init(VkDevice device, std::filesystem::path shader_dir,
+                   VkPipelineLayout default_layout = nullptr);
   static void shutdown();
 
   void on_shader_update();
@@ -297,8 +298,12 @@ class PipelineManager {
 
   void destroy_pipeline(PipelineHandle handle);
 
+  // void set_default_pipeline_layout(VkPipelineLayout layout) { default_pipeline_layout_ = layout;
+  // }
+
  private:
-  explicit PipelineManager(VkDevice device, std::filesystem::path shader_dir);
+  explicit PipelineManager(VkDevice device, std::filesystem::path shader_dir,
+                           VkPipelineLayout default_layout);
   ~PipelineManager();
   VkPipeline create_compute_pipeline(ShaderManager::LoadProgramResult &result,
                                      const char *entry_point = "main");
@@ -315,6 +320,7 @@ class PipelineManager {
   std::filesystem::path shader_dir_;
 
   ShaderManager shader_manager_;
+  VkPipelineLayout default_pipeline_layout_{};
   VkDevice device_;
 };
 }  // namespace vk2

@@ -59,10 +59,10 @@ void main() {
     vec3 halfv = normalize(V + scene_data.light_dir);
     float ndoth = max(dot(N, halfv), 0.0);
     float ndotl = max(dot(N, scene_data.light_dir), 0.0);
-    float gloss = metal_rough.b;
+    float gloss = 1. - metal_rough.b;
     float specular = pow(ndoth, mix(1, 64, gloss)) * gloss;
     float ambient = 0.07;
-    // float shadowAmbient = 0.05;
+    float shadowAmbient = 0.05;
     float sunIntensity = 2.5;
 
     if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_CASCADE_LEVELS) {
@@ -71,14 +71,14 @@ void main() {
     }
 
     float shadow = calc_shadow(shadow_datas[shadow_buffer_idx].data, scene_data, shadow_img_idx, shadow_sampler_idx, N, in_frag_pos);
-    vec3 outputColor = color.rgb * (ndotl * 2.5 * shadow + ambient) * ao + vec3(specular) * color.rgb * shadow * sunIntensity + emissive;
-    out_frag_color = vec4(ACESFilm(outputColor), 1.);
-    out_frag_color = vec4(tonemap(outputColor), 1.);
+    // vec3 outputColor = color.rgb * (ndotl * min(shadow + shadowAmbient, 1.) * sunIntensity + ambient) * ao + vec3(specular * shadow) * color.rgb * sunIntensity + emissive;
+    // out_frag_color = vec4(ACESFilm(outputColor), 1.);
     // out_frag_color = vec4(tonemap(outputColor), 1.);
+    vec3 light_out = color_pbr(N, scene_data.light_dir, V, vec4(color.rgb, 1.), metal_rough.b, metal_rough.g, scene_data.light_color) * shadow;
+    vec3 outputColor = light_out * shadow + ambient * color.rgb * ao + emissive;
+    out_frag_color = vec4(tonemap(outputColor), 1.);
     // out_frag_color = vec4(color.rgb * shadow, 1.);
-    return;
 
-    // vec3 light_out = color_pbr(N, scene_data.light_dir, V, vec4(color.rgb, 1.), metal_rough.b, metal_rough.g, scene_data.light_color);
     // outputColor = (light_out + color.rgb * .4) * ao + emissive;
     //
     // out_frag_color = vec4(ACESFilm(outputColor), 1.);

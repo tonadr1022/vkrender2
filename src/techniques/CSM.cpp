@@ -129,6 +129,7 @@ CSM::CSM(VkPipelineLayout pipeline_layout)
       .vertex_path = "shadow_depth.vert",
       .layout = pipeline_layout_,
       .rendering = {{}, shadow_map_img_.format()},
+      .rasterization = {.depth_clamp = true, .depth_bias = true},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::Less),
       .dynamic_state = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
                         VK_DYNAMIC_STATE_DEPTH_BIAS},
@@ -138,6 +139,7 @@ CSM::CSM(VkPipelineLayout pipeline_layout)
       .fragment_path = "debug/depth_debug.frag",
       .layout = pipeline_layout_,
       .rendering = {{{shadow_map_debug_img_.format()}}},
+      .rasterization = {.cull_mode = CullMode::Front},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_disable(),
   });
 }
@@ -241,9 +243,9 @@ void CSM::on_imgui(VkSampler sampler) {
   }
   ImGui::Checkbox("shadow map debug", &debug_render_enabled_);
   ImGui::SliderFloat("Z mult", &z_mult_, 0.0, 20.f);
-  ImGui::SliderFloat("Shadow z far", &shadow_z_far_, 100.f, 10000.f);
-  ImGui::DragFloat("Min Bias", &min_bias_, .00001, 0.00001, max_bias_);
-  ImGui::DragFloat("Max Bias", &max_bias_, .00001, min_bias_, 0.01);
+  ImGui::DragFloat("Shadow z far", &shadow_z_far_, 1., 0.f, 10000.f);
+  ImGui::DragFloat("Min Bias", &min_bias_, .001, 0.00001, max_bias_);
+  ImGui::DragFloat("Max Bias", &max_bias_, .001, min_bias_, 0.01);
   ImGui::DragFloat("Cascade Split Linear Factor", &cascade_linear_factor_, .001f, 0.f, 1.f);
   ImGui::Checkbox("Depth Bias", &depth_bias_enabled_);
   if (depth_bias_enabled_) {

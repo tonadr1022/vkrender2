@@ -20,22 +20,35 @@ VK2_DECLARE_STORAGE_BUFFERS_RO(VertexBuffers){
 Vertex vertices[];
 } vertex_buffers[];
 
-VK2_DECLARE_STORAGE_BUFFERS_RO(MaterialIDBuffer){
-uint material_ids[];
-} material_ids[];
+struct InstanceData {
+    uint material_id;
+    uint instance_id;
+};
 
-VK2_DECLARE_STORAGE_BUFFERS_RO(InstanceBuffers){
-mat4 instances[];
+struct ObjectData {
+    mat4 model;
+    vec4 sphere_radius;
+    vec4 extent;
+};
+
+VK2_DECLARE_STORAGE_BUFFERS_RO(ObjectDataBuffer){
+InstanceData datas[];
 } instance_buffers[];
 
-void main() {
-    mat4 model = instance_buffers[instance_buffer].instances[gl_BaseInstance];
-    Vertex v = vertex_buffers[vertex_buffer_idx].vertices[gl_VertexIndex];
+VK2_DECLARE_STORAGE_BUFFERS_RO(InstanceDataBuffers){
+ObjectData datas[];
+} object_data_buffers[];
 
+void main() {
+    InstanceData instance_data = instance_buffers[instance_buffer].datas[gl_InstanceIndex];
+    Vertex v = vertex_buffers[vertex_buffer_idx].vertices[gl_VertexIndex];
+    mat4 model = object_data_buffers[object_data_buffer].datas[instance_data.instance_id].model;
     vec4 pos = model * vec4(v.pos, 1.);
     gl_Position = scene_data_buffer[scene_buffer].data.view_proj * pos;
     out_frag_pos = vec3(pos);
-    out_normal = normalize(v.normal);
+    // out_normal = normalize(mat3(model) * v.normal);
+    // TODO: TBN
+    out_normal = normalize(transpose(inverse(mat3(model))) * v.normal);
     out_uv = vec2(v.uv_x, v.uv_y);
-    material_id = material_ids[material_id_buffer].material_ids[gl_BaseInstance];
+    material_id = instance_data.material_id;
 }
