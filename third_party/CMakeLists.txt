@@ -127,3 +127,5 @@ target_include_directories(BS_thread_pool INTERFACE ${bshoshany_thread_pool_SOUR
 
 add_library(stb_image INTERFACE)
 target_include_directories(stb_image SYSTEM INTERFACE stb_image)
+add_library(mikktspace STATIC MikkTSpace/mikktspace.c)
+target_include_directories(mikktspace PUBLIC MikkTSpace)

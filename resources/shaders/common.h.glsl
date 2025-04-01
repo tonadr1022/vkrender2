@@ -4,6 +4,7 @@
 #include "./resources.h.glsl"
 
 #define AO_ENABLED_BIT 0x1
+#define NORMAL_MAPS_ENABLED_BIT 0x2
 #define METALLIC_ROUGHNESS_TEX_MASK 3
 #define PACKED_OCCLUSION_ROUGHNESS_METALLIC 1
 #define DEBUG_MODE_MASK 127

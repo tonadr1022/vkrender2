@@ -87,6 +87,7 @@ glslang-default-resource-limits
 spirv-reflect-static
 BS_thread_pool
 stb_image
+mikktspace
 SPIRV
 )
 

@@ -38,6 +38,7 @@ namespace {
 VkRender2* instance{};
 
 AutoCVarInt ao_map_enabled{"renderer.ao_map", "AO Map", 1, CVarFlags::EditCheckbox};
+AutoCVarInt normal_map_enabled{"renderer.normal_map", "Normal Map", 1, CVarFlags::EditCheckbox};
 
 // AutoCVarInt vsync{"renderer.vsync", "display vsync", 1, CVarFlags::EditCheckbox};
 
@@ -198,6 +199,9 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
     data.debug_flags = uvec4{};
     if (ao_map_enabled.get()) {
       data.debug_flags.x |= AO_ENABLED_BIT;
+    }
+    if (normal_map_enabled.get()) {
+      data.debug_flags.x |= NORMAL_MAPS_ENABLED_BIT;
     }
     data.light_color = info.light_color;
     data.light_dir = glm::normalize(info.light_dir);

@@ -32,6 +32,8 @@
 #include "vk2/Texture.hpp"
 
 #define GLM_ENABLE_EXPERIMENTAL
+#include <mikktspace.h>
+
 #include <glm/gtx/quaternion.hpp>
 #include <tracy/Tracy.hpp>
 
@@ -43,6 +45,104 @@
 namespace gfx {
 
 namespace {
+
+void load_tangents(const std::string& path, std::vector<Vertex>& vertices) {
+  ZoneScoped;
+  std::ifstream file(path, std::ios::binary);
+  assert(file.is_open());
+
+  file.seekg(0, std::ios::end);
+  auto len = file.tellg();
+  file.seekg(0, std::ios::beg);
+  std::vector<vec3> tangents(len / sizeof(vec3));
+  file.read(reinterpret_cast<char*>(tangents.data()), len);
+  file.close();
+  if (tangents.size() != vertices.size()) {
+    LERROR("invalid tangents loaded");
+    return;
+  }
+  u64 i = 0;
+  for (auto& vertex : vertices) {
+    vertex.tangent = tangents[i++];
+  }
+}
+
+void save_tangents(const std::string& path, const std::vector<Vertex>& vertices) {
+  ZoneScoped;
+  std::ofstream file(path, std::ios::binary);
+  assert(file.is_open());
+  std::vector<vec3> tangents;
+  tangents.reserve(vertices.size());
+  for (const auto& vertex : vertices) {
+    tangents.emplace_back(vertex.tangent);
+  }
+  file.write(reinterpret_cast<const char*>(tangents.data()), sizeof(glm::vec3) * tangents.size());
+}
+
+template <typename IndexType>
+void calc_tangents(std::span<Vertex> vertices, std::span<IndexType> indices) {
+  ZoneScoped;
+  SMikkTSpaceContext ctx{};
+  SMikkTSpaceInterface interface{};
+  ctx.m_pInterface = &interface;
+
+  struct MyCtx {
+    MyCtx(std::span<Vertex> vertices, std::span<IndexType>& indices)
+        : vertices(vertices), indices(indices), num_faces(indices.size() / 3) {}
+    std::span<Vertex> vertices;
+    std::span<IndexType> indices;
+    size_t num_faces{};
+    int face_size = 3;
+    Vertex& get_vertex(int face_idx, int vert_idx) {
+      return vertices[indices[(face_idx * face_size) + vert_idx]];
+    }
+  };
+
+  MyCtx my_ctx{vertices, indices};
+  ctx.m_pUserData = &my_ctx;
+
+  interface.m_getNumFaces = [](const SMikkTSpaceContext* ctx) -> int {
+    return reinterpret_cast<MyCtx*>(ctx->m_pUserData)->num_faces;
+  };
+  // assuming GL_TRIANGLES until it becomes an issue
+  interface.m_getNumVerticesOfFace = [](const SMikkTSpaceContext* ctx, const int) {
+    return reinterpret_cast<MyCtx*>(ctx->m_pUserData)->face_size;
+  };
+
+  interface.m_getPosition = [](const SMikkTSpaceContext* ctx, float fvPosOut[], const int iFace,
+                               const int iVert) {
+    MyCtx& my_ctx = *reinterpret_cast<MyCtx*>(ctx->m_pUserData);
+    Vertex& vertex = my_ctx.get_vertex(iFace, iVert);
+    fvPosOut[0] = vertex.pos.x;
+    fvPosOut[1] = vertex.pos.y;
+    fvPosOut[2] = vertex.pos.z;
+  };
+  interface.m_getNormal = [](const SMikkTSpaceContext* ctx, float fvNormOut[], const int iFace,
+                             const int iVert) {
+    MyCtx& my_ctx = *reinterpret_cast<MyCtx*>(ctx->m_pUserData);
+    Vertex& vertex = my_ctx.get_vertex(iFace, iVert);
+    fvNormOut[0] = vertex.normal.x;
+    fvNormOut[1] = vertex.normal.y;
+    fvNormOut[2] = vertex.normal.z;
+  };
+  interface.m_getTexCoord = [](const SMikkTSpaceContext* ctx, float fvTexcOut[], const int iFace,
+                               const int iVert) {
+    MyCtx& my_ctx = *reinterpret_cast<MyCtx*>(ctx->m_pUserData);
+    Vertex& vertex = my_ctx.get_vertex(iFace, iVert);
+    fvTexcOut[0] = vertex.uv_x;
+    fvTexcOut[1] = vertex.uv_y;
+  };
+  interface.m_setTSpaceBasic = [](const SMikkTSpaceContext* ctx, const float fvTangent[],
+                                  const float, const int iFace, const int iVert) {
+    MyCtx& my_ctx = *reinterpret_cast<MyCtx*>(ctx->m_pUserData);
+    Vertex& vertex = my_ctx.get_vertex(iFace, iVert);
+    vertex.tangent.x = fvTangent[0];
+    vertex.tangent.y = fvTangent[1];
+    vertex.tangent.z = fvTangent[2];
+    // vertex.tangent.w = fSign;
+  };
+  genTangSpaceDefault(&ctx);
+}
 std::vector<uint8_t> read_file(const std::string& full_path) {
   std::ifstream file(full_path, std::ios::binary | std::ios::ate);
   if (!file) {
@@ -565,16 +665,13 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
     // u64 end_copy_idx{};
     StateTracker state;
     auto flush_uploads = [&]() {
-      u32 cnt = 0;
       for (u64 i = 0; i < img_i; i++) {
         if (futures[i].valid()) {
           futures[i].get();
-          cnt++;
         } else {
           break;
         }
       }
-      LINFO("flush uploads {}", cnt);
       futures.clear();
       VkRender2::get().transfer_submit([start_copy_idx, end_copy_idx = img_i - 1, &img_upload_infos,
                                         &result, &state, curr_staging_offset, &img_staging_buf,
@@ -767,6 +864,18 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
     result->indices.resize(num_indices);
     result->vertices.resize(num_vertices);
 
+    bool has_tangents = gltf.meshes[0].primitives[0].findAttribute("TANGENT") !=
+                        gltf.meshes[0].primitives[0].attributes.end();
+    std::filesystem::path tangents_path =
+        parent_path / (path.filename().stem().string() + "_tangents.bin");
+    bool loaded_tangents_from_disk = false;
+    if (!has_tangents) {
+      // load from disk
+      if (std::filesystem::exists(tangents_path)) {
+        load_tangents(tangents_path, result->vertices);
+        loaded_tangents_from_disk = true;
+      }
+    }
     {
       futures.clear();
       u64 mesh_draw_idx = 0;
@@ -774,7 +883,9 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
         for (u64 primitive_idx = 0; primitive_idx < gltf.meshes[mesh_idx].primitives.size();
              primitive_idx++, mesh_draw_idx++) {
           futures.emplace_back(threads::pool.submit_task([&gltf, mesh_idx, primitive_idx, &result,
-                                                          mesh_draw_idx]() {
+                                                          mesh_draw_idx,
+                                                          loaded_tangents_from_disk]() {
+            ZoneScopedN("gltf process primitives");
             const auto& primitive = gltf.meshes[mesh_idx].primitives[primitive_idx];
             const auto& index_accessor = gltf.accessors[primitive.indicesAccessor.value()];
             const auto& mesh_draw_info = result->mesh_draw_infos[mesh_draw_idx];
@@ -804,6 +915,20 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
               }
             }
 
+            const auto* tangent_attrib = primitive.findAttribute("TANGENT");
+            if (tangent_attrib != primitive.attributes.end()) {
+              const auto& accessor = gltf.accessors[tangent_attrib->accessorIndex];
+              u64 i = start_i;
+              assert(accessor.count == pos_accessor.count);
+              for (glm::vec3 tangent : fastgltf::iterateAccessor<glm::vec3>(gltf, accessor)) {
+                result->vertices[i++].tangent = tangent;
+              }
+            } else if (!loaded_tangents_from_disk) {
+              calc_tangents<u32>(
+                  std::span(result->vertices.data() + (start_i), mesh_draw_info.vertex_count),
+                  std::span(result->indices.data() + (start_idx), mesh_draw_info.index_count));
+            }
+
             const auto* normal_attrib = primitive.findAttribute("NORMAL");
             if (normal_attrib != primitive.attributes.end()) {
               const auto& normal_accessor = gltf.accessors[normal_attrib->accessorIndex];
@@ -820,6 +945,9 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
         if (f.valid()) {
           f.get();
         }
+      }
+      if (!has_tangents && !loaded_tangents_from_disk) {
+        save_tangents(tangents_path, result->vertices);
       }
     }
   }

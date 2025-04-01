@@ -10,7 +10,9 @@
 layout(location = 0) in vec3 in_normal;
 layout(location = 1) in vec2 in_uv;
 layout(location = 2) in vec3 in_frag_pos;
-layout(location = 3) flat in uint material_id;
+layout(location = 3) in vec3 in_bitangent;
+layout(location = 4) in vec3 in_tangent;
+layout(location = 5) flat in uint material_id;
 
 layout(location = 0) out vec4 out_frag_color;
 
@@ -50,7 +52,16 @@ void main() {
     }
     vec3 metal_rough = texture(vk2_sampler2D(material.ids.z, sampler_idx), in_uv).rgb;
     vec3 V = normalize(scene_data.view_pos - in_frag_pos);
-    vec3 N = normalize((in_normal));
+
+    vec3 N;
+    if ((debug_flags.x & NORMAL_MAPS_ENABLED_BIT) != 0 && material.ids.y != 0) {
+        vec3 tex_map_norm = texture(vk2_sampler2D(material.ids.y, sampler_idx), in_uv).rgb * 2.0 - 1.0;
+        mat3 in_tbn = mat3(normalize(in_tangent), normalize(in_bitangent), normalize(in_normal));
+        N = normalize(in_tbn * tex_map_norm);
+    } else {
+        N = normalize(in_normal);
+    }
+    // vec3 N = normalize((in_normal));
     if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_NORMALS) {
         out_frag_color = vec4(N, 1.);
         return;
@@ -74,6 +85,8 @@ void main() {
     // vec3 outputColor = color.rgb * (ndotl * min(shadow + shadowAmbient, 1.) * sunIntensity + ambient) * ao + vec3(specular * shadow) * color.rgb * sunIntensity + emissive;
     // out_frag_color = vec4(ACESFilm(outputColor), 1.);
     // out_frag_color = vec4(tonemap(outputColor), 1.);
+    // out_frag_color = vec4(vec3(metal_rough.b), 1.);
+    // return;
     vec3 light_out = color_pbr(N, scene_data.light_dir, V, vec4(color.rgb, 1.), metal_rough.b, metal_rough.g, scene_data.light_color) * shadow;
     vec3 outputColor = light_out * shadow + ambient * color.rgb * ao + emissive;
     out_frag_color = vec4(tonemap(outputColor), 1.);

@@ -21,6 +21,7 @@ struct Vertex {
   float uv_x;
   vec3 normal;
   float uv_y;
+  vec3 tangent;
 };
 
 struct Box3D {

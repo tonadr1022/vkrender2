@@ -36,8 +36,8 @@ class CSM {
   vk2::PipelineHandle shadow_depth_pipline_;
   vk2::PipelineHandle depth_debug_pipeline_;
 
-  uvec2 shadow_map_res_{4096};
-  u32 cascade_count_{4};
+  uvec2 shadow_map_res_{2048};
+  u32 cascade_count_{5};
   std::array<vk2::Buffer, 2> shadow_data_bufs_;
   vk2::Texture shadow_map_img_;
   vk2::Texture shadow_map_debug_img_;
