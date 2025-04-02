@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <optional>
 #include <queue>
+#include <vector>
 
 #include "BaseRenderer.hpp"
 #include "Scene.hpp"
@@ -12,6 +13,7 @@
 #include "StateTracker.hpp"
 #include "shaders/common.h.glsl"
 #include "techniques/CSM.hpp"
+#include "util/IndexAllocator.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/DeletionQueue.hpp"
 #include "vk2/PipelineManager.hpp"
@@ -153,12 +155,24 @@ struct VkRender2 final : public BaseRenderer {
     u64 alloc(u64 size) { return allocator.alloc(size); }
   };
 
+  template <typename T>
+  struct SlotBuffer {
+    explicit SlotBuffer(const vk2::BufferCreateInfo& info)
+        : buffer(info), allocator(info.size / sizeof(T)) {}
+
+    explicit SlotBuffer(vk2::Buffer buffer)
+        : buffer(std::move(buffer)), allocator(this->buffer.size() / sizeof(T)) {}
+
+    vk2::Buffer buffer;
+    util::SlotAllocator<T> allocator;
+    u64 alloc() { return allocator.alloc(); }
+  };
+
   u64 draw_cnt_{};
   u64 obj_data_cnt_{};
   struct DrawStats {
     u64 total_vertices;
     u64 total_indices;
-
     u32 vertices;
     u32 indices;
     u32 draw_cmds;
@@ -169,14 +183,27 @@ struct VkRender2 final : public BaseRenderer {
   struct StaticSceneGPUResources {
     SceneLoadData scene_graph_data;
     std::vector<gfx::PrimitiveDrawInfo> mesh_draw_infos;
+    std::vector<util::SlotAllocator<gfx::ObjectData>::Slot> object_data_slots;
     u64 first_vertex;
     u64 first_index;
     u64 num_vertices;
     u64 num_indices;
     u64 materials_idx_offset;
-    u64 base_instance;
+  };
+  struct DrawInfo {
+    u32 index_cnt;
+    u32 first_index;
+    u32 vertex_offset;
+    u32 pad;
   };
 
+  struct ObjectDraw {
+    std::vector<util::SlotAllocator<DrawInfo>::Slot> draw_cmd_slots;
+    std::vector<util::SlotAllocator<gfx::ObjectData>::Slot> obj_data_slots;
+  };
+  // std::vector<ObjectDraw> static_draws_;
+
+  std::unordered_map<SceneHandle, ObjectDraw> active_static_draws_;
   std::unordered_map<std::string, StaticSceneGPUResources> static_scenes_;
 
   DrawStats static_draw_stats_{};
@@ -184,8 +211,9 @@ struct VkRender2 final : public BaseRenderer {
   std::optional<LinearBuffer> static_index_buf_;
   std::optional<LinearBuffer> static_materials_buf_;
   std::optional<LinearBuffer> static_instance_data_buf_;
-  std::optional<LinearBuffer> static_draw_cmds_buf_;
-  std::optional<LinearBuffer> static_object_data_buf_;
+
+  std::optional<SlotBuffer<DrawInfo>> static_draw_info_buf_;
+  std::optional<SlotBuffer<gfx::ObjectData>> static_object_data_buf_;
   std::vector<vk2::Texture> static_textures_;
   std::optional<vk2::Buffer> final_draw_cmd_buf_;
   std::optional<vk2::Buffer> draw_cnt_buf_;

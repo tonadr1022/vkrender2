@@ -63,7 +63,7 @@ void load_tangents(const std::string& path, std::vector<Vertex>& vertices) {
   }
   u64 i = 0;
   for (auto& vertex : vertices) {
-    vertex.tangent = tangents[i++];
+    vertex.tangent = vec4{tangents[i++], 0.};
   }
 }
 
@@ -921,7 +921,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
               u64 i = start_i;
               assert(accessor.count == pos_accessor.count);
               for (glm::vec3 tangent : fastgltf::iterateAccessor<glm::vec3>(gltf, accessor)) {
-                result->vertices[i++].tangent = tangent;
+                result->vertices[i++].tangent = vec4(tangent, 0.);
               }
             } else if (!loaded_tangents_from_disk) {
               calc_tangents<u32>(

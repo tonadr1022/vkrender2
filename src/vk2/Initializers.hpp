@@ -38,6 +38,8 @@ VkRenderingAttachmentInfo rendering_attachment_info(VkImageView texture, VkImage
                                                     VkClearValue* clear_value = nullptr);
 VkRenderingAttachmentInfo rendering_attachment_info(vk2::TextureView& texture, VkImageLayout layout,
                                                     VkClearValue* clear_value = nullptr);
+VkBufferCopy2KHR buffer_copy(VkDeviceSize src_offset, VkDeviceSize dst_offset, VkDeviceSize size);
+
 VkRenderingInfo rendering_info(VkExtent2D render_extent,
                                VkRenderingAttachmentInfo* color_attachment,
                                VkRenderingAttachmentInfo* depth_attachment = nullptr,

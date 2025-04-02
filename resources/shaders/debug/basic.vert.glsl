@@ -16,7 +16,7 @@ struct Vertex {
     float uv_x;
     vec3 normal;
     float uv_y;
-    vec3 tangent;
+    vec4 tangent;
 };
 
 VK2_DECLARE_STORAGE_BUFFERS_RO_SCALAR(VertexBuffers){
@@ -53,7 +53,7 @@ void main() {
     // TODO: something else lol
     // out_normal = normalize(transpose(inverse(mat3(model))) * v.normal);
     out_normal = vec3(model * vec4(v.normal, 0.));
-    vec3 T = normalize(vec3(model * vec4(v.tangent, 0.)));
+    vec3 T = normalize(vec3(model * vec4(v.tangent.xyz, 0.)));
     vec3 N = out_normal;
     out_bitangent = cross(N, T);
     out_tangent = normalize(T - dot(N, T) * N);

@@ -21,6 +21,7 @@
 #include "shaders/debug/basic_common.h.glsl"
 #include "shaders/shadow_depth_common.h.glsl"
 #include "util/CVar.hpp"
+#include "util/IndexAllocator.hpp"
 #include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/Device.hpp"
@@ -168,13 +169,13 @@ VkRender2::VkRender2(const InitInfo& info)
   }};
   static_materials_buf_ = LinearBuffer{create_storage_buffer(10'000 * sizeof(gfx::Material))};
   // TODO: tune and/or resizable buffers
-  u64 num_static_draws = 100'000;
+  u64 max_static_draws = 100'000;
   static_instance_data_buf_ =
-      LinearBuffer{create_storage_buffer(num_static_draws * sizeof(InstanceData))};
-  static_object_data_buf_ =
-      LinearBuffer{create_storage_buffer(num_static_draws * sizeof(gfx::ObjectData))};
-  static_draw_cmds_buf_ = LinearBuffer{BufferCreateInfo{
-      .size = num_static_draws * sizeof(VkDrawIndexedIndirectCommand),
+      LinearBuffer{create_storage_buffer(max_static_draws * sizeof(InstanceData))};
+  static_object_data_buf_ = SlotBuffer<gfx::ObjectData>{
+      create_storage_buffer(max_static_draws * sizeof(gfx::ObjectData))};
+  static_draw_info_buf_ = SlotBuffer<DrawInfo>{BufferCreateInfo{
+      .size = max_static_draws * sizeof(DrawInfo),
       .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
                VK_BUFFER_USAGE_TRANSFER_DST_BIT,
   }};
@@ -272,7 +273,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
 
       // cull
       state_
-          .buffer_barrier(static_draw_cmds_buf_->buffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+          .buffer_barrier(static_draw_info_buf_->buffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                           VK_ACCESS_2_SHADER_READ_BIT)
           .buffer_barrier(static_object_data_buf_->buffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                           VK_ACCESS_2_SHADER_READ_BIT)
@@ -289,7 +290,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
         u32 out_draw_cmds_buf;
         u32 draw_cnt_buf;
         u32 object_bounds_buf;
-      } pc{static_cast<u32>(draw_cnt_), static_draw_cmds_buf_->buffer.resource_info_->handle,
+      } pc{static_cast<u32>(draw_cnt_), static_draw_info_buf_->buffer.resource_info_->handle,
            final_draw_cmd_buf_->resource_info_->handle, draw_cnt_buf_->resource_info_->handle,
            static_object_data_buf_->buffer.resource_info_->handle};
       ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
@@ -388,7 +389,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
       if (draw_cnt_) {
         draw_objects(static_vertex_buf_->buffer, static_index_buf_->buffer,
                      static_instance_data_buf_->buffer, static_materials_buf_->buffer,
-                     static_object_data_buf_->buffer, static_draw_cmds_buf_->buffer, draw_cnt_);
+                     static_object_data_buf_->buffer, static_draw_info_buf_->buffer, draw_cnt_);
       }
       vkCmdEndRenderingKHR(cmd);
     }
@@ -526,7 +527,6 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
                                   const mat4& transform) {
   ZoneScoped;
   if (!dynamic) {
-    // threads::pool.detach_task([path, transform, this]() {
     ZoneScopedN("load_scene");
     auto copy_buffer = [](VkCommandBuffer cmd, const Buffer& src_buffer, const Buffer& dst_buffer,
                           u64 src_offset, u64 dst_offset, u64 size) {
@@ -549,7 +549,6 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
       auto ret = gfx::load_gltf(path, default_mat_data_);
       if (!ret.has_value()) {
         return {};
-        // return;
       }
       auto res = std::move(ret.value());
 
@@ -600,7 +599,6 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
       for (auto& t : res.textures) {
         static_textures_.emplace_back(std::move(t));
       }
-      // StagingBufferPool::get().free(staging.get_buffer());
       resources = &static_scenes_
                        .emplace(path.string(),
                                 StaticSceneGPUResources{
@@ -611,8 +609,7 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
                                     .num_vertices = res.vertices.size(),
                                     .num_indices = res.indices.size(),
                                     .materials_idx_offset =
-                                        material_data_gpu_offset / sizeof(gfx::Material),
-                                    .base_instance = 0})
+                                        material_data_gpu_offset / sizeof(gfx::Material)})
                        .first->second;
     }
     static_draw_stats_.total_vertices += resources->num_vertices;
@@ -622,15 +619,16 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
     std::vector<InstanceData> instance_datas;
     obj_datas.reserve(resources->scene_graph_data.mesh_node_indices.size());
     instance_datas.reserve(resources->scene_graph_data.mesh_node_indices.size());
+    ObjectDraw obj_draw;
+    obj_draw.obj_data_slots.reserve(obj_datas.size());
     bool mult_transform = transform != mat4{1};
-    u32 i = draw_cnt_;
-    u32 j = obj_data_cnt_;
     for (auto& node : resources->scene_graph_data.node_datas) {
       for (auto& mesh_indices : node.meshes) {
         obj_datas.emplace_back(gfx::ObjectData{
             .model = mult_transform ? transform * node.world_transform : node.world_transform});
+        obj_draw.obj_data_slots.emplace_back(static_object_data_buf_->allocator.alloc());
         instance_datas.emplace_back(mesh_indices.material_id + resources->materials_idx_offset,
-                                    j++);
+                                    obj_draw.obj_data_slots.back().idx());
       }
     }
     obj_data_cnt_ += obj_datas.size();
@@ -638,23 +636,21 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
     u64 obj_datas_size = obj_datas.size() * sizeof(gfx::ObjectData);
     u64 instance_datas_size = instance_datas.size() * sizeof(InstanceData);
 
-    std::vector<VkDrawIndexedIndirectCommand> cmds;
+    std::vector<DrawInfo> cmds;
     cmds.reserve(resources->scene_graph_data.mesh_node_indices.size());
 
-    i = draw_cnt_;
     for (auto& node : resources->scene_graph_data.node_datas) {
       for (auto& mesh_indices : node.meshes) {
         auto& mesh = resources->mesh_draw_infos[mesh_indices.mesh_idx];
-        cmds.emplace_back(VkDrawIndexedIndirectCommand{
-            .indexCount = mesh.index_count,
-            .instanceCount = 1,
-            .firstIndex = static_cast<u32>(resources->first_index + mesh.first_index),
-            .vertexOffset = static_cast<i32>(resources->first_vertex + mesh.first_vertex),
-            .firstInstance = i++});
+        cmds.emplace_back(
+            DrawInfo{.index_cnt = mesh.index_count,
+                     .first_index = static_cast<u32>(resources->first_index + mesh.first_index),
+                     .vertex_offset = static_cast<u32>(resources->first_vertex + mesh.first_vertex),
+                     .pad = 0});
       }
     }
 
-    u64 cmds_buf_size = cmds.size() * sizeof(VkDrawIndexedIndirectCommand);
+    u64 cmds_buf_size = cmds.size() * sizeof(DrawInfo);
 
     auto staging = LinearStagingBuffer{vk2::StagingBufferPool::get().acquire(
         cmds_buf_size + obj_datas_size + instance_datas_size)};
@@ -664,12 +660,41 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
 
     transfer_submit([&, this](VkCommandBuffer cmd, VkFence fence,
                               std::queue<InFlightResource<vk2::Buffer*>>& transfers) {
-      u64 cmds_gpu_offset = static_draw_cmds_buf_->alloc(cmds_buf_size);
-      copy_buffer(cmd, *staging.get_buffer(), static_draw_cmds_buf_->buffer, cmds_staging_offset,
-                  cmds_gpu_offset, cmds_buf_size);
-      u64 transforms_gpu_offset = static_object_data_buf_->alloc(obj_datas_size);
-      copy_buffer(cmd, *staging.get_buffer(), static_object_data_buf_->buffer,
-                  obj_datas_staging_offset, transforms_gpu_offset, obj_datas_size);
+      obj_draw.draw_cmd_slots.reserve(cmds.size());
+      for (u64 i = 0; i < cmds.size(); i++) {
+        obj_draw.draw_cmd_slots.emplace_back(static_draw_info_buf_->allocator.alloc());
+      }
+      std::vector<VkBufferCopy2KHR> copies(cmds.size());
+      for (u64 cmd_i = 0; cmd_i < cmds.size(); cmd_i++) {
+        copies[cmd_i] =
+            init::buffer_copy(cmds_staging_offset + (cmd_i * sizeof(DrawInfo)),
+                              obj_draw.draw_cmd_slots[cmd_i].offset(), sizeof(DrawInfo));
+      }
+      vkCmdCopyBuffer2KHR(
+          cmd, vk2::addr(VkCopyBufferInfo2KHR{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+                                              .srcBuffer = staging.get_buffer()->buffer(),
+                                              .dstBuffer = static_draw_info_buf_->buffer.buffer(),
+                                              .regionCount = static_cast<u32>(copies.size()),
+                                              .pRegions = copies.data()}));
+      {
+        copies.clear();
+        for (u64 obj_data_i = 0; obj_data_i < obj_datas.size(); obj_data_i++) {
+          copies.emplace_back(init::buffer_copy(
+              obj_datas_staging_offset + (obj_data_i * sizeof(gfx::ObjectData)),
+              obj_draw.obj_data_slots[obj_data_i].offset(), sizeof(gfx::ObjectData)));
+        }
+        vkCmdCopyBuffer2KHR(cmd, vk2::addr(VkCopyBufferInfo2KHR{
+                                     .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+                                     .srcBuffer = staging.get_buffer()->buffer(),
+                                     .dstBuffer = static_object_data_buf_->buffer.buffer(),
+                                     .regionCount = static_cast<u32>(copies.size()),
+                                     .pRegions = copies.data()}));
+      }
+
+      // u64 transforms_gpu_offset = static_object_data_buf_->alloc(obj_datas_size);
+      // copy_buffer(cmd, *staging.get_buffer(), static_object_data_buf_->buffer,
+      //             obj_datas_staging_offset, transforms_gpu_offset, obj_datas_size);
+
       u64 instance_datas_gpu_offset = static_instance_data_buf_->alloc(instance_datas_size);
       copy_buffer(cmd, *staging.get_buffer(), static_instance_data_buf_->buffer,
                   instance_datas_staging_offset, instance_datas_gpu_offset, instance_datas_size);
@@ -679,7 +704,7 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
               state_,
               VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
               VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT,
-              static_draw_cmds_buf_->buffer.buffer(), queues_.transfer_queue_idx,
+              static_draw_info_buf_->buffer.buffer(), queues_.transfer_queue_idx,
               queues_.graphics_queue_idx)
           .queue_transfer_buffer(
               state_,

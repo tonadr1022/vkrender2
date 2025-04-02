@@ -3,7 +3,6 @@
 #include <print>
 
 #include "App.hpp"
-#include "Logger.hpp"
 
 #define CMP(arg, cmp) strcmp(arg, cmp) == 0
 
@@ -12,7 +11,6 @@ int main(int argc, char* argv[]) {
   bool vsync{true}, maximize{false};
   for (int i = 1; i < argc; i++) {
     char* arg = argv[i];
-    LINFO("{} {}", arg, CMP(arg, "--no-vsync"));
     if (CMP(arg, "-w") && i < argc - 1) {
       w = std::stoi(argv[i + 1]);
     } else if (CMP(arg, "-h") && i < argc - 1) {

@@ -31,6 +31,7 @@ class Buffer {
   [[nodiscard]] VkBuffer buffer() const { return buffer_; }
   [[nodiscard]] VkDeviceAddress device_addr() const { return buffer_address_; }
   [[nodiscard]] u64 size() const { return cinfo_.size; }
+  [[nodiscard]] const std::string &name() const { return name_; }
 
  private:
   BufferCreateInfo cinfo_;

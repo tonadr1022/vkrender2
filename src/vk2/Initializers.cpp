@@ -169,4 +169,10 @@ VkDependencyInfo dependency_info(std::span<VkBufferMemoryBarrier2> buffer_barrie
           .imageMemoryBarrierCount = static_cast<u32>(img_barriers.size()),
           .pImageMemoryBarriers = img_barriers.size() ? img_barriers.data() : nullptr};
 }
+VkBufferCopy2KHR buffer_copy(VkDeviceSize src_offset, VkDeviceSize dst_offset, VkDeviceSize size) {
+  return VkBufferCopy2KHR{.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2_KHR,
+                          .srcOffset = src_offset,
+                          .dstOffset = dst_offset,
+                          .size = size};
+}
 }  // namespace vk2::init
