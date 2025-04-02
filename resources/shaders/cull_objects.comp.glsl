@@ -39,15 +39,15 @@ struct DrawCmd {
     uint first_instance;
 };
 
-VK2_DECLARE_STORAGE_BUFFERS_RO(DrawCmdsBuffer){
+VK2_DECLARE_STORAGE_BUFFERS(DrawCmdsBuffer){
 DrawInfo cmds[];
 } draw_cmds[];
 
-VK2_DECLARE_STORAGE_BUFFERS_WO(OutDrawCmdsBuffer){
+VK2_DECLARE_STORAGE_BUFFERS(OutDrawCmdsBuffer){
 DrawCmd cmds[];
 } out_cmds[];
 
-VK2_DECLARE_STORAGE_BUFFERS_WO(DrawCntBuffer){
+VK2_DECLARE_STORAGE_BUFFERS(DrawCntBuffer){
 uint cnt;
 } draw_cnts[];
 

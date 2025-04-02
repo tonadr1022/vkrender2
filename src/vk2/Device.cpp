@@ -78,7 +78,10 @@ void Device::init_impl(const CreateInfo& info) {
                                        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME}};
 
   // NOT ON MACOS :(
+#ifndef __APPLE__
   features12.drawIndirectCount = true;
+#endif
+
   phys_selector.set_minimum_version(min_api_version_major, min_api_version_minor)
       .set_required_features_12(features12)
       .set_required_features_11(features11)

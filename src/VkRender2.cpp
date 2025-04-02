@@ -230,6 +230,8 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
   VkCommandBuffer cmd = curr_frame().main_cmd_buffer;
   state_.reset(cmd);
 
+  // TODO: better management lol
+  bool portable = true;
   CmdEncoder ctx{cmd};
   auto cmd_begin_info = vk2::init::command_buffer_begin_info();
   VK_CHECK(vkResetCommandBuffer(cmd, 0));
@@ -270,6 +272,14 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
                           VK_ACCESS_2_TRANSFER_WRITE_BIT)
           .flush_barriers();
       vkCmdFillBuffer(cmd, draw_cnt_buf_->buffer(), 0, sizeof(u32), 0);
+      // clear final buffer if we can't use drawindirectcount
+      if (portable) {
+        state_
+            .buffer_barrier(final_draw_cmd_buf_.value(), VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                            VK_ACCESS_2_TRANSFER_WRITE_BIT)
+            .flush_barriers();
+        vkCmdFillBuffer(cmd, final_draw_cmd_buf_->buffer(), 0, final_draw_cmd_buf_->size(), 0);
+      }
 
       // cull
       state_
@@ -316,9 +326,14 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
                      ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
                      vkCmdBindIndexBuffer(cmd, static_index_buf_->buffer.buffer(), 0,
                                           VK_INDEX_TYPE_UINT32);
-                     vkCmdDrawIndexedIndirectCount(cmd, final_draw_cmd_buf_->buffer(), 0,
-                                                   draw_cnt_buf_->buffer(), 0, max_draws,
-                                                   sizeof(VkDrawIndexedIndirectCommand));
+                     if (portable) {
+                       vkCmdDrawIndexedIndirect(cmd, final_draw_cmd_buf_->buffer(), 0, draw_cnt_,
+                                                sizeof(VkDrawIndexedIndirectCommand));
+                     } else {
+                       vkCmdDrawIndexedIndirectCount(cmd, final_draw_cmd_buf_->buffer(), 0,
+                                                     draw_cnt_buf_->buffer(), 0, max_draws,
+                                                     sizeof(VkDrawIndexedIndirectCommand));
+                     }
                      // vkCmdDrawIndexedIndirect(cmd, static_draw_cmds_buf_->buffer.buffer(), 0,
                      // draw_cnt_,
                      //                          sizeof(VkDrawIndexedIndirectCommand));
@@ -371,21 +386,21 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
                               csm_->get_shadow_sampler().resource_info.handle,
                               csm_->get_shadow_img().view().sampled_img_resource().handle};
         ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
+
         vkCmdBindIndexBuffer(cmd, index_buffer.buffer(), 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexedIndirectCount(cmd, final_draw_cmd_buf_->buffer(), 0,
-                                      draw_cnt_buf_->buffer(), 0, max_draws,
-                                      sizeof(VkDrawIndexedIndirectCommand));
+        if (portable) {
+          vkCmdDrawIndexedIndirect(cmd, final_draw_cmd_buf_->buffer(), 0, draw_cnt_,
+                                   sizeof(VkDrawIndexedIndirectCommand));
+        } else {
+          vkCmdDrawIndexedIndirectCount(cmd, final_draw_cmd_buf_->buffer(), 0,
+                                        draw_cnt_buf_->buffer(), 0, max_draws,
+                                        sizeof(VkDrawIndexedIndirectCommand));
+        }
         // vkCmdDrawIndexedIndirect(cmd, static_draw_cmds_buf_->buffer.buffer(), 0, draw_cnt_,
         //                          sizeof(VkDrawIndexedIndirectCommand));
       };
 
       TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "Final Draw Pass");
-      // for (auto& scene : loaded_dynamic_scenes_) {
-      //   draw_objects(scene.resources->vertex_buffer, scene.resources->index_buffer,
-      //                scene.resources->instance_buffer, scene.resources->materials_buffer,
-      //                scene.resources->material_indices, scene.resources->draw_indirect_buffer,
-      //                scene.resources->draw_cnt);
-      // }
       if (draw_cnt_) {
         draw_objects(static_vertex_buf_->buffer, static_index_buf_->buffer,
                      static_instance_data_buf_->buffer, static_materials_buf_->buffer,

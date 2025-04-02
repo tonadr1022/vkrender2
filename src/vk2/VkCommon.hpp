@@ -5,8 +5,12 @@
 
 namespace vk2 {
 constexpr int min_api_version_major = 1;
+// TODO: runtime selection
+#ifdef __APPLE__
+constexpr int min_api_version_minor = 2;
+#else
 constexpr int min_api_version_minor = 3;
-// constexpr int min_api_version_minor = 2;
+#endif
 
 void print_vk_error(size_t x, bool exit_prog = false);
 
