@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "util/FileWatcher.hpp"
 #include "vk2/Handle.hpp"
 #include "vk2/ShaderCompiler.hpp"
 
@@ -235,7 +236,8 @@ struct GraphicsPipelineCreateInfo {
   };
 
   struct RenderingInfo {
-    std::span<const VkFormat> color_formats;
+    std::array<VkFormat, 5> color_formats{};
+    u32 color_formats_cnt{};
     VkFormat depth_format{VK_FORMAT_UNDEFINED};
     VkFormat stencil_format{VK_FORMAT_UNDEFINED};
   };
@@ -277,7 +279,7 @@ struct GraphicsPipelineCreateInfo {
 class PipelineManager {
  public:
   static PipelineManager &get();
-  static void init(VkDevice device, std::filesystem::path shader_dir,
+  static void init(VkDevice device, std::filesystem::path shader_dir, bool hot_reload,
                    VkPipelineLayout default_layout = nullptr);
   static void shutdown();
 
@@ -302,7 +304,9 @@ class PipelineManager {
   // }
 
  private:
-  explicit PipelineManager(VkDevice device, std::filesystem::path shader_dir,
+  VkPipeline load_graphics_pipeline_impl(const GraphicsPipelineCreateInfo &info);
+  VkPipeline load_compute_pipeline_impl(const ComputePipelineCreateInfo &info);
+  explicit PipelineManager(VkDevice device, std::filesystem::path shader_dir, bool hot_reload,
                            VkPipelineLayout default_layout);
   ~PipelineManager();
   VkPipeline create_compute_pipeline(ShaderManager::LoadProgramResult &result,
@@ -314,8 +318,13 @@ class PipelineManager {
     std::vector<std::string> shader_paths;
   };
 
+  util::FileWatcher file_watcher_;
+  void on_dirty_files(std::span<std::filesystem::path> dirty_files);
   std::unordered_map<std::string, std::vector<PipelineHandle>> shader_name_to_used_pipelines_;
   std::unordered_map<PipelineHandle, PipelineAndMetadata> pipelines_;
+
+  std::unordered_map<PipelineHandle, GraphicsPipelineCreateInfo> graphics_pipeline_infos_;
+  std::unordered_map<PipelineHandle, ComputePipelineCreateInfo> compute_pipeline_infos_;
 
   std::filesystem::path shader_dir_;
 

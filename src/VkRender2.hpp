@@ -139,7 +139,7 @@ struct VkRender2 final : public BaseRenderer {
     vec3 light_dir;
     float _p2;
     vec3 light_color;
-    float _p3;
+    float ambient_intensity;
   };
 
   VkCommandPool imm_cmd_pool_;

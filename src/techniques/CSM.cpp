@@ -128,7 +128,7 @@ CSM::CSM(VkPipelineLayout pipeline_layout)
   shadow_depth_pipline_ = PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
       .vertex_path = "shadow_depth.vert",
       .layout = pipeline_layout_,
-      .rendering = {{}, shadow_map_img_.format()},
+      .rendering = {.depth_format = shadow_map_img_.format()},
       .rasterization = {.depth_clamp = true, .depth_bias = true},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::Less),
       .dynamic_state = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
@@ -138,7 +138,7 @@ CSM::CSM(VkPipelineLayout pipeline_layout)
       .vertex_path = "fullscreen_quad.vert",
       .fragment_path = "debug/depth_debug.frag",
       .layout = pipeline_layout_,
-      .rendering = {{{shadow_map_debug_img_.format()}}},
+      .rendering = {.color_formats = {shadow_map_debug_img_.format()}, .color_formats_cnt = 1},
       .rasterization = {.cull_mode = CullMode::Front},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_disable(),
   });

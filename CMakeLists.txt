@@ -17,6 +17,7 @@ src/VkRender2.cpp
 src/ThreadPool.cpp
 src/util/IndexAllocator.cpp
 src/util/CVar.cpp
+src/util/FileWatcher.cpp
 
 src/techniques/CSM.cpp
 

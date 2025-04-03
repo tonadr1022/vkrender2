@@ -6,6 +6,7 @@
 #include "GLFW/glfw3.h"
 #include "Input.hpp"
 #include "Logger.hpp"
+#include "ThreadPool.hpp"
 #include "VkRender2.hpp"
 #include "imgui.h"
 #include "util/CVar.hpp"
@@ -108,13 +109,12 @@ void App::run() {
   int len = 0;
   for (iter.x = -len; iter.x <= len; iter.x++) {
     for (iter.z = -len; iter.z <= len; iter.z++) {
-      VkRender2::get().load_scene("/Users/tony/models/Bistro_Godot_opt.glb", false);
-      // VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false);
+      // VkRender2::get().load_scene("/Users/tony/models/Bistro_Godot_opt.glb", false);
+      VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false);
+      // VkRender2::get().load_scene("/home/tony/models/Models/Sponza/glTF/Sponza.gltf", false);
       // VkRender2::get().load_scene("/users/tony/Bistro_Godot_opt.glb", false,
       // glm::translate(mat4{1}, iter * spacing));
       // VkRender2::get().load_scene(local_models_dir / "sponza.glb", false);
-      // VkRender2::get().load_scene("/home/tony/models/Models/Sponza/glTF/Sponza.gltf", false,
-      //                             glm::translate(mat4{1}, iter * spacing));
       // VkRender2::get().load_scene(local_models_dir / "ABeautifulGame.glb", false,
       //                             glm::scale(mat4{1}, vec3{10}));
       // VkRender2::get().load_scene(local_models_dir / "DamagedHelmet.glb", false);
@@ -134,7 +134,8 @@ void App::run() {
                            .proj = proj,
                            .view_pos = cam_data.pos,
                            .light_dir = glm::normalize(scene_data.light_dir),
-                           .light_color = scene_data.light_color,
+                           .light_color = scene_data.light_color * sun_intensity_,
+                           .ambient_intensity = ambient_intensity_,
                            .fov_degrees = fov_degrees});
   }
 
@@ -215,6 +216,8 @@ void App::on_imgui() {
 
   ImGui::DragFloat3("Sunlight Direction", &scene_data.light_dir.x, 0.01, -10.f, 10.f);
   ImGui::ColorEdit3("Sunlight Color", &scene_data.light_color.x, ImGuiColorEditFlags_Float);
+  ImGui::DragFloat("Sunlight Intensity", &sun_intensity_);
+  ImGui::DragFloat("Ambient Intensity", &ambient_intensity_);
 
   if (ImGui::Button("add sponza")) {
     static int offset = 1;

@@ -92,7 +92,7 @@ VkRender2::VkRender2(const InitInfo& info)
   VK_CHECK(vkCreatePipelineLayout(device_, &pipeline_info, nullptr, &default_pipeline_layout_));
   main_del_q_.push(
       [this]() { vkDestroyPipelineLayout(device_, default_pipeline_layout_, nullptr); });
-  vk2::PipelineManager::init(device_, resource_dir_ / "shaders", default_pipeline_layout_);
+  vk2::PipelineManager::init(device_, resource_dir_ / "shaders", true, default_pipeline_layout_);
 
   create_attachment_imgs();
 
@@ -208,6 +208,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
     data.light_dir = glm::normalize(info.light_dir);
     data.debug_flags.w = debug_mode_;
     data.view_pos = info.view_pos;
+    data.ambient_intensity = info.ambient_intensity;
     memcpy(d.scene_uniform_buf->mapped_data(), &data, sizeof(SceneUniforms));
   }
 
@@ -951,7 +952,9 @@ void VkRender2::init_pipelines() {
       .vertex_path = "debug/basic.vert",
       .fragment_path = "debug/basic.frag",
       .layout = default_pipeline_layout_,
-      .rendering = {{{img_->format()}}, depth_img_->format()},
+      .rendering = {.color_formats = {img_->format()},
+                    .color_formats_cnt = 1,
+                    .depth_format = depth_img_->format()},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
   });
   assert(draw_pipeline_);

@@ -23,6 +23,7 @@ struct SceneData {
     vec3 view_pos;
     vec3 light_dir;
     vec3 light_color;
+    float ambient_intensity;
 };
 
 VK2_DECLARE_STORAGE_BUFFERS_RO(SceneUniforms){

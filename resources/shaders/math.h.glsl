@@ -40,6 +40,9 @@ vec3 tonemap(vec3 c) {
     vec3 x = max(vec3(0), c - 0.004);
     return (x * (6.2 * x + .5)) / (x * (6.2 * x + 1.7) + 0.06);
 }
+vec3 gamma_correct(vec3 c) {
+    return pow(c, vec3(1.0 / 2.2));
+}
 // https://64.github.io/tonemapping/
 vec3 ACESFilm(vec3 x) {
     float a = 2.51;

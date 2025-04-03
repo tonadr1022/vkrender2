@@ -51,7 +51,6 @@ void main() {
         }
     }
     vec3 metal_rough = texture(vk2_sampler2D(material.ids.z, sampler_idx), in_uv).rgb;
-    vec3 V = normalize(scene_data.view_pos - in_frag_pos);
 
     vec3 N;
     if ((debug_flags.x & NORMAL_MAPS_ENABLED_BIT) != 0 && material.ids.y != 0) {
@@ -67,15 +66,20 @@ void main() {
         return;
     }
 
-    vec3 halfv = normalize(V + scene_data.light_dir);
-    float ndoth = max(dot(N, halfv), 0.0);
-    float ndotl = max(dot(N, scene_data.light_dir), 0.0);
-    float gloss = 1. - metal_rough.b;
-    float specular = pow(ndoth, mix(1, 64, gloss)) * gloss;
-    float ambient = 0.07;
-    float shadowAmbient = 0.05;
-    float sunIntensity = 2.5;
+    vec3 V = normalize(scene_data.view_pos - in_frag_pos);
 
+    // vec3 halfv = normalize(V + scene_data.light_dir);
+    // float ndoth = max(dot(N, halfv), 0.0);
+    // float ndotl = max(dot(N, scene_data.light_dir), 0.0);
+    // float gloss = 1. - metal_rough.b;
+    // float specular = pow(ndoth, mix(1, 64, gloss)) * gloss;
+    float ambient = 0.07;
+    // float shadowAmbient = 0.05;
+    // float sunIntensity = 2.5;
+
+    // vec3 gammaCorrected = pow(color.rgb, vec3(1.0 / 2.2));
+    // out_frag_color = vec4(gammaCorrected, 1.);
+    // return;
     if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_CASCADE_LEVELS) {
         out_frag_color = vec4(cascade_debug_color(shadow_datas[shadow_buffer_idx].data, scene_data, in_frag_pos), 1.);
         return;
@@ -85,11 +89,15 @@ void main() {
     // vec3 outputColor = color.rgb * (ndotl * min(shadow + shadowAmbient, 1.) * sunIntensity + ambient) * ao + vec3(specular * shadow) * color.rgb * sunIntensity + emissive;
     // out_frag_color = vec4(ACESFilm(outputColor), 1.);
     // out_frag_color = vec4(tonemap(outputColor), 1.);
-    // out_frag_color = vec4(vec3(metal_rough.b), 1.);
+    // out_frag_color = vec4(vec3(metal_rough.g), 1.);
     // return;
     vec3 light_out = color_pbr(N, scene_data.light_dir, V, vec4(color.rgb, 1.), metal_rough.b, metal_rough.g, scene_data.light_color) * shadow;
-    vec3 outputColor = light_out * shadow + ambient * color.rgb * ao + emissive;
-    out_frag_color = vec4(tonemap(outputColor), 1.);
+    vec3 amb = ambient * color.rgb * ao * scene_data.ambient_intensity;
+    vec3 outputColor = light_out * shadow + emissive + amb;
+    vec3 tonemapped = ACESFilm(outputColor);
+    vec3 gamma_corrected = gamma_correct(tonemapped);
+    out_frag_color = vec4(gamma_corrected, 1.);
+    // out_frag_color = vec4(ACESFilm(outputColor), 1.);
     // out_frag_color = vec4(color.rgb * shadow, 1.);
 
     // outputColor = (light_out + color.rgb * .4) * ao + emissive;

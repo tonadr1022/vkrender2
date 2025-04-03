@@ -133,10 +133,10 @@ PipelineManager& PipelineManager::get() {
   assert(instance);
   return *instance;
 }
-void PipelineManager::init(VkDevice device, std::filesystem::path shader_dir,
+void PipelineManager::init(VkDevice device, std::filesystem::path shader_dir, bool hot_reload,
                            VkPipelineLayout default_layout) {
   assert(!instance);
-  instance = new PipelineManager(device, std::move(shader_dir), default_layout);
+  instance = new PipelineManager(device, std::move(shader_dir), hot_reload, default_layout);
 }
 
 void PipelineManager::shutdown() {
@@ -146,31 +146,23 @@ void PipelineManager::shutdown() {
 
 // TODO: multithread
 PipelineHandle PipelineManager::load_compute_pipeline(const ComputePipelineCreateInfo& info) {
-  ZoneScoped;
-  ShaderManager::ShaderCreateInfo shader_create_info = {.path = get_shader_path(info.path),
-                                                        .stage = VK_SHADER_STAGE_COMPUTE_BIT};
-  ShaderManager::LoadProgramResult result =
-      shader_manager_.load_program(SPAN1(shader_create_info), false);
-  if (result.module_cnt != 1) {
-    LINFO("no modules generated during compute pipeline creation");
-    return PipelineHandle{};
-  }
-  if (info.layout) {
-    result.layout = info.layout;
-  } else {
-    result.layout = default_pipeline_layout_;
-  }
-
-  VkPipeline pipeline = create_compute_pipeline(result, info.entry_point);
+  // TODO: verify that path ends in .comp
+  VkPipeline pipeline = load_compute_pipeline_impl(info);
   if (!pipeline) {
     return PipelineHandle{};
   }
   auto handle = std::hash<std::string>{}(info.path.string());
-
-  pipelines_.emplace(
-      handle, PipelineAndMetadata{
-                  .pipeline = {.pipeline = pipeline, .layout = result.layout, .owns_layout = false},
-                  .shader_paths = {info.path.string()}});
+  pipelines_.emplace(handle,
+                     PipelineAndMetadata{.pipeline = {.pipeline = pipeline, .owns_layout = false},
+                                         .shader_paths = {info.path.string()}});
+  compute_pipeline_infos_.emplace(PipelineHandle{handle}, info);
+  auto full_path = get_shader_path(info.path) + ".glsl";
+  auto it = shader_name_to_used_pipelines_.find(full_path);
+  if (it == shader_name_to_used_pipelines_.end()) {
+    shader_name_to_used_pipelines_[full_path] = {PipelineHandle{handle}};
+  } else {
+    it->second.emplace_back(handle);
+  }
   return PipelineHandle{handle};
 }
 
@@ -236,17 +228,63 @@ std::span<const T> to_span(std::initializer_list<T> list) {
 }
 }  // namespace
 
-PipelineManager::PipelineManager(VkDevice device, std::filesystem::path shader_dir,
+PipelineManager::PipelineManager(VkDevice device, std::filesystem::path shader_dir, bool hot_reload,
                                  VkPipelineLayout default_layout)
-    : shader_dir_(std::move(shader_dir)),
+    : file_watcher_(
+          shader_dir,
+          [this](std::span<std::filesystem::path> dirty_files) { on_dirty_files(dirty_files); },
+          std::chrono::milliseconds(250),
+          hot_reload ? shader_dir / ".cache" / "dirty_shaders.txt" : ""),
+      shader_dir_(std::move(shader_dir)),
       shader_manager_(device),
       default_pipeline_layout_(default_layout),
-      device_(device) {}
+      device_(device) {
+  file_watcher_.start();
+}
 
 std::string PipelineManager::get_shader_path(const std::string& path) const {
   return shader_dir_ / path;
 }
 PipelineHandle PipelineManager::load_graphics_pipeline(const GraphicsPipelineCreateInfo& info) {
+  // TODO: verify path ends in .vert/.frag
+  VkPipeline pipeline = load_graphics_pipeline_impl(info);
+  if (!pipeline) {
+    return {};
+  }
+
+  auto tup = std::make_tuple(info.vertex_path.string(), info.fragment_path.string());
+  auto handle = detail::hashing::hash<decltype(tup)>{}(tup);
+  pipelines_.emplace(handle,
+                     PipelineAndMetadata{
+                         .pipeline = {.pipeline = pipeline, .owns_layout = false},
+                         .shader_paths = {info.vertex_path.string(), info.fragment_path.string()}});
+  graphics_pipeline_infos_.emplace(PipelineHandle{handle}, info);
+  auto full_vert_path = get_shader_path(info.vertex_path) + ".glsl";
+  auto full_frag_path = get_shader_path(info.fragment_path) + ".glsl";
+  // LINFO("{} full frag", full_frag_path);
+  auto it = shader_name_to_used_pipelines_.find(full_vert_path);
+  if (it == shader_name_to_used_pipelines_.end()) {
+    shader_name_to_used_pipelines_[full_vert_path] = {PipelineHandle{handle}};
+  } else {
+    it->second.emplace_back(handle);
+  }
+  it = shader_name_to_used_pipelines_.find(full_frag_path);
+  if (it == shader_name_to_used_pipelines_.end()) {
+    shader_name_to_used_pipelines_[full_frag_path] = {PipelineHandle{handle}};
+  } else {
+    it->second.emplace_back(handle);
+  }
+  return PipelineHandle{handle};
+}
+void PipelineManager::bind_graphics(VkCommandBuffer cmd, PipelineHandle handle) {
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, get(handle)->pipeline);
+}
+
+void PipelineManager::bind_compute(VkCommandBuffer cmd, PipelineHandle handle) {
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, get(handle)->pipeline);
+}
+
+VkPipeline PipelineManager::load_graphics_pipeline_impl(const GraphicsPipelineCreateInfo& info) {
   std::array<ShaderManager::ShaderCreateInfo, 2> shader_create_infos{
       {{get_shader_path(info.vertex_path), VK_SHADER_STAGE_VERTEX_BIT},
        {get_shader_path(info.fragment_path), VK_SHADER_STAGE_FRAGMENT_BIT}}};
@@ -258,7 +296,7 @@ PipelineHandle PipelineManager::load_graphics_pipeline(const GraphicsPipelineCre
       std::span(shader_create_infos.data(), stage_cnt), info.layout == nullptr);
   if (result.module_cnt != stage_cnt) {
     assert(result.module_cnt == stage_cnt);
-    return {};
+    return nullptr;
   }
 
   VkPipelineInputAssemblyStateCreateInfo input_assembly{
@@ -284,7 +322,7 @@ PipelineHandle PipelineManager::load_graphics_pipeline(const GraphicsPipelineCre
     attachments[i++] = convert_color_blend_attachment(attachment);
   }
   // dummy blend attachment if color attachment is specified but no blending
-  if (i == 0 && info.rendering.color_formats.size() > 0) {
+  if (i == 0 && info.rendering.color_formats_cnt > 0) {
     attachment_cnt = 1;
     attachments[0] =
         convert_color_blend_attachment(GraphicsPipelineCreateInfo::ColorBlendAttachment{});
@@ -344,7 +382,7 @@ PipelineHandle PipelineManager::load_graphics_pipeline(const GraphicsPipelineCre
 
   VkPipelineRenderingCreateInfo rendering_info{
       .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-      .colorAttachmentCount = static_cast<u32>(info.rendering.color_formats.size()),
+      .colorAttachmentCount = static_cast<u32>(info.rendering.color_formats_cnt),
       .pColorAttachmentFormats = info.rendering.color_formats.data(),
       .depthAttachmentFormat = info.rendering.depth_format,
       .stencilAttachmentFormat = info.rendering.stencil_format};
@@ -380,23 +418,55 @@ PipelineHandle PipelineManager::load_graphics_pipeline(const GraphicsPipelineCre
   VkPipeline pipeline{};
   VK_CHECK(vkCreateGraphicsPipelines(device_, nullptr, 1, &cinfo, nullptr, &pipeline));
   if (!pipeline) return {};
-
-  auto tup = std::make_tuple(info.vertex_path.string(), info.fragment_path.string());
-  auto handle = detail::hashing::hash<decltype(tup)>{}(tup);
-
-  pipelines_.emplace(
-      handle, PipelineAndMetadata{
-                  .pipeline = {.pipeline = pipeline, .layout = cinfo.layout, .owns_layout = false},
-                  .shader_paths = {info.vertex_path.string(), info.fragment_path.string()}});
-
-  return PipelineHandle{handle};
-}
-void PipelineManager::bind_graphics(VkCommandBuffer cmd, PipelineHandle handle) {
-  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, get(handle)->pipeline);
+  return pipeline;
 }
 
-void PipelineManager::bind_compute(VkCommandBuffer cmd, PipelineHandle handle) {
-  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, get(handle)->pipeline);
+VkPipeline PipelineManager::load_compute_pipeline_impl(const ComputePipelineCreateInfo& info) {
+  ZoneScoped;
+  ShaderManager::ShaderCreateInfo shader_create_info = {.path = get_shader_path(info.path),
+                                                        .stage = VK_SHADER_STAGE_COMPUTE_BIT};
+  ShaderManager::LoadProgramResult result =
+      shader_manager_.load_program(SPAN1(shader_create_info), false);
+  if (result.module_cnt != 1) {
+    LINFO("no modules generated during compute pipeline creation");
+    return nullptr;
+  }
+  if (info.layout) {
+    result.layout = info.layout;
+  } else {
+    result.layout = default_pipeline_layout_;
+  }
+
+  return create_compute_pipeline(result, info.entry_point);
+}
+
+void PipelineManager::on_dirty_files(std::span<std::filesystem::path> dirty_files) {
+  for (auto& file : dirty_files) {
+    if (file.extension() == ".glsl") {
+      auto it = shader_name_to_used_pipelines_.find(file.string());
+      if (it != shader_name_to_used_pipelines_.end()) {
+        for (PipelineHandle handle : it->second) {
+          auto pipeline_it = pipelines_.find(handle);
+          assert(pipeline_it != pipelines_.end());
+          if (pipeline_it == pipelines_.end()) continue;
+          auto graphics_it = graphics_pipeline_infos_.find(handle);
+          if (graphics_it != graphics_pipeline_infos_.end()) {
+            VkPipeline res = load_graphics_pipeline_impl(graphics_it->second);
+            if (res) {
+              vkDestroyPipeline(device_, pipeline_it->second.pipeline.pipeline, nullptr);
+              LINFO("res");
+              pipeline_it->second.pipeline.pipeline = res;
+            }
+          }
+          auto compute_it = compute_pipeline_infos_.find(handle);
+          if (compute_it != compute_pipeline_infos_.end()) {
+            pipeline_it->second.pipeline.pipeline = load_compute_pipeline_impl(compute_it->second);
+          }
+        }
+      }
+      // LINFO("dirty shader file: {}", file.string());
+    }
+  }
 }
 
 }  // namespace vk2

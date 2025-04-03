@@ -302,6 +302,7 @@ ShaderManager::LoadProgramResult ShaderManager::load_program(
 
     {
       ZoneScopedN("make module");
+      auto it = module_cache_.find(path);
       VkShaderModuleCreateInfo create_info{
           .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
           .codeSize = spirv_binaries[i].binary_data.size() * sizeof(u32),

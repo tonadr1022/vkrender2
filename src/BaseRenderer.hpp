@@ -86,6 +86,7 @@ struct SceneDrawInfo {
   vec3 view_pos;
   vec3 light_dir;
   vec3 light_color;
+  float ambient_intensity{1.};
   float fov_degrees{70.f};
 };
 
