@@ -4,6 +4,7 @@
 #include <vulkan/vulkan_core.h>
 
 #include <cassert>
+#include <fstream>
 #include <ranges>
 #include <tracy/Tracy.hpp>
 #include <utility>
@@ -238,8 +239,21 @@ PipelineManager::PipelineManager(VkDevice device, std::filesystem::path shader_d
       shader_dir_(std::move(shader_dir)),
       shader_manager_(device),
       default_pipeline_layout_(default_layout),
-      device_(device) {
-  file_watcher_.start();
+      device_(device),
+      hot_reload_(hot_reload) {
+  // TODO: flag for enabled
+  if (hot_reload) {
+    file_watcher_.start();
+  }
+  std::filesystem::path shader_include_path = shader_dir / ".cache" / "shader_includes.txt";
+  if (std::filesystem::exists(shader_include_path)) {
+    std::ifstream ifs(shader_include_path);
+    if (ifs.is_open()) {
+      std::string shader;
+      while (ifs >> shader) {
+      }
+    }
+  }
 }
 
 std::string PipelineManager::get_shader_path(const std::string& path) const {
@@ -292,11 +306,27 @@ VkPipeline PipelineManager::load_graphics_pipeline_impl(const GraphicsPipelineCr
   if (info.fragment_path.string().length()) {
     stage_cnt = 2;
   }
-  ShaderManager::LoadProgramResult result = shader_manager_.load_program(
-      std::span(shader_create_infos.data(), stage_cnt), info.layout == nullptr);
+
+  std::array<std::vector<std::string>, 2> include_files;
+  ShaderManager::LoadProgramResult result;
+  if (hot_reload_) {
+    result = shader_manager_.load_program(std::span(shader_create_infos.data(), stage_cnt),
+                                          info.layout == nullptr, include_files);
+  } else {
+    result = shader_manager_.load_program(std::span(shader_create_infos.data(), stage_cnt),
+                                          info.layout == nullptr, {});
+  }
+
   if (result.module_cnt != stage_cnt) {
     assert(result.module_cnt == stage_cnt);
     return nullptr;
+  }
+
+  if (hot_reload_) {
+    for (u32 i = 0; i < stage_cnt; i++) {
+      shader_to_includes_.emplace(shader_create_infos[i].path.string(),
+                                  std::move(include_files[i]));
+    }
   }
 
   VkPipelineInputAssemblyStateCreateInfo input_assembly{
@@ -425,8 +455,9 @@ VkPipeline PipelineManager::load_compute_pipeline_impl(const ComputePipelineCrea
   ZoneScoped;
   ShaderManager::ShaderCreateInfo shader_create_info = {.path = get_shader_path(info.path),
                                                         .stage = VK_SHADER_STAGE_COMPUTE_BIT};
+  std::array<std::vector<std::string>, 1> include_files_arr;
   ShaderManager::LoadProgramResult result =
-      shader_manager_.load_program(SPAN1(shader_create_info), false);
+      shader_manager_.load_program(SPAN1(shader_create_info), false, include_files_arr);
   if (result.module_cnt != 1) {
     LINFO("no modules generated during compute pipeline creation");
     return nullptr;
@@ -436,6 +467,7 @@ VkPipeline PipelineManager::load_compute_pipeline_impl(const ComputePipelineCrea
   } else {
     result.layout = default_pipeline_layout_;
   }
+  shader_to_includes_.emplace(shader_create_info.path.string(), std::move(include_files_arr[0]));
 
   return create_compute_pipeline(result, info.entry_point);
 }

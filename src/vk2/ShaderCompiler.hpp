@@ -49,7 +49,8 @@ class ShaderManager {
   };
   void clear_module_cache();
   LoadProgramResult load_program(std::span<ShaderCreateInfo> shader_create_infos,
-                                 bool create_pipeline_layout);
+                                 bool create_pipeline_layout,
+                                 std::span<std::vector<std::string>> include_files);
   // VkShaderModule load_shader(const std::filesystem::path& path, VkShaderStageFlagBits stage);
 
  private:
@@ -57,9 +58,10 @@ class ShaderManager {
     std::vector<uint32_t> binary_data;
   };
   bool get_spirv_binary(const std::filesystem::path& path, VkShaderStageFlagBits stage,
-                        CompileToSpirvResult& result);
+                        CompileToSpirvResult& result, std::vector<std::string>* include_files);
   bool get_spirv_binary(const std::filesystem::path& path, VkShaderStageFlagBits stage,
-                        CompileToSpirvResult& result, bool needs_new);
+                        CompileToSpirvResult& result, bool needs_new,
+                        std::vector<std::string>* include_files);
   VkDevice device_;
   struct ShaderMetadata {
     std::filesystem::file_time_type last_spirv_write;

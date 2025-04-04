@@ -323,6 +323,9 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
                          static_vertex_buf_->buffer.resource_info_->handle,
                          static_instance_data_buf_->buffer.resource_info_->handle,
                          static_object_data_buf_->buffer.resource_info_->handle,
+                         curr_frame_2().scene_uniform_buf->resource_info_->handle,
+                         static_materials_buf_->buffer.resource_info_->handle,
+                         linear_sampler_->resource_info.handle,
                      };
                      ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
                      vkCmdBindIndexBuffer(cmd, static_index_buf_->buffer.buffer(), 0,
@@ -335,9 +338,6 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
                                                      draw_cnt_buf_->buffer(), 0, max_draws,
                                                      sizeof(VkDrawIndexedIndirectCommand));
                      }
-                     // vkCmdDrawIndexedIndirect(cmd, static_draw_cmds_buf_->buffer.buffer(), 0,
-                     // draw_cnt_,
-                     //                          sizeof(VkDrawIndexedIndirectCommand));
                    });
     }
 
@@ -918,7 +918,10 @@ const char* VkRender2::debug_mode_to_string(u32 mode) {
       return "Normals";
     case DEBUG_MODE_CASCADE_LEVELS:
       return "Cascade Levels";
+    case DEBUG_MODE_SHADOW:
+      return "Shadow";
     default:
+
       return "None";
   }
 }

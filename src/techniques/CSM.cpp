@@ -6,8 +6,10 @@
 #include <tracy/Tracy.hpp>
 
 #include "StateTracker.hpp"
+#include "glm/ext/matrix_transform.hpp"
 #include "imgui.h"
 #include "imgui_impl_vulkan.h"
+#include "util/CVar.hpp"
 #include "vk2/Initializers.hpp"
 #include "vk2/Rendering.hpp"
 
@@ -15,12 +17,15 @@ using namespace vk2;
 
 namespace {
 
+AutoCVarInt stable_light_view{"renderer.stable_light_view", "stable_light_view", 1,
+                              CVarFlags::EditCheckbox};
+
 void calc_frustum_corners_world_space(std::span<vec4> corners, const mat4& vp_matrix) {
   const auto inv_vp = glm::inverse(vp_matrix);
   for (u32 z = 0, i = 0; z < 2; z++) {
     for (u32 y = 0; y < 2; y++) {
       for (u32 x = 0; x < 2; x++, i++) {
-        vec4 pt = inv_vp * vec4((2.f * x) - 1.f, (2.f * y) - 1.f, (2.f * z) - 1.f, 1.f);
+        vec4 pt = inv_vp * vec4((2.f * x) - 1.f, (2.f * y) - 1.f, (float)z, 1.f);
         corners[i] = pt / pt.w;
       }
     }
@@ -35,7 +40,7 @@ mat4 calc_light_space_matrix(const mat4& cam_view, const mat4& proj, vec3 light_
     center += vec3(v);
   }
   center /= 8;
-  mat4 light_view = glm::lookAt(center, center + light_dir, {0, 1, 0});
+  mat4 light_view = glm::lookAt(center - light_dir, center, {0, 1, 0});
   vec3 min{std::numeric_limits<float>::max()};
   vec3 max{std::numeric_limits<float>::lowest()};
   for (auto corner : corners) {
@@ -57,13 +62,58 @@ mat4 calc_light_space_matrix(const mat4& cam_view, const mat4& proj, vec3 light_
   } else {
     max.z *= z_mult;
   }
-  mat4 light_proj = glm::orthoRH_ZO(min.x, max.y, max.y, min.y, min.z, max.z);
+  mat4 light_proj = glm::orthoRH_ZO(min.x, max.x, max.y, min.y, min.z, max.z);
   return light_proj * light_view;
+}
+
+mat4 calc_light_space_matrix(const mat4& cam_view, const mat4& proj, vec3 light_dir, float z_mult,
+                             u32 shadow_map_size) {
+  if (!stable_light_view.get()) {
+    return calc_light_space_matrix(cam_view, proj, light_dir, z_mult);
+  }
+
+  // get center of frustum corners of cascade
+  vec3 center{};
+  std::array<vec4, 8> corners;
+  calc_frustum_corners_world_space(corners, proj * cam_view);
+  for (auto v : corners) {
+    center += vec3(v);
+  }
+  center /= 8;
+
+  // bounding sphere around frustum corners
+  float radius = .0f;
+  for (u32 i = 0; i < 8; i++) {
+    radius = glm::max(radius, glm::length(vec3{corners[i]} - center));
+  }
+  radius = std::ceil(radius * 16.f) / 16.f;
+
+  // min/max extents == the bounding sphere of the frustum corners
+  vec3 max = vec3{radius};
+  vec3 min = -max;
+
+  // flip-y in ortho projection in vulkan
+  vec3 shadow_cam_pos = center - light_dir;
+  mat4 shadow_cam_vp = glm::orthoRH_ZO(min.x, max.x, max.y, min.y, min.z, max.z) *
+                       glm::lookAt(shadow_cam_pos, center, {0, 1, 0});
+  // scale origin by shadow map size
+  // round it (nearest texel)
+  // get the offset
+  // scale it back down, only use x,y and apply it to vp matrix
+  vec3 shadow_origin = shadow_cam_vp * vec4(vec3(0.), 1.);
+  shadow_origin = shadow_origin * (float)shadow_map_size / 2.f;
+  vec3 rounded_origin = glm::round(shadow_origin);
+  vec3 round_offset = rounded_origin - shadow_origin;
+  round_offset = round_offset * 2.f / (float)shadow_map_size;
+  round_offset.z = 0;
+  shadow_cam_vp[3] += vec4(round_offset, 0.);
+  return shadow_cam_vp;
 }
 
 void calc_csm_light_space_matrices(std::span<mat4> matrices, std::span<float> levels,
                                    const mat4& cam_view, vec3 light_dir, float z_mult,
-                                   float fov_deg, float aspect, float cam_near, float cam_far) {
+                                   float fov_deg, float aspect, float cam_near, float cam_far,
+                                   u32 shadow_map_res) {
   assert(matrices.size() && levels.size() && matrices.size() - 1 == levels.size());
   auto get_proj = [&](float near, float far) {
     auto mat = glm::perspective(glm::radians(fov_deg), aspect, near, far);
@@ -72,19 +122,21 @@ void calc_csm_light_space_matrices(std::span<mat4> matrices, std::span<float> le
   };
 
   vec3 dir = -glm::normalize(light_dir);
-  matrices[0] = calc_light_space_matrix(cam_view, get_proj(cam_near, levels[0]), dir, z_mult);
+  matrices[0] =
+      calc_light_space_matrix(cam_view, get_proj(cam_near, levels[0]), dir, z_mult, shadow_map_res);
   for (u32 i = 1; i < matrices.size() - 1; i++) {
-    matrices[i] =
-        calc_light_space_matrix(cam_view, get_proj(levels[i - 1], levels[i]), dir, z_mult);
+    matrices[i] = calc_light_space_matrix(cam_view, get_proj(levels[i - 1], levels[i]), dir, z_mult,
+                                          shadow_map_res);
   }
-  matrices[matrices.size() - 1] =
-      calc_light_space_matrix(cam_view, get_proj(levels[levels.size() - 1], cam_far), dir, z_mult);
+  matrices[matrices.size() - 1] = calc_light_space_matrix(
+      cam_view, get_proj(levels[levels.size() - 1], cam_far), dir, z_mult, shadow_map_res);
 }
 
 }  // namespace
 
 CSM::CSM(VkPipelineLayout pipeline_layout)
-    : shadow_data_bufs_(
+    : shadow_map_res_(uvec2{4096}),
+      shadow_data_bufs_(
           {create_storage_buffer(sizeof(ShadowData)), create_storage_buffer(sizeof(ShadowData))}),
       shadow_map_img_(
           vk2::Texture{TextureCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
@@ -127,6 +179,7 @@ CSM::CSM(VkPipelineLayout pipeline_layout)
   });
   shadow_depth_pipline_ = PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
       .vertex_path = "shadow_depth.vert",
+      .fragment_path = "shadow_depth.frag",
       .layout = pipeline_layout_,
       .rendering = {.depth_format = shadow_map_img_.format()},
       .rasterization = {.depth_clamp = true, .depth_bias = true},
@@ -191,7 +244,8 @@ void CSM::render(StateTracker& state, VkCommandBuffer cmd, u32 frame_num, const 
   // TODO: separate camera z near/far
   calc_csm_light_space_matrices(std::span(light_matrices_.data(), cascade_count_),
                                 std::span(levels.data(), cascade_count_ - 1), cam_view, light_dir,
-                                z_mult_, fov_deg, aspect_ratio, shadow_z_near_, shadow_z_far_);
+                                z_mult_, fov_deg, aspect_ratio, shadow_z_near_, shadow_z_far_,
+                                shadow_map_res_.x);
   ShadowData data{.biases = {0., 0., 0., shadow_z_far_}};
   for (u32 i = 0; i < cascade_count_; i++) {
     data.light_space_matrices[i] = light_matrices_[i];
@@ -242,7 +296,7 @@ void CSM::on_imgui(VkSampler sampler) {
                                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
   }
   ImGui::Checkbox("shadow map debug", &debug_render_enabled_);
-  ImGui::SliderFloat("Z mult", &z_mult_, 0.0, 20.f);
+  ImGui::SliderFloat("Z mult", &z_mult_, 0.0, 50.f);
   ImGui::DragFloat("Shadow z far", &shadow_z_far_, 1., 0.f, 10000.f);
   ImGui::DragFloat("Min Bias", &min_bias_, .001, 0.00001, max_bias_);
   ImGui::DragFloat("Max Bias", &max_bias_, .001, min_bias_, 0.01);

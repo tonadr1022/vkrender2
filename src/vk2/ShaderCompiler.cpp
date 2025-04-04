@@ -30,7 +30,7 @@
 namespace {
 
 bool compile_glsl_to_spirv(std::string path, VkShaderStageFlagBits stage,
-                           std::vector<u32>& out_binary);
+                           std::vector<u32>& out_binary, std::vector<std::string>* included_files);
 bool reflect_shader(std::vector<u32>& binary, vk2::ShaderReflectData& out_data);
 
 bool load_shader_bytes(const std::string& path, std::vector<uint32_t>& result);
@@ -169,7 +169,8 @@ bool ShaderManager::get_dirty_stages(std::span<ShaderCreateInfo> infos,
 }
 
 bool ShaderManager::get_spirv_binary(const std::filesystem::path& path, VkShaderStageFlagBits stage,
-                                     CompileToSpirvResult& result, bool needs_new) {
+                                     CompileToSpirvResult& result, bool needs_new,
+                                     std::vector<std::string>* include_files) {
   ZoneScoped;
   assert(path.extension() != ".spv" && path.extension() != ".glsl");
   auto spv_path = std::filesystem::path(path.string() + ".spv");
@@ -195,7 +196,7 @@ bool ShaderManager::get_spirv_binary(const std::filesystem::path& path, VkShader
       return false;
     }
     LINFO("glsl compile {}", path.string());
-    bool success = compile_glsl_to_spirv(glsl_path, stage, result.binary_data);
+    bool success = compile_glsl_to_spirv(glsl_path, stage, result.binary_data, include_files);
     if (!success) {
       return false;
     }
@@ -211,7 +212,8 @@ bool ShaderManager::get_spirv_binary(const std::filesystem::path& path, VkShader
 }
 
 bool ShaderManager::get_spirv_binary(const std::filesystem::path& path, VkShaderStageFlagBits stage,
-                                     CompileToSpirvResult& result) {
+                                     CompileToSpirvResult& result,
+                                     std::vector<std::string>* include_files) {
   ZoneScoped;
   assert(path.extension() != ".spv" && path.extension() != ".glsl");
   auto glsl_path = std::filesystem::path(path.string() + ".glsl");
@@ -227,7 +229,7 @@ bool ShaderManager::get_spirv_binary(const std::filesystem::path& path, VkShader
       std::filesystem::last_write_time(spv_path) < std::filesystem::last_write_time(glsl_path);
 
   if (needs_new_spirv) {
-    bool success = compile_glsl_to_spirv(glsl_path, stage, result.binary_data);
+    bool success = compile_glsl_to_spirv(glsl_path, stage, result.binary_data, include_files);
     if (!success) {
       return false;
     }
@@ -243,7 +245,8 @@ bool ShaderManager::get_spirv_binary(const std::filesystem::path& path, VkShader
 }
 
 ShaderManager::LoadProgramResult ShaderManager::load_program(
-    std::span<ShaderCreateInfo> shader_create_infos, bool create_pipeline_layout) {
+    std::span<ShaderCreateInfo> shader_create_infos, bool create_pipeline_layout,
+    std::span<std::vector<std::string>> include_files) {
   ZoneScoped;
   // TODO: thread safe
   LoadProgramResult result{};
@@ -270,9 +273,10 @@ ShaderManager::LoadProgramResult ShaderManager::load_program(
     if (cached_shader_stages[i] && !dirty_shader_stages[i]) {
       continue;
     }
-
+    auto* inc_files =
+        (include_files.size() && include_files.size() > i) ? &include_files[i] : nullptr;
     if (!get_spirv_binary(shader_create_infos[i].path, shader_create_infos[i].stage,
-                          spirv_binaries[i], dirty_shader_stages[i])) {
+                          spirv_binaries[i], dirty_shader_stages[i], inc_files)) {
       return result;
     }
   }
@@ -302,7 +306,6 @@ ShaderManager::LoadProgramResult ShaderManager::load_program(
 
     {
       ZoneScopedN("make module");
-      auto it = module_cache_.find(path);
       VkShaderModuleCreateInfo create_info{
           .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
           .codeSize = spirv_binaries[i].binary_data.size() * sizeof(u32),
@@ -468,7 +471,7 @@ class IncludeHandler final : public glslang::TShader::Includer {
 
 // returns true on success
 bool compile_glsl_to_spirv(std::string path, VkShaderStageFlagBits stage,
-                           std::vector<u32>& out_binary) {
+                           std::vector<u32>& out_binary, std::vector<std::string>* included_files) {
   ZoneScoped;
   if (!std::filesystem::exists(path)) {
     LERROR("path does not exist: {}", path);
@@ -506,9 +509,8 @@ bool compile_glsl_to_spirv(std::string path, VkShaderStageFlagBits stage,
            shader.getInfoLog(), shader.getInfoDebugLog());
     return false;
   }
-
-  for (const auto& s : includer.get_paths()) {
-    LINFO("path: {}", s);
+  if (included_files) {
+    *included_files = {includer.get_paths().begin(), includer.get_paths().end()};
   }
 
   glslang::TProgram program;

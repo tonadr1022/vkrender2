@@ -6,7 +6,6 @@
 #include <stdexcept>
 #include <utility>
 
-#include "Logger.hpp"
 #include "ThreadPool.hpp"
 
 namespace util {
@@ -14,13 +13,16 @@ namespace util {
 void FileWatcher::start() { update_loop(); }
 
 void FileWatcher::update_loop() {
-  if (!running_) {
-    return;
-  }
   using namespace std::chrono_literals;
   update();
-  threads::pool.submit_task([this]() {
+  update_task_ = threads::pool.submit_task([this]() {
+    if (!running_) {
+      return;
+    }
     std::this_thread::sleep_for(sleep_time_);
+    if (!running_) {
+      return;
+    }
     update_loop();
   });
 }
@@ -47,6 +49,9 @@ void FileWatcher::update() {
 
 void FileWatcher::shutdown() {
   running_ = false;
+  if (update_task_.valid()) {
+    update_task_.get();
+  }
   // TODO: race condition lol
   if (!cache_path_.empty()) {
     auto p = cache_path_;

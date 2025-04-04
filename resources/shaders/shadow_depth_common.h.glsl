@@ -6,5 +6,8 @@ mat4 vp_matrix;
 uint vertex_buffer_idx;
 uint instance_buffer;
 uint object_data_buffer;
+uint scene_buffer;
+uint materials_buffer;
+uint sampler_idx;
 } ;
 #endif

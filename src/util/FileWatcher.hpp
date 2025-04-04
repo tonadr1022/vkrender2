@@ -4,6 +4,7 @@
 #include <chrono>
 #include <filesystem>
 #include <functional>
+#include <future>
 
 namespace util {
 class FileWatcher {
@@ -27,6 +28,7 @@ class FileWatcher {
   std::chrono::milliseconds sleep_time_{500};
   std::unordered_map<std::filesystem::path, std::filesystem::file_time_type> modified_time_stamps_;
   std::vector<std::filesystem::path> dirty_files_;
+  std::future<void> update_task_;
   bool cache_file_dirty_{false};
 };
 }  // namespace util

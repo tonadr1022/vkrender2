@@ -4,6 +4,8 @@
 #include "./common.h.glsl"
 #include "./shadow_depth_common.h.glsl"
 
+layout(location = 0) out vec2 out_uv;
+layout(location = 1) flat out uint material_id;
 struct Vertex {
     vec3 pos;
     float uv_x;
@@ -41,4 +43,6 @@ void main() {
     mat4 model = object_data_buffers[object_data_buffer].datas[instance_data.instance_id].model;
     vec4 pos = model * vec4(v.pos, 1.);
     gl_Position = vp_matrix * pos;
+    out_uv = vec2(v.uv_x, v.uv_y);
+    material_id = instance_data.material_id;
 }

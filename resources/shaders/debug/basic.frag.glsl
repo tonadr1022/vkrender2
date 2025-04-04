@@ -38,6 +38,13 @@ void main() {
     }
     vec3 emissive = texture(vk2_sampler2D(material.ids.w, sampler_idx), in_uv).rgb *
             material.emissive_factors.w * material.emissive_factors.rgb;
+    // if (material.emissive_factors.w > 1.) {
+    //     out_frag_color = vec4(1.);
+    //     return;
+    // } else {
+    //     out_frag_color = vec4(0.);
+    //     return;
+    // }
     float ao = 1.0;
     if ((debug_flags.x & AO_ENABLED_BIT) != 0) {
         if ((material.ids2.w & METALLIC_ROUGHNESS_TEX_MASK) == PACKED_OCCLUSION_ROUGHNESS_METALLIC) {
@@ -68,14 +75,7 @@ void main() {
 
     vec3 V = normalize(scene_data.view_pos - in_frag_pos);
 
-    // vec3 halfv = normalize(V + scene_data.light_dir);
-    // float ndoth = max(dot(N, halfv), 0.0);
-    // float ndotl = max(dot(N, scene_data.light_dir), 0.0);
-    // float gloss = 1. - metal_rough.b;
-    // float specular = pow(ndoth, mix(1, 64, gloss)) * gloss;
     float ambient = 0.07;
-    // float shadowAmbient = 0.05;
-    // float sunIntensity = 2.5;
 
     // vec3 gammaCorrected = pow(color.rgb, vec3(1.0 / 2.2));
     // out_frag_color = vec4(gammaCorrected, 1.);
@@ -86,6 +86,10 @@ void main() {
     }
 
     float shadow = calc_shadow(shadow_datas[shadow_buffer_idx].data, scene_data, shadow_img_idx, shadow_sampler_idx, N, in_frag_pos);
+    if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_SHADOW) {
+        out_frag_color = vec4(vec3(shadow), 1.);
+        return;
+    }
     // vec3 outputColor = color.rgb * (ndotl * min(shadow + shadowAmbient, 1.) * sunIntensity + ambient) * ao + vec3(specular * shadow) * color.rgb * sunIntensity + emissive;
     // out_frag_color = vec4(ACESFilm(outputColor), 1.);
     // out_frag_color = vec4(tonemap(outputColor), 1.);

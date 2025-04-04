@@ -326,10 +326,14 @@ class PipelineManager {
   std::unordered_map<PipelineHandle, GraphicsPipelineCreateInfo> graphics_pipeline_infos_;
   std::unordered_map<PipelineHandle, ComputePipelineCreateInfo> compute_pipeline_infos_;
 
+  // TODO: move shader hot reloader into another class for reuse in other projects
+  std::unordered_map<std::filesystem::path, std::vector<std::string>> shader_to_includes_;
+
   std::filesystem::path shader_dir_;
 
   ShaderManager shader_manager_;
   VkPipelineLayout default_pipeline_layout_{};
   VkDevice device_;
+  bool hot_reload_{false};
 };
 }  // namespace vk2
