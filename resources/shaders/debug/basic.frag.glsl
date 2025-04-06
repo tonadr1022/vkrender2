@@ -58,6 +58,10 @@ void main() {
         }
     }
     vec3 metal_rough = texture(vk2_sampler2D(material.ids.z, sampler_idx), in_uv).rgb;
+    float metallic = metal_rough.b;
+    float roughness = max(metal_rough.g, .0001);
+    // TODO: use this remap?
+    // color.rgb = (1.0 - metallic) * color.rgb;
 
     vec3 N;
     if ((debug_flags.x & NORMAL_MAPS_ENABLED_BIT) != 0 && material.ids.y != 0) {
@@ -95,7 +99,7 @@ void main() {
     // out_frag_color = vec4(tonemap(outputColor), 1.);
     // out_frag_color = vec4(vec3(metal_rough.g), 1.);
     // return;
-    vec3 light_out = color_pbr(N, scene_data.light_dir, V, vec4(color.rgb, 1.), metal_rough.b, metal_rough.g, scene_data.light_color) * shadow;
+    vec3 light_out = color_pbr(N, scene_data.light_dir, V, vec4(color.rgb, 1.), metallic, roughness, scene_data.light_color) * shadow;
     vec3 amb = ambient * color.rgb * ao * scene_data.ambient_intensity;
     vec3 outputColor = light_out * shadow + emissive + amb;
     vec3 tonemapped = ACESFilm(outputColor);

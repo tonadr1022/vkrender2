@@ -14,6 +14,7 @@
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
 #include <future>
+#include <optional>
 
 #include "BS_thread_pool.hpp"
 #include "Camera.hpp"
@@ -920,8 +921,14 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
               const auto& accessor = gltf.accessors[tangent_attrib->accessorIndex];
               u64 i = start_i;
               assert(accessor.count == pos_accessor.count);
-              for (glm::vec3 tangent : fastgltf::iterateAccessor<glm::vec3>(gltf, accessor)) {
-                result->vertices[i++].tangent = vec4(tangent, 0.);
+              if (accessor.type == fastgltf::AccessorType::Vec3) {
+                for (glm::vec3 tangent : fastgltf::iterateAccessor<glm::vec3>(gltf, accessor)) {
+                  result->vertices[i++].tangent = vec4(tangent, 0.);
+                }
+              } else if (accessor.type == fastgltf::AccessorType::Vec4) {
+                for (glm::vec4 tangent : fastgltf::iterateAccessor<glm::vec4>(gltf, accessor)) {
+                  result->vertices[i++].tangent = tangent;
+                }
               }
             } else if (!loaded_tangents_from_disk) {
               calc_tangents<u32>(
@@ -976,4 +983,35 @@ std::optional<LoadedSceneData> load_gltf(const std::filesystem::path& path,
       .indices = std::move(base_scene_data.indices),
   };
 }
+
+namespace loader {
+
+std::optional<CPUHDRImageData> load_hdr(const std::filesystem::path& path, int num_components,
+                                        bool flip) {
+  std::optional<CPUHDRImageData> res;
+  if (!std::filesystem::exists(path)) {
+    LINFO("path does not exist: {}", path.string());
+    return res;
+  }
+  res = CPUHDRImageData{};
+  int w, h, channels;
+
+  stbi_set_flip_vertically_on_load(flip);
+  res->data = stbi_loadf(path.c_str(), &w, &h, &channels, num_components);
+  assert(res->data);
+  res->w = w;
+  res->h = h;
+  res->channels = channels;
+  return res;
+}
+
+void free_hdr(CPUHDRImageData& img_data) {
+  assert(img_data.data);
+  if (img_data.data) {
+    stbi_image_free(img_data.data);
+  }
+  img_data.data = nullptr;
+}
+
+}  // namespace loader
 }  // namespace gfx

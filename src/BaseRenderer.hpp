@@ -88,6 +88,7 @@ struct SceneDrawInfo {
   vec3 light_color;
   float ambient_intensity{1.};
   float fov_degrees{70.f};
+  std::filesystem::path env_tex;
 };
 
 class BaseRenderer {

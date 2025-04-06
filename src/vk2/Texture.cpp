@@ -45,9 +45,12 @@ Texture& Texture::operator=(Texture&& other) noexcept {
 // TODO: need move constructor for this
 TextureView::TextureView(const Texture& texture, const TextureViewCreateInfo& info)
     : create_info_(info) {
+  VkImageViewType view_type = info.view_type != VK_IMAGE_VIEW_TYPE_MAX_ENUM
+                                  ? info.view_type
+                                  : texture.create_info_.view_type;
   auto view_info = VkImageViewCreateInfo{.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
                                          .image = texture.image_,
-                                         .viewType = texture.create_info_.view_type,
+                                         .viewType = view_type,
                                          .format = info.format,
                                          .components = info.components,
                                          .subresourceRange = info.range};
@@ -94,7 +97,14 @@ Texture::Texture(const TextureCreateInfo& create_info) {
       .flags = alloc_flags,
       .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
   };
+  VkImageCreateFlags img_create_flags{};
+  if (create_info.view_type == VK_IMAGE_VIEW_TYPE_CUBE ||
+      create_info.view_type == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY) {
+    img_create_flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+  }
+
   VkImageCreateInfo info{.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                         .flags = img_create_flags,
                          .imageType = vkviewtype_to_img_type(create_info.view_type),
                          .format = create_info.format,
                          .extent = create_info.extent,
@@ -104,8 +114,12 @@ Texture::Texture(const TextureCreateInfo& create_info) {
                          .tiling = VK_IMAGE_TILING_OPTIMAL,
                          .usage = usage,
                          .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
+  image_ = nullptr;
   VK_CHECK(vmaCreateImage(vk2::get_device().allocator(), &info, &alloc_create_info, &image_,
                           &allocation_, nullptr));
+  if (!image_) {
+    return;
+  }
 
   VkImageAspectFlags aspect = VK_IMAGE_ASPECT_NONE;
   if (format_is_color(create_info.format)) {
@@ -176,8 +190,8 @@ bool format_is_stencil(VkFormat format) {
 VkImageType vkviewtype_to_img_type(VkImageViewType view_type) {
   switch (view_type) {
     case VK_IMAGE_VIEW_TYPE_2D:
-    case VK_IMAGE_VIEW_TYPE_CUBE:
     case VK_IMAGE_VIEW_TYPE_2D_ARRAY:
+    case VK_IMAGE_VIEW_TYPE_CUBE:
     case VK_IMAGE_VIEW_TYPE_CUBE_ARRAY:
       return VK_IMAGE_TYPE_2D;
 

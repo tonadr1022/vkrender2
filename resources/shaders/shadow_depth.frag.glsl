@@ -3,6 +3,8 @@
 layout(location = 0) in vec2 in_uv;
 layout(location = 1) flat in uint material_id;
 
+#extension GL_GOOGLE_include_directive : enable
+
 #include "./common.h.glsl"
 #include "./shadow_depth_common.h.glsl"
 

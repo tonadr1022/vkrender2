@@ -47,6 +47,9 @@ class StateTracker {
   StateTracker& transition(VkImage image, VkPipelineStageFlags2 dst_stage,
                            VkAccessFlags2 dst_access, VkImageLayout new_layout,
                            VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
+  StateTracker& transition_img_to_copy_dst(VkImage image,
+                                           VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
+  StateTracker& transition_buffer_to_transfer_dst(VkBuffer buffer);
 
   StateTracker& transition(VkImage image, VkPipelineStageFlags2 dst_stage,
                            VkAccessFlags2 dst_access, VkImageLayout new_layout,

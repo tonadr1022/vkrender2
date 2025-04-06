@@ -69,5 +69,16 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
 
 std::optional<LoadedSceneData> load_gltf(const std::filesystem::path& path,
                                          const DefaultMaterialData& default_mat);
+struct CPUHDRImageData {
+  u32 w, h, channels;
+  float* data{};
+};
+namespace loader {
+
+std::optional<CPUHDRImageData> load_hdr(const std::filesystem::path& path, int num_components = 4,
+                                        bool flip = false);
+void free_hdr(CPUHDRImageData& img_data);
+
+}  // namespace loader
 
 }  // namespace gfx

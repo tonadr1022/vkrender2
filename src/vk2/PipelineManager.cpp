@@ -310,11 +310,11 @@ VkPipeline PipelineManager::load_graphics_pipeline_impl(const GraphicsPipelineCr
   std::array<std::vector<std::string>, 2> include_files;
   ShaderManager::LoadProgramResult result;
   if (hot_reload_) {
-    result = shader_manager_.load_program(std::span(shader_create_infos.data(), stage_cnt),
-                                          info.layout == nullptr, include_files);
+    result = shader_manager_.load_program(std::span(shader_create_infos.data(), stage_cnt), false,
+                                          include_files);
   } else {
-    result = shader_manager_.load_program(std::span(shader_create_infos.data(), stage_cnt),
-                                          info.layout == nullptr, {});
+    result =
+        shader_manager_.load_program(std::span(shader_create_infos.data(), stage_cnt), false, {});
   }
 
   if (result.module_cnt != stage_cnt) {

@@ -32,7 +32,10 @@ void calc_frustum_corners_world_space(std::span<vec4> corners, const mat4& vp_ma
   }
 }
 
-mat4 calc_light_space_matrix(const mat4& cam_view, const mat4& proj, vec3 light_dir, float z_mult) {
+AutoCVarFloat z_pad{"z_pad", "z_padding", .1, CVarFlags::EditFloatDrag};
+
+// https://github.com/walbourn/directx-sdk-samples/blob/main/CascadedShadowMaps11/CascadedShadowMaps11.cpp
+mat4 calc_light_space_matrix(const mat4& cam_view, const mat4& proj, vec3 light_dir, float) {
   vec3 center{};
   std::array<vec4, 8> corners;
   calc_frustum_corners_world_space(corners, proj * cam_view);
@@ -52,16 +55,20 @@ mat4 calc_light_space_matrix(const mat4& cam_view, const mat4& proj, vec3 light_
     min.z = glm::min(min.z, c.z);
     max.z = glm::max(max.z, c.z);
   }
-  if (min.z < 0) {
-    min.z *= z_mult;
-  } else {
-    min.z /= z_mult;
-  }
-  if (max.z < 0) {
-    max.z /= z_mult;
-  } else {
-    max.z *= z_mult;
-  }
+
+  float z_padding = (max.z - min.z) * z_pad.get();
+  min.z -= z_padding;
+  max.z += z_padding;
+  // if (min.z < 0) {
+  //   min.z *= z_mult;
+  // } else {
+  //   min.z /= z_mult;
+  // }
+  // if (max.z < 0) {
+  //   max.z /= z_mult;
+  // } else {
+  //   max.z *= z_mult;
+  // }
   mat4 light_proj = glm::orthoRH_ZO(min.x, max.x, max.y, min.y, min.z, max.z);
   return light_proj * light_view;
 }

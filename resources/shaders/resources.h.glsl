@@ -27,9 +27,15 @@
 #define BINDLESS_STORAGE_BUFFER_BINDING 1
 #define BINDLESS_SAMPLER_BINDING 0
 #define BINDLESS_SAMPLED_IMAGE_BINDING 2
+#define BINDLESS_STORAGE_IMAGE_BINDING 0
+#define BINDLESS_SAMPLER_SET 1
 
 #define VK2_DECLARE_SAMPLED_IMAGES(type) \
-  layout(set = 0, binding = BINDLESS_SAMPLED_IMAGE_BINDING) uniform type t_sampledImages_##type[]
+  layout(set = 0, binding = BINDLESS_SAMPLED_IMAGE_BINDING) uniform type t_sampled_images_##type[]
+#define VK2_DECLARE_STORAGE_IMAGES(type) \
+  layout(set = 0, binding = BINDLESS_STORAGE_IMAGE_BINDING) uniform type t_storage_images_##type[]
+#define VK2_DECLARE_STORAGE_IMAGES_WO(type) \
+  layout(set = 0, binding = BINDLESS_STORAGE_IMAGE_BINDING) writeonly uniform type t_storage_images_##type[]
 
 #define VK2_DECLARE_STORAGE_BUFFERS(blockname) \
   layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING) buffer blockname
@@ -43,7 +49,10 @@
 #define vk2_get_sampler(idx) \
     s_samplers[nonuniformEXT(idx)]
 #define vk2_get_sampled_img(type, idx) \
-    t_sampledImages_##type[nonuniformEXT(idx)]
+    t_sampled_images_##type[nonuniformEXT(idx)]
+
+#define vk2_get_storage_img(type, idx) \
+    t_storage_images_##type[nonuniformEXT(idx)]
 
 #define vk2_sampler2D(tex_idx, sampler_idx) \
   nonuniformEXT(sampler2D(vk2_get_sampled_img(texture2D, tex_idx), vk2_get_sampler(sampler_idx)))
@@ -54,7 +63,7 @@
 #define VK2_DECLARE_ARGUMENTS(name) \
     layout(push_constant, scalar) uniform name
 
-layout(set = 1, binding = BINDLESS_SAMPLER_BINDING) uniform sampler s_samplers[];
+layout(set = BINDLESS_SAMPLER_SET, binding = BINDLESS_SAMPLER_BINDING) uniform sampler s_samplers[];
 
 #endif // end GLSL
 

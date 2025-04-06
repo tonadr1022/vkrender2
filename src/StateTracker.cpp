@@ -186,3 +186,12 @@ StateTracker& StateTracker::buffer_barrier(const vk2::Buffer& buffer,
                                            VkAccessFlags2 dst_access) {
   return buffer_barrier(buffer.buffer(), dst_stage, dst_access);
 }
+
+StateTracker& StateTracker::transition_img_to_copy_dst(VkImage image, VkImageAspectFlags aspect) {
+  return transition(image, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, aspect);
+}
+
+StateTracker& StateTracker::transition_buffer_to_transfer_dst(VkBuffer buffer) {
+  return buffer_barrier(buffer, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+}

@@ -46,6 +46,7 @@ struct TextureViewCreateInfo {
   VkFormat format;
   VkImageSubresourceRange range;
   VkComponentMapping components{};
+  VkImageViewType view_type{VK_IMAGE_VIEW_TYPE_MAX_ENUM};
 };
 
 class Texture;

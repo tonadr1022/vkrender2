@@ -128,6 +128,7 @@ struct VkRender2 final : public BaseRenderer {
   FrameData& curr_frame_2() { return per_frame_data_2_[curr_frame_num() % 2]; }
   void init_pipelines();
   void init_indirect_drawing();
+  void init_ibl();
   static constexpr u32 max_draws{100'000};
 
   struct SceneUniforms {
@@ -238,6 +239,8 @@ struct VkRender2 final : public BaseRenderer {
   vk2::PipelineHandle img_pipeline_;
   vk2::PipelineHandle draw_pipeline_;
   vk2::PipelineHandle cull_objs_pipeline_;
+  vk2::PipelineHandle equirect_to_cube_pipeline_;
+  vk2::PipelineHandle equirect_to_cube_pipeline2_;
   VkPipelineLayout default_pipeline_layout_{};
   std::queue<InFlightResource<vk2::Buffer*>> pending_buffer_transfers_;
 
@@ -253,6 +256,15 @@ struct VkRender2 final : public BaseRenderer {
 
   u32 debug_mode_{DEBUG_MODE_NONE};
   const char* debug_mode_to_string(u32 mode);
+  std::optional<vk2::Texture> load_hdr_img(const std::filesystem::path& path, bool flip = false);
+  std::filesystem::path env_tex_path_;
+  std::optional<vk2::Texture> env_equirect_tex_;
+  std::optional<vk2::Texture> env_cubemap_tex_;
+  std::array<std::optional<vk2::TextureView>, 6> cubemap_tex_views_;
+  // u64 cube_vertices_gpu_offset_{};
+  // u64 cube_indices_gpu_offset_{};
+  // std::optional<vk2::Buffer> cube_vertex_buf_;
+  // std::optional<vk2::Buffer> cube_index_buf_;
 
  public:
   [[nodiscard]] const DefaultData& get_default_data() const { return default_data_; }
