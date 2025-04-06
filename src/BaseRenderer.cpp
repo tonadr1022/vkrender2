@@ -145,7 +145,6 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info)
   }
 
   queues_.is_unified_graphics_transfer = queues_.graphics_queue_idx == queues_.transfer_queue_idx;
-  LINFO("{} {}", queues_.graphics_queue_idx, queues_.transfer_queue_idx);
 
   {
     ZoneScopedN("init swapchain");

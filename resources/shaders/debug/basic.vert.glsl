@@ -3,6 +3,7 @@
 #extension GL_GOOGLE_include_directive : enable
 #include "../common.h.glsl"
 #include "./basic_common.h.glsl"
+#include "../vertex_common.h.glsl"
 
 layout(location = 0) out vec3 out_normal;
 layout(location = 1) out vec2 out_uv;
@@ -10,18 +11,6 @@ layout(location = 2) out vec3 out_frag_pos;
 layout(location = 3) out vec3 out_bitangent;
 layout(location = 4) out vec3 out_tangent;
 layout(location = 5) flat out uint material_id;
-
-struct Vertex {
-    vec3 pos;
-    float uv_x;
-    vec3 normal;
-    float uv_y;
-    vec4 tangent;
-};
-
-VK2_DECLARE_STORAGE_BUFFERS_RO_SCALAR(VertexBuffers){
-Vertex vertices[];
-} vertex_buffers[];
 
 struct InstanceData {
     uint material_id;

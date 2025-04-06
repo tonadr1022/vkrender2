@@ -12,7 +12,6 @@
 #include <tracy/TracyVulkan.hpp>
 
 #include "GLFW/glfw3.h"
-#include "Logger.hpp"
 #include "SceneLoader.hpp"
 #include "StateTracker.hpp"
 #include "glm/packing.hpp"
@@ -20,7 +19,6 @@
 #include "shaders/common.h.glsl"
 #include "shaders/debug/basic_common.h.glsl"
 #include "shaders/ibl/eq_to_cube_comp_common.h.glsl"
-// #include "shaders/ibl/equirect_to_cube_common.h.glsl"
 #include "shaders/shadow_depth_common.h.glsl"
 #include "util/CVar.hpp"
 #include "util/IndexAllocator.hpp"
@@ -41,20 +39,22 @@ namespace {
 VkRender2* instance{};
 
 AutoCVarInt ao_map_enabled{"renderer.ao_map", "AO Map", 1, CVarFlags::EditCheckbox};
+AutoCVarInt convoluted_skybox{"renderer.convoluted_skybox", "convoluted_skybox", 1,
+                              CVarFlags::EditCheckbox};
 AutoCVarInt normal_map_enabled{"renderer.normal_map", "Normal Map", 1, CVarFlags::EditCheckbox};
 
 // clang-format off
-// gfx::Vertex cube_vertices[] = {
-//     {{ -1.0f, -1.0f, -1.0f, }}, {{ 1.0f, 1.0f, -1.0f, }}, {{ 1.0f, -1.0f, -1.0f, }}, {{ 1.0f, 1.0f, -1.0f, }},
-//     {{ -1.0f, -1.0f, -1.0f, }}, {{ -1.0f, 1.0f, -1.0f, }}, {{ -1.0f, -1.0f, 1.0f, }}, {{ 1.0f, -1.0f, 1.0f, }}, {{
-//         1.0f, 1.0f, 1.0f, }}, {{ 1.0f, 1.0f, 1.0f, }}, {{ -1.0f, 1.0f, 1.0f, }}, {{ -1.0f, -1.0f, 1.0f, }}, {{ -1.0f,
-//         1.0f, 1.0f, }}, {{ -1.0f, 1.0f, -1.0f, }}, {{ -1.0f, -1.0f, -1.0f, }}, {{ -1.0f, -1.0f, -1.0f, }}, {{ -1.0f,
-//         -1.0f, 1.0f, }}, {{ -1.0f, 1.0f, 1.0f, }}, {{ 1.0f, 1.0f, 1.0f, }}, {{ 1.0f, -1.0f, -1.0f, }}, {{ 1.0f, 1.0f,
-//         -1.0f, }}, {{ 1.0f, -1.0f, -1.0f, }}, {{ 1.0f, 1.0f, 1.0f, }}, {{ 1.0f, -1.0f, 1.0f, }}, {{ -1.0f, -1.0f, -1.0f, }}, {{ 1.0f, -1.0f, -1.0f, }}, {{
-//         1.0f, -1.0f, 1.0f, }}, {{ 1.0f, -1.0f, 1.0f, }}, {{ -1.0f, -1.0f, 1.0f, }}, {{ -1.0f, -1.0f, -1.0f, }}, {{ -1.0f, 1.0f, -1.0f, }}, {{
-//         1.0f, 1.0f, 1.0f, }}, {{ 1.0f, 1.0f, -1.0f, }}, {{ 1.0f, 1.0f, 1.0f, }}, {{ -1.0f, 1.0f, -1.0f, }}, {{ -1.0f,
-//         1.0f, 1.0f, }},
-// };
+gfx::Vertex cube_vertices[] = {
+    {{ -1.0f, -1.0f, -1.0f, }}, {{ 1.0f, 1.0f, -1.0f, }}, {{ 1.0f, -1.0f, -1.0f, }}, {{ 1.0f, 1.0f, -1.0f, }},
+    {{ -1.0f, -1.0f, -1.0f, }}, {{ -1.0f, 1.0f, -1.0f, }}, {{ -1.0f, -1.0f, 1.0f, }}, {{ 1.0f, -1.0f, 1.0f, }}, {{
+        1.0f, 1.0f, 1.0f, }}, {{ 1.0f, 1.0f, 1.0f, }}, {{ -1.0f, 1.0f, 1.0f, }}, {{ -1.0f, -1.0f, 1.0f, }}, {{ -1.0f,
+        1.0f, 1.0f, }}, {{ -1.0f, 1.0f, -1.0f, }}, {{ -1.0f, -1.0f, -1.0f, }}, {{ -1.0f, -1.0f, -1.0f, }}, {{ -1.0f,
+        -1.0f, 1.0f, }}, {{ -1.0f, 1.0f, 1.0f, }}, {{ 1.0f, 1.0f, 1.0f, }}, {{ 1.0f, -1.0f, -1.0f, }}, {{ 1.0f, 1.0f,
+        -1.0f, }}, {{ 1.0f, -1.0f, -1.0f, }}, {{ 1.0f, 1.0f, 1.0f, }}, {{ 1.0f, -1.0f, 1.0f, }}, {{ -1.0f, -1.0f, -1.0f, }}, {{ 1.0f, -1.0f, -1.0f, }}, {{
+        1.0f, -1.0f, 1.0f, }}, {{ 1.0f, -1.0f, 1.0f, }}, {{ -1.0f, -1.0f, 1.0f, }}, {{ -1.0f, -1.0f, -1.0f, }}, {{ -1.0f, 1.0f, -1.0f, }}, {{
+        1.0f, 1.0f, 1.0f, }}, {{ 1.0f, 1.0f, -1.0f, }}, {{ 1.0f, 1.0f, 1.0f, }}, {{ -1.0f, 1.0f, -1.0f, }}, {{ -1.0f,
+        1.0f, 1.0f, }},
+};
 
 // clang-format on
 // constexpr gfx::Vertex cube_vertices[] = {
@@ -122,7 +122,6 @@ VkRender2::VkRender2(const InitInfo& info)
   memcpy((char*)staging->mapped_data(), (void*)&white, sizeof(u32));
   default_data_.white_img =
       vk2::create_texture_2d(VK_FORMAT_R8G8B8A8_SRGB, {1, 1, 1}, TextureUsage::ReadOnly);
-  LINFO("defualt handle: {}", default_data_.white_img->view().sampled_img_resource().handle);
   immediate_submit([this, staging](VkCommandBuffer cmd) {
     // TODO: extract
     state_.reset(cmd);
@@ -209,50 +208,49 @@ VkRender2::VkRender2(const InitInfo& info)
 
   // TODO: make a function for this lmao, so cringe
   {
-    // auto vert_buf_size = sizeof(cube_vertices);
-    // // auto index_buf_size = sizeof(cube_indices);
-    // auto* staging = StagingBufferPool::get().acquire(vert_buf_size);
-    // memcpy(staging->mapped_data(), cube_vertices, vert_buf_size);
-    // // memcpy(staging->mapped_data(), cube_indices, index_buf_size);
-    // cube_vertices_gpu_offset_ = static_vertex_buf_->alloc(vert_buf_size);
-    // // cube_indices_gpu_offset_ = static_index_buf_->alloc(index_buf_size);
-    // transfer_submit([this, vert_buf_size, staging](
-    //                     VkCommandBuffer cmd, VkFence fence,
-    //                     std::queue<InFlightResource<vk2::Buffer*>>& transfers) {
-    //   transfer_q_state_.reset(cmd)
-    //       .transition_buffer_to_transfer_dst(static_vertex_buf_->buffer.buffer())
-    //       .transition_buffer_to_transfer_dst(static_index_buf_->buffer.buffer())
-    //       .flush_barriers();
-    //
-    //   vkCmdCopyBuffer2KHR(
-    //       cmd, vk2::addr(VkCopyBufferInfo2KHR{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
-    //                                           .srcBuffer = staging->buffer(),
-    //                                           .dstBuffer = static_vertex_buf_->buffer.buffer(),
-    //                                           .regionCount = 1,
-    //                                           .pRegions = addr(init::buffer_copy(
-    //                                               0, cube_vertices_gpu_offset_,
-    //                                               vert_buf_size))}));
-    // vkCmdCopyBuffer2KHR(cmd, vk2::addr(VkCopyBufferInfo2KHR{
-    //                              .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
-    //                              .srcBuffer = staging->buffer(),
-    //                              .dstBuffer = static_index_buf_->buffer.buffer(),
-    //                              .regionCount = 1,
-    //                              .pRegions = addr(init::buffer_copy(
-    //                                  vert_buf_size, cube_indices_gpu_offset_,
-    //                                  index_buf_size))}));
+    auto vert_buf_size = sizeof(cube_vertices);
+    // auto index_buf_size = sizeof(cube_indices);
+    auto* staging = StagingBufferPool::get().acquire(vert_buf_size);
+    memcpy(staging->mapped_data(), cube_vertices, vert_buf_size);
+    // memcpy(staging->mapped_data(), cube_indices, index_buf_size);
+    cube_vertices_gpu_offset_ = static_vertex_buf_->alloc(vert_buf_size);
+    // cube_indices_gpu_offset_ = static_index_buf_->alloc(index_buf_size);
+    transfer_submit([this, vert_buf_size, staging](
+                        VkCommandBuffer cmd, VkFence fence,
+                        std::queue<InFlightResource<vk2::Buffer*>>& transfers) {
+      transfer_q_state_.reset(cmd)
+          .transition_buffer_to_transfer_dst(static_vertex_buf_->buffer.buffer())
+          .transition_buffer_to_transfer_dst(static_index_buf_->buffer.buffer())
+          .flush_barriers();
 
-    // TODO: this would be solved by a render graph. double barrier happens if load scene at same
-    // time before drawing transfer_q_state_
-    //     .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
-    //                            VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT,
-    //                            static_vertex_buf_->buffer.buffer(), queues_.transfer_queue_idx,
-    //                            queues_.graphics_queue_idx)
-    //     .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT,
-    //                            VK_ACCESS_2_INDEX_READ_BIT, static_index_buf_->buffer.buffer(),
-    //                            queues_.transfer_queue_idx, queues_.graphics_queue_idx)
-    //     .flush_barriers();
-    // transfers.emplace(staging, fence);
-    // });
+      vkCmdCopyBuffer2KHR(
+          cmd, vk2::addr(VkCopyBufferInfo2KHR{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+                                              .srcBuffer = staging->buffer(),
+                                              .dstBuffer = static_vertex_buf_->buffer.buffer(),
+                                              .regionCount = 1,
+                                              .pRegions = addr(init::buffer_copy(
+                                                  0, cube_vertices_gpu_offset_, vert_buf_size))}));
+      // vkCmdCopyBuffer2KHR(cmd, vk2::addr(VkCopyBufferInfo2KHR{
+      //                              .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+      //                              .srcBuffer = staging->buffer(),
+      //                              .dstBuffer = static_index_buf_->buffer.buffer(),
+      //                              .regionCount = 1,
+      //                              .pRegions = addr(init::buffer_copy(
+      //                                  vert_buf_size, cube_indices_gpu_offset_,
+      //                                  index_buf_size))}));
+
+      // TODO: this would be solved by a render graph. double barrier happens if load scene at same
+      // time before drawing transfer_q_state_
+      //     .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
+      //                            VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT,
+      //                            static_vertex_buf_->buffer.buffer(), queues_.transfer_queue_idx,
+      //                            queues_.graphics_queue_idx)
+      //     .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT,
+      //                            VK_ACCESS_2_INDEX_READ_BIT, static_index_buf_->buffer.buffer(),
+      //                            queues_.transfer_queue_idx, queues_.graphics_queue_idx)
+      //     .flush_barriers();
+      transfers.emplace(staging, fence);
+    });
   }
 }
 
@@ -267,6 +265,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
     mat4 vp = proj * info.view;
     data.view_proj = vp;
     data.view = info.view;
+    data.proj = proj;
     data.debug_flags = uvec4{};
     if (ao_map_enabled.get()) {
       data.debug_flags.x |= AO_ENABLED_BIT;
@@ -308,6 +307,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
       break;
     }
   }
+  u32 scene_buffer_handle = curr_frame_2().scene_uniform_buf->resource_info_->handle;
   VkCommandBuffer cmd = curr_frame().main_cmd_buffer;
   state_.reset(cmd);
   // TODO: better management lol
@@ -328,19 +328,41 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
   }
 
   if (stale_env_map) {
-    TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "equirect to cube");
-    state_
-        .transition(env_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                    VK_ACCESS_2_MEMORY_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
-        .flush_barriers();
-    PipelineManager::get().bind_compute(cmd, equirect_to_cube_pipeline2_);
-    EquirectToCubeComputePushConstants pc{
-        .sampler_idx = linear_sampler_->resource_info.handle,
-        .tex_idx = env_equirect_tex_->view().sampled_img_resource().handle,
-        .out_tex_idx = env_cubemap_tex_->view().storage_img_resource().handle};
-    ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-    ctx.dispatch(env_cubemap_tex_->extent_2d().width / 16,
-                 env_cubemap_tex_->extent_2d().height / 16, 6);
+    {
+      TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "equirect to cube");
+      state_
+          .transition(env_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                      VK_ACCESS_2_MEMORY_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+          .flush_barriers();
+      PipelineManager::get().bind_compute(cmd, equirect_to_cube_pipeline2_);
+      EquirectToCubeComputePushConstants pc{
+          .sampler_idx = linear_sampler_->resource_info.handle,
+          .tex_idx = env_equirect_tex_->view().sampled_img_resource().handle,
+          .out_tex_idx = env_cubemap_tex_->view().storage_img_resource().handle};
+      ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
+      ctx.dispatch(env_cubemap_tex_->extent_2d().width / 16,
+                   env_cubemap_tex_->extent_2d().height / 16, 6);
+    }
+
+    {
+      TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "convolute cube");
+      // convolute
+      state_
+          .transition(env_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                      VK_ACCESS_2_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+          .transition(convoluted_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                      VK_ACCESS_2_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL)
+          .flush_barriers();
+      PipelineManager::get().bind_compute(cmd, convolute_cube_pipeline_);
+      struct {
+        u32 in_tex_idx, out_tex_idx, sampler_idx, in_img_size_x;
+      } pc{env_cubemap_tex_->view().sampled_img_resource().handle,
+           convoluted_cubemap_tex_->view().storage_img_resource().handle,
+           linear_sampler_->resource_info.handle, env_cubemap_tex_->extent_2d().width};
+      ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
+      ctx.dispatch(convoluted_cubemap_tex_->extent_2d().width / 16,
+                   convoluted_cubemap_tex_->extent_2d().height / 16, 6);
+    }
   }
 
   {
@@ -421,7 +443,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
                          static_vertex_buf_->buffer.resource_info_->handle,
                          static_instance_data_buf_->buffer.resource_info_->handle,
                          static_object_data_buf_->buffer.resource_info_->handle,
-                         curr_frame_2().scene_uniform_buf->resource_info_->handle,
+                         scene_buffer_handle,
                          static_materials_buf_->buffer.resource_info_->handle,
                          linear_sampler_->resource_info.handle,
                      };
@@ -472,10 +494,11 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                         PipelineManager::get().get(draw_pipeline_)->pipeline);
 
+      // TODO: jank
       auto draw_objects = [&](const Buffer& vertex_buffer, const Buffer& index_buffer,
                               const Buffer& instance_buffer, const Buffer& material_data_buffer,
                               const Buffer& object_data_buffer, const Buffer&, u64) {
-        BasicPushConstants pc{curr_frame_2().scene_uniform_buf->resource_info_->handle,
+        BasicPushConstants pc{scene_buffer_handle,
                               vertex_buffer.resource_info_->handle,
                               instance_buffer.resource_info_->handle,
                               object_data_buffer.resource_info_->handle,
@@ -495,8 +518,6 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
                                         draw_cnt_buf_->buffer(), 0, max_draws,
                                         sizeof(VkDrawIndexedIndirectCommand));
         }
-        // vkCmdDrawIndexedIndirect(cmd, static_draw_cmds_buf_->buffer.buffer(), 0, draw_cnt_,
-        //                          sizeof(VkDrawIndexedIndirectCommand));
       };
 
       TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "Final Draw Pass");
@@ -504,6 +525,20 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
         draw_objects(static_vertex_buf_->buffer, static_index_buf_->buffer,
                      static_instance_data_buf_->buffer, static_materials_buf_->buffer,
                      static_object_data_buf_->buffer, static_draw_info_buf_->buffer, draw_cnt_);
+      }
+
+      // skybox
+      {
+        TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "Draw skybox");
+        PipelineManager::get().bind_graphics(cmd, skybox_pipeline_);
+        struct {
+          u32 scene_buffer, tex_idx, sampler_idx;
+        } pc{scene_buffer_handle,
+             convoluted_skybox.get() ? convoluted_cubemap_tex_->view().sampled_img_resource().handle
+                                     : env_cubemap_tex_->view().sampled_img_resource().handle,
+             linear_sampler_->resource_info.handle};
+        ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
+        vkCmdDraw(cmd, 36, 1, 0, 0);
       }
       vkCmdEndRenderingKHR(cmd);
     }
@@ -1057,6 +1092,15 @@ void VkRender2::init_pipelines() {
                     .depth_format = depth_img_->format()},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
   });
+  skybox_pipeline_ = PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
+      .vertex_path = "skybox/skybox.vert",
+      .fragment_path = "skybox/skybox.frag",
+      .layout = default_pipeline_layout_,
+      .rendering = {.color_formats = {img_->format()},
+                    .color_formats_cnt = 1,
+                    .depth_format = depth_img_->format()},
+      .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
+  });
   assert(draw_pipeline_);
 }
 
@@ -1149,10 +1193,20 @@ std::optional<vk2::Texture> VkRender2::load_hdr_img(const std::filesystem::path&
 
   return tex;
 }
+
 void VkRender2::init_ibl() {
+  u32 skybox_res = 1024;
+  u32 convoluted_res = 32;
+  convoluted_cubemap_tex_ =
+      vk2::Texture{TextureCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_CUBE,
+                                     .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                                     .extent = {convoluted_res, convoluted_res, 1},
+                                     .mip_levels = 1,
+                                     .array_layers = 6,
+                                     .usage = TextureUsage::General}};
   env_cubemap_tex_ = vk2::Texture{TextureCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_CUBE,
                                                     .format = VK_FORMAT_R16G16B16A16_SFLOAT,
-                                                    .extent = {512, 512, 1},
+                                                    .extent = {skybox_res, skybox_res, 1},
                                                     .mip_levels = 1,
                                                     .array_layers = 6,
                                                     .usage = TextureUsage::General}};
@@ -1160,6 +1214,10 @@ void VkRender2::init_ibl() {
       PipelineManager::get().load_compute_pipeline(ComputePipelineCreateInfo{
           .path = "ibl/eq_to_cube.comp",
       });
+  convolute_cube_pipeline_ = PipelineManager::get().load_compute_pipeline(ComputePipelineCreateInfo{
+      .path = "ibl/cube_convolute.comp",
+  });
+
   equirect_to_cube_pipeline_ =
       PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
           .vertex_path = "ibl/equirect_to_cube.vert",

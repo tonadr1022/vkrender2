@@ -20,6 +20,7 @@
 struct SceneData {
     mat4 view_proj;
     mat4 view;
+    mat4 proj;
     uvec4 debug_flags; // w is debug modes
     vec3 view_pos;
     vec3 light_dir;

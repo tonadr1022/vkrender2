@@ -57,6 +57,9 @@
 #define vk2_sampler2D(tex_idx, sampler_idx) \
   nonuniformEXT(sampler2D(vk2_get_sampled_img(texture2D, tex_idx), vk2_get_sampler(sampler_idx)))
 
+#define vk2_samplerCube(tex_idx, sampler_idx) \
+  nonuniformEXT(samplerCube(vk2_get_sampled_img(textureCube, tex_idx), vk2_get_sampler(sampler_idx)))
+
 #define vk2_sampler2DArray(tex_idx, sampler_idx) \
   sampler2DArray(vk2_get_sampled_img(texture2DArray, tex_idx), vk2_get_sampler(sampler_idx))
 
