@@ -86,15 +86,27 @@ void Device::init_impl(const CreateInfo& info) {
       .set_required_features_12(features12)
       .set_required_features_11(features11)
       .add_required_extensions(extensions)
+      .prefer_gpu_device_type(vkb::PreferredDeviceType::discrete)
       .add_required_extension_features(dynamic_rendering_features)
       .add_required_extension_features(sync2_features)
       .set_required_features(features);
-  auto phys_ret = phys_selector.select();
-  if (!phys_ret) {
+  auto phys_ret = phys_selector.select_devices();
+  if (!phys_ret || phys_ret.value().empty()) {
     LCRITICAL("Failed to select physical device: {}", phys_ret.error().message());
     exit(1);
   }
-  vkb_phys_device_ = std::move(phys_ret.value());
+  bool found_discrete_device = false;
+  for (auto& v : phys_ret.value()) {
+    if (v.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+      vkb_phys_device_ = v;
+      found_discrete_device = true;
+      break;
+    }
+  }
+  if (!found_discrete_device) {
+    vkb_phys_device_ = std::move(phys_ret.value()[0]);
+  }
+  LINFO("Selected Device: {}", vkb_phys_device_.properties.deviceName);
 
   vkb::DeviceBuilder dev_builder(vkb_phys_device_);
   auto dev_ret = dev_builder.build();
@@ -104,6 +116,7 @@ void Device::init_impl(const CreateInfo& info) {
   }
   vkb_device_ = std::move(dev_ret.value());
   device_ = vkb_device_.device;
+
   main_del_queue_.push([this]() { vkb::destroy_device(vkb_device_); });
 
   {
