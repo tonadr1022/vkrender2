@@ -91,6 +91,10 @@ void main() {
 
     float shadow = calc_shadow(shadow_datas[shadow_buffer_idx].data, scene_data, shadow_img_idx, shadow_sampler_idx, N, in_frag_pos);
     if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_SHADOW) {
+        if (shadow < .99) {
+            out_frag_color = vec4(0.0);
+            return;
+        }
         out_frag_color = vec4(vec3(shadow), 1.);
         return;
     }
@@ -99,9 +103,9 @@ void main() {
     // out_frag_color = vec4(tonemap(outputColor), 1.);
     // out_frag_color = vec4(vec3(metal_rough.g), 1.);
     // return;
-    vec3 light_out = color_pbr(N, scene_data.light_dir, V, vec4(color.rgb, 1.), metallic, roughness, scene_data.light_color) * shadow;
+    vec3 light_out = color_pbr(N, -scene_data.light_dir, V, vec4(color.rgb, 1.), metallic, roughness, scene_data.light_color) * shadow;
     vec3 amb = ambient * color.rgb * ao * scene_data.ambient_intensity;
-    vec3 outputColor = light_out * shadow + emissive + amb;
+    vec3 outputColor = light_out + emissive + amb;
     out_frag_color = vec4(outputColor, 1.);
     // out_frag_color = vec4(ACESFilm(outputColor), 1.);
     // out_frag_color = vec4(color.rgb * shadow, 1.);

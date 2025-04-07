@@ -7,6 +7,7 @@
 #include <queue>
 #include <vector>
 
+#include "AABB.hpp"
 #include "BaseRenderer.hpp"
 #include "Scene.hpp"
 #include "SceneLoader.hpp"
@@ -214,6 +215,7 @@ struct VkRender2 final : public BaseRenderer {
   std::optional<LinearBuffer> static_materials_buf_;
   std::optional<LinearBuffer> static_instance_data_buf_;
 
+  AABB scene_aabb_{};
   std::optional<SlotBuffer<DrawInfo>> static_draw_info_buf_;
   std::optional<SlotBuffer<gfx::ObjectData>> static_object_data_buf_;
   std::vector<vk2::Texture> static_textures_;

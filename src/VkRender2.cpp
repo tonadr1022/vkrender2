@@ -12,6 +12,7 @@
 #include <tracy/TracyVulkan.hpp>
 
 #include "GLFW/glfw3.h"
+#include "Logger.hpp"
 #include "SceneLoader.hpp"
 #include "StateTracker.hpp"
 #include "glm/packing.hpp"
@@ -492,29 +493,31 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
 
     {
       TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "CascadeShadowPass");
-      csm_->render(state_, cmd, curr_frame_num(), info.view, info.light_dir, aspect_ratio(),
-                   info.fov_degrees, [&, this](const mat4& vp_matrix) {
-                     ShadowDepthPushConstants pc{
-                         vp_matrix,
-                         static_vertex_buf_->buffer.resource_info_->handle,
-                         static_instance_data_buf_->buffer.resource_info_->handle,
-                         static_object_data_buf_->buffer.resource_info_->handle,
-                         scene_buffer_handle,
-                         static_materials_buf_->buffer.resource_info_->handle,
-                         linear_sampler_->resource_info.handle,
-                     };
-                     ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-                     vkCmdBindIndexBuffer(cmd, static_index_buf_->buffer.buffer(), 0,
-                                          VK_INDEX_TYPE_UINT32);
-                     if (portable) {
-                       vkCmdDrawIndexedIndirect(cmd, final_draw_cmd_buf_->buffer(), 0, draw_cnt_,
-                                                sizeof(VkDrawIndexedIndirectCommand));
-                     } else {
-                       vkCmdDrawIndexedIndirectCount(cmd, final_draw_cmd_buf_->buffer(), 0,
-                                                     draw_cnt_buf_->buffer(), 0, max_draws,
-                                                     sizeof(VkDrawIndexedIndirectCommand));
-                     }
-                   });
+      csm_->render(
+          state_, cmd, curr_frame_num(), info.view, info.light_dir, aspect_ratio(),
+          info.fov_degrees,
+          [&, this](const mat4& vp_matrix) {
+            ShadowDepthPushConstants pc{
+                vp_matrix,
+                static_vertex_buf_->buffer.resource_info_->handle,
+                static_instance_data_buf_->buffer.resource_info_->handle,
+                static_object_data_buf_->buffer.resource_info_->handle,
+                scene_buffer_handle,
+                static_materials_buf_->buffer.resource_info_->handle,
+                linear_sampler_->resource_info.handle,
+            };
+            ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
+            vkCmdBindIndexBuffer(cmd, static_index_buf_->buffer.buffer(), 0, VK_INDEX_TYPE_UINT32);
+            if (portable) {
+              vkCmdDrawIndexedIndirect(cmd, final_draw_cmd_buf_->buffer(), 0, draw_cnt_,
+                                       sizeof(VkDrawIndexedIndirectCommand));
+            } else {
+              vkCmdDrawIndexedIndirectCount(cmd, final_draw_cmd_buf_->buffer(), 0,
+                                            draw_cnt_buf_->buffer(), 0, max_draws,
+                                            sizeof(VkDrawIndexedIndirectCommand));
+            }
+          },
+          scene_aabb_, info.view_pos);
     }
 
     csm_->debug_shadow_pass(state_, cmd, linear_sampler_.value());
@@ -865,9 +868,15 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
     std::vector<DrawInfo> cmds;
     cmds.reserve(resources->scene_graph_data.mesh_node_indices.size());
 
+    vec3 scene_min = vec3{std::numeric_limits<float>::max()};
+    vec3 scene_max = vec3{std::numeric_limits<float>::lowest()};
     for (auto& node : resources->scene_graph_data.node_datas) {
       for (auto& mesh_indices : node.meshes) {
         auto& mesh = resources->mesh_draw_infos[mesh_indices.mesh_idx];
+        vec3 min = node.world_transform * vec4(mesh.bounds.origin - mesh.bounds.extents, 1.);
+        vec3 max = node.world_transform * vec4(mesh.bounds.origin + mesh.bounds.extents, 1.);
+        scene_min = glm::min(scene_min, min);
+        scene_max = glm::max(scene_max, max);
         cmds.emplace_back(
             DrawInfo{.index_cnt = mesh.index_count,
                      .first_index = static_cast<u32>(resources->first_index + mesh.first_index),
@@ -875,6 +884,9 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
                      .pad = 0});
       }
     }
+
+    scene_aabb_.min = glm::min(scene_aabb_.min, scene_min);
+    scene_aabb_.max = glm::max(scene_aabb_.max, scene_max);
 
     u64 cmds_buf_size = cmds.size() * sizeof(DrawInfo);
 

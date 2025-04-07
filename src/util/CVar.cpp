@@ -187,7 +187,7 @@ class CVarSystemImpl : public CVarSystem {
           ImGui::PushID(p);
           if (is_drag) {
             float d = get_cvar_array<double>().get_current(p->array_idx);
-            if (ImGui::DragFloat("", &d)) {
+            if (ImGui::DragFloat("", &d, .01)) {
               *get_cvar_array<double>().get_current_ptr(p->array_idx) = static_cast<double>(d);
             }
           } else {

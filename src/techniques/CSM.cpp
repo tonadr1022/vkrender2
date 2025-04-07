@@ -5,6 +5,7 @@
 
 #include <tracy/Tracy.hpp>
 
+#include "AABB.hpp"
 #include "StateTracker.hpp"
 #include "glm/ext/matrix_transform.hpp"
 #include "imgui.h"
@@ -17,7 +18,8 @@ using namespace vk2;
 
 namespace {
 
-AutoCVarInt stable_light_view{"renderer.stable_light_view", "stable_light_view", 1,
+// TODO: move
+AutoCVarInt stable_light_view{"renderer.stable_light_view", "stable_light_view", 0,
                               CVarFlags::EditCheckbox};
 
 void calc_frustum_corners_world_space(std::span<vec4> corners, const mat4& vp_matrix) {
@@ -32,7 +34,7 @@ void calc_frustum_corners_world_space(std::span<vec4> corners, const mat4& vp_ma
   }
 }
 
-AutoCVarFloat z_pad{"z_pad", "z_padding", .1, CVarFlags::EditFloatDrag};
+AutoCVarFloat z_pad{"z_pad", "z_padding", .5, CVarFlags::EditFloatDrag};
 
 // https://github.com/walbourn/directx-sdk-samples/blob/main/CascadedShadowMaps11/CascadedShadowMaps11.cpp
 mat4 calc_light_space_matrix(const mat4& cam_view, const mat4& proj, vec3 light_dir, float) {
@@ -43,7 +45,7 @@ mat4 calc_light_space_matrix(const mat4& cam_view, const mat4& proj, vec3 light_
     center += vec3(v);
   }
   center /= 8;
-  mat4 light_view = glm::lookAt(center - light_dir, center, {0, 1, 0});
+  mat4 light_view = glm::lookAt(center + light_dir, center, {0, 1, 0});
   vec3 min{std::numeric_limits<float>::max()};
   vec3 max{std::numeric_limits<float>::lowest()};
   for (auto corner : corners) {
@@ -102,9 +104,10 @@ mat4 calc_light_space_matrix(const mat4& cam_view, const mat4& proj, vec3 light_
   vec3 min = -max;
 
   // flip-y in ortho projection in vulkan
-  vec3 shadow_cam_pos = center - light_dir;
-  mat4 shadow_cam_vp = glm::orthoRH_ZO(min.x, max.x, max.y, min.y, min.z, max.z) *
-                       glm::lookAt(shadow_cam_pos, center, {0, 1, 0});
+  vec3 shadow_cam_pos = center + light_dir;
+  mat4 light_space_view = glm::lookAt(shadow_cam_pos, center, {0, 1, 0});
+
+  mat4 shadow_cam_vp = glm::orthoRH_ZO(min.x, max.x, max.y, min.y, min.z, max.z) * light_space_view;
   // scale origin by shadow map size
   // round it (nearest texel)
   // get the offset
@@ -240,22 +243,35 @@ void CSM::debug_shadow_pass(StateTracker& state, VkCommandBuffer cmd,
 }
 
 void CSM::render(StateTracker& state, VkCommandBuffer cmd, u32 frame_num, const mat4& cam_view,
-                 vec3 light_dir, float aspect_ratio, float fov_deg, const DrawFunc& draw) {
+                 vec3 light_dir, float aspect_ratio, float fov_deg, const DrawFunc& draw,
+                 const AABB& aabb, vec3 view_pos) {
   // draw shadows
+  float shadow_z_far = shadow_z_far_;
+  {
+    std::array<vec3, 8> aabb_corners;
+    aabb.get_corners(aabb_corners);
+    float max_dist = std::numeric_limits<float>::lowest();
+    for (auto c : aabb_corners) {
+      max_dist = std::max(glm::distance(view_pos, c), max_dist);
+    }
+    shadow_z_far = max_dist;
+    shadow_z_far_ = max_dist;
+  }
+
   std::array<float, max_cascade_levels - 1> levels;
   for (u32 i = 0; i < cascade_count_ - 1; i++) {
-    float log_dist = shadow_z_far_ / std::pow(2.0f, static_cast<float>(i + 2));
-    float linear_dist = shadow_z_far_ * (static_cast<float>(i + 1) / cascade_count_);
-    int j = cascade_count_ - 1 - i - 1;
-    levels[j] = glm::mix(log_dist, linear_dist, cascade_linear_factor_);
-    // shadow_cascade_ubo_data_.plane_distances[j] = levels[j];
+    float p = (i + 1) / static_cast<float>(cascade_count_);
+    float log_split = shadow_z_near_ * std::pow(shadow_z_far / shadow_z_near_, p);
+    float linear_split = shadow_z_near_ + ((shadow_z_far - shadow_z_near_) * p);
+    float lambda = cascade_linear_factor_;
+    levels[i] = (lambda * log_split) + ((1.0f - lambda) * linear_split);
   }
   // TODO: separate camera z near/far
   calc_csm_light_space_matrices(std::span(light_matrices_.data(), cascade_count_),
                                 std::span(levels.data(), cascade_count_ - 1), cam_view, light_dir,
-                                z_mult_, fov_deg, aspect_ratio, shadow_z_near_, shadow_z_far_,
+                                z_mult_, fov_deg, aspect_ratio, shadow_z_near_, shadow_z_far,
                                 shadow_map_res_.x);
-  ShadowData data{.biases = {0., 0., 0., shadow_z_far_}};
+  ShadowData data{.biases = {0., 0., 0., shadow_z_far}};
   for (u32 i = 0; i < cascade_count_; i++) {
     data.light_space_matrices[i] = light_matrices_[i];
   }
@@ -313,7 +329,7 @@ void CSM::on_imgui(VkSampler sampler) {
   ImGui::Checkbox("Depth Bias", &depth_bias_enabled_);
   if (depth_bias_enabled_) {
     ImGui::DragFloat("Depth Bias Constant", &depth_bias_constant_factor_, .001, 0.f, 2.f);
-    ImGui::DragFloat("Depth Bias Slope", &depth_bias_slope_factor_, .00001, .0f, 5.f);
+    ImGui::DragFloat("Depth Bias Slope", &depth_bias_slope_factor_, .001, .0f, 5.f);
   }
   ImGui::DragFloat("PCF Scale", &pcf_scale_, .001, .0f, 5.f);
   ImGui::Checkbox("PCF", &pcf_);

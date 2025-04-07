@@ -6,7 +6,6 @@
 #include "GLFW/glfw3.h"
 #include "Input.hpp"
 #include "Logger.hpp"
-#include "ThreadPool.hpp"
 #include "VkRender2.hpp"
 #include "imgui.h"
 #include "util/CVar.hpp"
@@ -110,11 +109,11 @@ void App::run() {
   for (iter.x = -len; iter.x <= len; iter.x++) {
     for (iter.z = -len; iter.z <= len; iter.z++) {
       // VkRender2::get().load_scene("/Users/tony/models/Bistro_Godot_opt.glb", false);
-      // VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false);
+      VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false);
       // VkRender2::get().load_scene("/home/tony/models/Models/Sponza/glTF/Sponza.gltf", false);
       // VkRender2::get().load_scene("/users/tony/Bistro_Godot_opt.glb", false,
       // glm::translate(mat4{1}, iter * spacing));
-      VkRender2::get().load_scene(local_models_dir / "sponza.glb", false);
+      // VkRender2::get().load_scene(local_models_dir / "sponza.glb", false);
       // VkRender2::get().load_scene(local_models_dir / "ABeautifulGame.glb", false,
       //                             glm::scale(mat4{1}, vec3{10}));
       // VkRender2::get().load_scene(local_models_dir / "DamagedHelmet.glb", false);
@@ -220,6 +219,17 @@ void App::on_imgui() {
   }
 
   ImGui::DragFloat3("Sunlight Direction", &scene_data.light_dir.x, 0.01, -10.f, 10.f);
+  ImGui::DragFloat("Light Speed", &light_speed_, .01);
+  ImGui::Checkbox("Light Spin", &spin_light_);
+  if (spin_light_) {
+    light_angle_ += light_speed_;
+    light_angle_ = glm::clamp(light_angle_, .0f, 360.f);
+
+    scene_data.light_dir.x = std::sin(light_angle_);
+    scene_data.light_dir.z = std::cos(light_angle_);
+    // scene_data.light_dir =
+  }
+
   ImGui::ColorEdit3("Sunlight Color", &scene_data.light_color.x, ImGuiColorEditFlags_Float);
   ImGui::DragFloat("Sunlight Intensity", &sun_intensity_);
   ImGui::DragFloat("Ambient Intensity", &ambient_intensity_);

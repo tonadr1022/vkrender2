@@ -12,6 +12,8 @@ This is/will be a renderer, better than my previous iterations.
 - <https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/usage_patterns.html>
 - <https://tellusim.com/mesh-shader-emulation/>
 - <https://github.com/KhronosGroup/Vulkan-Docs/wiki/Synchronization-Examples#upload-data-from-the-cpu-to-a-vertex-buffer>
+- extra pbr: <http://www.codinglabs.net/article_physically_based_rendering.aspx>
+- csm example: <https://github.com/walbourn/directx-sdk-samples/blob/main/CascadedShadowMaps11/RenderCascadeScene.hlsl>
 
 ## TODO
 

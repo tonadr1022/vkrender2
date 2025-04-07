@@ -30,11 +30,6 @@ struct MeshBounds {
   glm::vec3 extents;
 };
 
-struct AABB {
-  vec3 min;
-  vec3 max;
-};
-
 struct Material {
   vec4 emissive_factors;
   uvec4 ids1;  // albedo, normal, metal_rough, emissive

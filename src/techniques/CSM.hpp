@@ -8,6 +8,8 @@
 #include "vk2/Texture.hpp"
 
 class StateTracker;
+struct AABB;
+
 class CSM {
  public:
   struct ShadowData {
@@ -22,7 +24,8 @@ class CSM {
   void debug_shadow_pass(StateTracker& state, VkCommandBuffer cmd,
                          const vk2::Sampler& linear_sampler);
   void render(StateTracker& state, VkCommandBuffer cmd, u32 frame_num, const mat4& cam_view,
-              vec3 light_dir, float aspect_ratio, float fov_deg, const DrawFunc& draw);
+              vec3 light_dir, float aspect_ratio, float fov_deg, const DrawFunc& draw,
+              const AABB& aabb, vec3 view_pos);
   void on_imgui(VkSampler sampler);
 
   [[nodiscard]] const vk2::Texture& get_debug_img() const { return shadow_map_debug_img_; }
@@ -51,13 +54,13 @@ class CSM {
   i32 debug_cascade_idx_{0};
   float shadow_z_near_{.1};
   float shadow_z_far_{225};
-  float depth_bias_constant_factor_{1.25f};
-  float depth_bias_slope_factor_{1.75f};
+  float depth_bias_constant_factor_{.001f};
+  float depth_bias_slope_factor_{2.5f};
   bool depth_bias_enabled_{true};
   float pcf_scale_{1.};
   float min_bias_{0.001};
   float max_bias_{0.001};
   bool pcf_{true};
-  float cascade_linear_factor_{.0};
+  float cascade_linear_factor_{.6};
   float z_mult_{2.75};
 };

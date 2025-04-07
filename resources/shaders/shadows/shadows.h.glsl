@@ -47,14 +47,18 @@ float shadow_projection(uint shadow_img_idx, uint shadow_sampler_idx, vec4 shado
     // [-1,1] to [0,1]
     shadow_coord.st = shadow_coord.st * 0.5 + 0.5;
     float curr_depth = shadow_coord.z;
-    if (curr_depth > 1.0 || curr_depth < 0.0) return 1.0;
+    if (curr_depth > 1.0 || curr_depth < 0.0 ||
+            shadow_coord.x < 0.0 || shadow_coord.x > 1.0 ||
+            shadow_coord.y < 0.0 || shadow_coord.y > 1.0)
+        return 1.0;
     vec3 sc = vec3(vec2(shadow_coord.st + offset), layer);
     float pcf_depth = texture(vk2_sampler2DArray(shadow_img_idx, shadow_sampler_idx), vec3(shadow_coord.st + offset, layer)).r;
-    return (curr_depth - bias) > pcf_depth ? 0.0 : 1.0;
+    return step(curr_depth - bias, pcf_depth);
+    // return (curr_depth - bias) > pcf_depth ? 0.0 : 1.0;
 }
 
-#define RANGE 1
-#define COUNT 9
+#define RANGE 2
+#define COUNT 25
 float filter_pcf(in ShadowData shadow_ubo, uint shadow_img_idx, uint shadow_sampler_idx, vec4 shadow_coord, float bias, uint layer) {
     float scale = shadow_ubo.biases.z;
     vec2 dxdy = scale * 1.0 / vec2(textureSize(vk2_sampler2DArray(shadow_img_idx, shadow_sampler_idx), 0).xy);
@@ -90,8 +94,8 @@ float calc_shadow(in ShadowData shadow_ubo, in SceneData data, uint shadow_img_i
     // when normal is closer to 90deg with light dir, increase bias
     const float max_bias = shadow_ubo.biases.y;
     const float min_bias = shadow_ubo.biases.x;
-    float bias = max(max_bias * (1.0 - dot(normal, -data.light_dir.xyz)), min_bias);
-    const float bias_mod = 0.5;
+    float bias = max(max_bias * (1.0 - dot(normal, data.light_dir.xyz)), min_bias);
+    const float bias_mod = .5;
     // less bias for farther cascade levels
     if (layer == shadow_ubo.settings.w - 1) {
         // z_far is w
