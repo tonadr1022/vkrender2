@@ -268,7 +268,7 @@ struct VkRender2 final : public BaseRenderer {
   std::filesystem::path env_tex_path_;
   std::optional<vk2::Texture> env_equirect_tex_;
   std::optional<vk2::Texture> env_cubemap_tex_;
-  std::optional<vk2::Texture> convoluted_cubemap_tex_;
+  std::optional<vk2::Texture> irradiance_cubemap_tex_;
   std::array<std::optional<vk2::TextureView>, 6> cubemap_tex_views_;
   std::array<std::optional<vk2::TextureView>, 6> convoluted_cubemap_tex_views_;
   u64 cube_vertices_gpu_offset_{};

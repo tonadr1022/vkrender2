@@ -34,7 +34,7 @@ void calc_frustum_corners_world_space(std::span<vec4> corners, const mat4& vp_ma
   }
 }
 
-AutoCVarFloat z_pad{"z_pad", "z_padding", .5, CVarFlags::EditFloatDrag};
+AutoCVarFloat z_pad{"z_pad", "z_padding", 1.5, CVarFlags::EditFloatDrag};
 
 // https://github.com/walbourn/directx-sdk-samples/blob/main/CascadedShadowMaps11/CascadedShadowMaps11.cpp
 mat4 calc_light_space_matrix(const mat4& cam_view, const mat4& proj, vec3 light_dir, float) {

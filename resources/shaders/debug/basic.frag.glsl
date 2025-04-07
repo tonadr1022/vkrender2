@@ -23,10 +23,24 @@ struct Material {
 };
 
 VK2_DECLARE_SAMPLED_IMAGES(texture2D);
+VK2_DECLARE_SAMPLED_IMAGES(textureCube);
 
 VK2_DECLARE_STORAGE_BUFFERS_RO(MaterialBuffers){
 Material mats[];
 } materials[];
+
+struct Light {
+    vec3 L;
+    vec3 radiance;
+};
+
+// TODO: make a light buffer?
+void get_dir_light(out Light l) {
+    // TODO: move elsewhere this is cringe!
+    SceneData data = scene_data_buffer[scene_buffer].data;
+    l.L = -data.light_dir;
+    l.radiance = data.light_color;
+}
 
 void main() {
     SceneData scene_data = scene_data_buffer[scene_buffer].data;
@@ -59,9 +73,7 @@ void main() {
     }
     vec3 metal_rough = texture(vk2_sampler2D(material.ids.z, sampler_idx), in_uv).rgb;
     float metallic = metal_rough.b;
-    float roughness = max(metal_rough.g, .0001);
-    // TODO: use this remap?
-    // color.rgb = (1.0 - metallic) * color.rgb;
+    float roughness = metal_rough.g;
 
     vec3 N;
     if ((debug_flags.x & NORMAL_MAPS_ENABLED_BIT) != 0 && material.ids.y != 0) {
@@ -71,15 +83,12 @@ void main() {
     } else {
         N = normalize(in_normal);
     }
-    // vec3 N = normalize((in_normal));
     if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_NORMALS) {
         out_frag_color = vec4(N, 1.);
         return;
     }
 
     vec3 V = normalize(scene_data.view_pos - in_frag_pos);
-
-    float ambient = 0.07;
 
     // vec3 gammaCorrected = pow(color.rgb, vec3(1.0 / 2.2));
     // out_frag_color = vec4(gammaCorrected, 1.);
@@ -91,28 +100,44 @@ void main() {
 
     float shadow = calc_shadow(shadow_datas[shadow_buffer_idx].data, scene_data, shadow_img_idx, shadow_sampler_idx, N, in_frag_pos);
     if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_SHADOW) {
-        if (shadow < .99) {
-            out_frag_color = vec4(0.0);
-            return;
-        }
         out_frag_color = vec4(vec3(shadow), 1.);
         return;
     }
-    // vec3 outputColor = color.rgb * (ndotl * min(shadow + shadowAmbient, 1.) * sunIntensity + ambient) * ao + vec3(specular * shadow) * color.rgb * sunIntensity + emissive;
-    // out_frag_color = vec4(ACESFilm(outputColor), 1.);
-    // out_frag_color = vec4(tonemap(outputColor), 1.);
-    // out_frag_color = vec4(vec3(metal_rough.g), 1.);
-    // return;
-    vec3 light_out = color_pbr(N, -scene_data.light_dir, V, vec4(color.rgb, 1.), metallic, roughness, scene_data.light_color) * shadow;
-    vec3 amb = ambient * color.rgb * ao * scene_data.ambient_intensity;
-    vec3 outputColor = light_out + emissive + amb;
-    out_frag_color = vec4(outputColor, 1.);
-    // out_frag_color = vec4(ACESFilm(outputColor), 1.);
-    // out_frag_color = vec4(color.rgb * shadow, 1.);
 
-    // outputColor = (light_out + color.rgb * .4) * ao + emissive;
-    //
-    // out_frag_color = vec4(ACESFilm(outputColor), 1.);
-    // out_frag_color = vec4(tonemap(outputColor), 1.);
-    // out_frag_color = vec4(normal.rgb, 1.);
+    vec3 light_out = vec3(0.0);
+
+    vec3 albedo = color.rgb;
+    vec3 F0 = vec3(0.04);
+    F0 = mix(F0, albedo, metallic);
+    float NdotV = max(dot(N, V), 0.0);
+    // dir light
+    {
+        Light l;
+        get_dir_light(l);
+        vec3 L = l.L;
+        vec3 radiance = l.radiance;
+        vec3 H = normalize(V + L);
+
+        float NDF = DistributionGGX(N, H, roughness);
+        float G = GeometrySmith(N, V, L, roughness);
+        vec3 F = FresnelSchlick(clamp(dot(H, V), 0.0, 1.0), F0);
+
+        float NdotL = max(dot(N, L), 0.0);
+        vec3 numerator = NDF * G * F;
+        float denominator = 4.0 * max(NdotV * NdotL, .001);
+        vec3 specular = numerator / denominator;
+        vec3 kS = F;
+        vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
+        light_out += (kD * albedo + specular) * radiance * NdotL * shadow;
+    }
+
+    // IBL ambient
+    // TODO: read up, idiot
+    vec3 kS = FresnelSchlick(NdotV, F0);
+    vec3 kD = (1.0 - kS) * (1.0 - metallic);
+    vec3 irradiance = texture(vk2_samplerCube(irradiance_img_idx, sampler_idx), N).rgb * scene_data.ambient_intensity;
+    vec3 diffuse = irradiance * albedo;
+    vec3 ambient = (kD * diffuse) * ao * scene_data.ambient_intensity;
+    vec3 outputColor = light_out + emissive + ambient;
+    out_frag_color = vec4(outputColor, 1.);
 }

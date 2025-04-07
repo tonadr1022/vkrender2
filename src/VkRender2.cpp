@@ -361,7 +361,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
             .transition(env_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                         VK_ACCESS_2_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
             .transition(
-                convoluted_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                irradiance_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
             .flush_barriers();
         static const mat4 PROJ = glm::perspective(glm::radians(90.f), 1.f, .1f, 512.f);
@@ -382,9 +382,9 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
           auto color_attachment = init::rendering_attachment_info(
               convoluted_cubemap_tex_views_[i]->view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
           auto rendering_info =
-              init::rendering_info(convoluted_cubemap_tex_->extent_2d(), &color_attachment);
+              init::rendering_info(irradiance_cubemap_tex_->extent_2d(), &color_attachment);
           vkCmdBeginRenderingKHR(cmd, &rendering_info);
-          set_viewport_and_scissor(cmd, convoluted_cubemap_tex_->extent_2d());
+          set_viewport_and_scissor(cmd, irradiance_cubemap_tex_->extent_2d());
           PipelineManager::get().bind_graphics(cmd, convolute_cube_raster_pipeline_);
           struct {
             mat4 vp;
@@ -402,21 +402,21 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
         state_
             .transition(env_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                         VK_ACCESS_2_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-            .transition(convoluted_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+            .transition(irradiance_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                         VK_ACCESS_2_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL)
             .flush_barriers();
         PipelineManager::get().bind_compute(cmd, convolute_cube_pipeline_);
         struct {
           u32 in_tex_idx, out_tex_idx, sampler_idx, in_img_size_x;
         } pc{env_cubemap_tex_->view().storage_img_resource().handle,
-             convoluted_cubemap_tex_->view().storage_img_resource().handle,
+             irradiance_cubemap_tex_->view().storage_img_resource().handle,
              linear_sampler_->resource_info.handle, env_cubemap_tex_->extent_2d().width};
         ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-        ctx.dispatch(convoluted_cubemap_tex_->extent_2d().width / 16,
-                     convoluted_cubemap_tex_->extent_2d().height / 16, 6);
+        ctx.dispatch(irradiance_cubemap_tex_->extent_2d().width / 16,
+                     irradiance_cubemap_tex_->extent_2d().height / 16, 6);
       }
       state_
-          .transition(convoluted_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+          .transition(irradiance_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                       VK_ACCESS_2_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
           .flush_barriers();
     }
@@ -565,7 +565,8 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
                               linear_sampler_->resource_info.handle,
                               csm_->get_shadow_data_buffer(curr_frame_num()).resource_info_->handle,
                               csm_->get_shadow_sampler().resource_info.handle,
-                              csm_->get_shadow_img().view().sampled_img_resource().handle};
+                              csm_->get_shadow_img().view().sampled_img_resource().handle,
+                              irradiance_cubemap_tex_->view().sampled_img_resource().handle};
         ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
 
         vkCmdBindIndexBuffer(cmd, index_buffer.buffer(), 0, VK_INDEX_TYPE_UINT32);
@@ -593,7 +594,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
         struct {
           u32 scene_buffer, tex_idx, sampler_idx;
         } pc{scene_buffer_handle,
-             convoluted_skybox.get() ? convoluted_cubemap_tex_->view().sampled_img_resource().handle
+             convoluted_skybox.get() ? irradiance_cubemap_tex_->view().sampled_img_resource().handle
                                      : env_cubemap_tex_->view().sampled_img_resource().handle,
              linear_sampler_->resource_info.handle};
         ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
@@ -1148,7 +1149,7 @@ std::optional<vk2::Texture> VkRender2::load_hdr_img(const std::filesystem::path&
 void VkRender2::init_ibl() {
   u32 skybox_res = 1024;
   u32 convoluted_res = 32;
-  convoluted_cubemap_tex_ =
+  irradiance_cubemap_tex_ =
       vk2::Texture{TextureCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_CUBE,
                                      .format = VK_FORMAT_R16G16B16A16_SFLOAT,
                                      .extent = {convoluted_res, convoluted_res, 1},
@@ -1174,7 +1175,7 @@ void VkRender2::init_ibl() {
           .fragment_path = "ibl/cube_convolute.frag",
           .rendering =
               {
-                  .color_formats = {convoluted_cubemap_tex_->format()},
+                  .color_formats = {irradiance_cubemap_tex_->format()},
                   .color_formats_cnt = 1,
               },
           .rasterization = {.cull_mode = CullMode::None},
@@ -1212,5 +1213,5 @@ void VkRender2::init_ibl() {
   };
 
   cubemap_tex_views_ = make_cubemap_views(env_cubemap_tex_.value());
-  convoluted_cubemap_tex_views_ = make_cubemap_views(convoluted_cubemap_tex_.value());
+  convoluted_cubemap_tex_views_ = make_cubemap_views(irradiance_cubemap_tex_.value());
 }

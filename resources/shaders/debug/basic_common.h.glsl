@@ -13,6 +13,7 @@ uint sampler_idx;
 uint shadow_buffer_idx;
 uint shadow_sampler_idx;
 uint shadow_img_idx;
+uint irradiance_img_idx;
 } ;
 
 #endif // BASIC_COMMON_H

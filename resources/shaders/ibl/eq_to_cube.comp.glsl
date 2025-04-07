@@ -4,6 +4,7 @@
 
 #include "../resources.h.glsl"
 #include "./eq_to_cube_comp_common.h.glsl"
+#include "../math.h.glsl"
 
 layout(local_size_x = 16, local_size_y = 16) in;
 
@@ -42,5 +43,6 @@ vec2 sample_spherical_map(vec3 p) {
 void main() {
     vec2 uv = sample_spherical_map(get_world_dir(gl_GlobalInvocationID, imageSize(vk2_get_storage_img(imageCube, out_tex_idx)).x));
     vec4 color = texture(vk2_sampler2D(tex_idx, sampler_idx), uv);
+    // color.rgb = tonemap(color.rgb);
     imageStore(vk2_get_storage_img(imageCube, out_tex_idx), ivec3(gl_GlobalInvocationID), color);
 }

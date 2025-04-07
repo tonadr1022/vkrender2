@@ -26,7 +26,9 @@ void main() {
     float num_samples = 0.;
     for (float phi = 0.; phi < 2. * PI; phi += sample_delta) {
         for (float theta = 0.; theta < .5 * PI; theta += sample_delta) {
+            // spherical to cartesian, tangent space
             vec3 tangent_sample = vec3(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
+            // tangent to world
             vec3 sample_vec = tangent_sample.x * right + tangent_sample.y * up + tangent_sample.z * N;
             irradiance += texture(vk2_samplerCube(in_tex_idx, sampler_idx), sample_vec).rgb * cos(theta) * sin(theta);
             num_samples++;

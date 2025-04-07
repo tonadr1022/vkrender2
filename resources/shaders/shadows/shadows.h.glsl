@@ -57,8 +57,8 @@ float shadow_projection(uint shadow_img_idx, uint shadow_sampler_idx, vec4 shado
     // return (curr_depth - bias) > pcf_depth ? 0.0 : 1.0;
 }
 
-#define RANGE 2
-#define COUNT 25
+#define RANGE 1
+#define COUNT 9
 float filter_pcf(in ShadowData shadow_ubo, uint shadow_img_idx, uint shadow_sampler_idx, vec4 shadow_coord, float bias, uint layer) {
     float scale = shadow_ubo.biases.z;
     vec2 dxdy = scale * 1.0 / vec2(textureSize(vk2_sampler2DArray(shadow_img_idx, shadow_sampler_idx), 0).xy);

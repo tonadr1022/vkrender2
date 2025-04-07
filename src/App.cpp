@@ -110,17 +110,18 @@ void App::run() {
     for (iter.z = -len; iter.z <= len; iter.z++) {
       // VkRender2::get().load_scene("/Users/tony/models/Bistro_Godot_opt.glb", false);
       VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false);
+      // VkRender2::get().load_scene(local_models_dir / "sponza.glb", false);
       // VkRender2::get().load_scene("/home/tony/models/Models/Sponza/glTF/Sponza.gltf", false);
       // VkRender2::get().load_scene("/users/tony/Bistro_Godot_opt.glb", false,
       // glm::translate(mat4{1}, iter * spacing));
-      // VkRender2::get().load_scene(local_models_dir / "sponza.glb", false);
       // VkRender2::get().load_scene(local_models_dir / "ABeautifulGame.glb", false,
       //                             glm::scale(mat4{1}, vec3{10}));
       // VkRender2::get().load_scene(local_models_dir / "DamagedHelmet.glb", false);
     }
   }
 
-  std::filesystem::path env_tex = "/home/tony/Downloads/newport_loft.hdr";
+  std::filesystem::path env_tex = "/home/tony/Downloads/quarry_04_puresky_4k.hdr";
+  // std::filesystem::path env_tex = "/home/tony/Downloads/newport_loft.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/golden_gate_hills_4k.hdr";
   // auto env_tex = resource_dir / "test.hdr";
 
