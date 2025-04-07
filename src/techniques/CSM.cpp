@@ -73,6 +73,8 @@ mat4 calc_light_space_matrix(const mat4& cam_view, const mat4& proj, vec3 light_
   return light_proj * light_view;
 }
 
+// TODO: calculate near and far based on scene AABB:
+// https://github.com/walbourn/directx-sdk-samples/blob/main/CascadedShadowMaps11/CascadedShadowsManager.cpp
 mat4 calc_light_space_matrix(const mat4& cam_view, const mat4& proj, vec3 light_dir, float z_mult,
                              u32 shadow_map_size) {
   if (!stable_light_view.get()) {

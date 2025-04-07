@@ -24,7 +24,13 @@ struct Vertex {
   vec4 tangent;
 };
 
-struct Box3D {
+struct MeshBounds {
+  glm::vec3 origin;
+  float radius;
+  glm::vec3 extents;
+};
+
+struct AABB {
   vec3 min;
   vec3 max;
 };
@@ -36,6 +42,7 @@ struct Material {
 };
 
 struct PrimitiveDrawInfo {
+  MeshBounds bounds;
   u32 first_index;
   u32 index_count;
   u32 first_vertex;

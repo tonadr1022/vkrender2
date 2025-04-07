@@ -102,9 +102,7 @@ void main() {
     vec3 light_out = color_pbr(N, scene_data.light_dir, V, vec4(color.rgb, 1.), metallic, roughness, scene_data.light_color) * shadow;
     vec3 amb = ambient * color.rgb * ao * scene_data.ambient_intensity;
     vec3 outputColor = light_out * shadow + emissive + amb;
-    vec3 tonemapped = ACESFilm(outputColor);
-    vec3 gamma_corrected = gamma_correct(tonemapped);
-    out_frag_color = vec4(gamma_corrected, 1.);
+    out_frag_color = vec4(outputColor, 1.);
     // out_frag_color = vec4(ACESFilm(outputColor), 1.);
     // out_frag_color = vec4(color.rgb * shadow, 1.);
 

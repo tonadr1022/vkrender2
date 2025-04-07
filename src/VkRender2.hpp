@@ -224,6 +224,7 @@ struct VkRender2 final : public BaseRenderer {
   StateTracker transfer_q_state_;
   std::optional<vk2::Texture> depth_img_;
   std::optional<vk2::Texture> img_;
+  std::optional<vk2::Texture> post_processed_img_;
 
   std::optional<vk2::Sampler> linear_sampler_;
   struct DefaultData {
@@ -244,6 +245,8 @@ struct VkRender2 final : public BaseRenderer {
   vk2::PipelineHandle equirect_to_cube_pipeline2_;
   vk2::PipelineHandle skybox_pipeline_;
   vk2::PipelineHandle convolute_cube_pipeline_;
+  vk2::PipelineHandle convolute_cube_raster_pipeline_;
+  vk2::PipelineHandle postprocess_pipeline_;
   VkPipelineLayout default_pipeline_layout_{};
   std::queue<InFlightResource<vk2::Buffer*>> pending_buffer_transfers_;
 
@@ -265,6 +268,7 @@ struct VkRender2 final : public BaseRenderer {
   std::optional<vk2::Texture> env_cubemap_tex_;
   std::optional<vk2::Texture> convoluted_cubemap_tex_;
   std::array<std::optional<vk2::TextureView>, 6> cubemap_tex_views_;
+  std::array<std::optional<vk2::TextureView>, 6> convoluted_cubemap_tex_views_;
   u64 cube_vertices_gpu_offset_{};
   // u64 cube_indices_gpu_offset_{};
   // std::optional<vk2::Buffer> cube_vertex_buf_;

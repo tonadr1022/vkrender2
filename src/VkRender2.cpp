@@ -39,6 +39,13 @@ namespace {
 VkRender2* instance{};
 
 AutoCVarInt ao_map_enabled{"renderer.ao_map", "AO Map", 1, CVarFlags::EditCheckbox};
+AutoCVarInt postprocess_pass{"renderer.postprocess_pass_enabled", "PostProcess Pass Enabled", 1,
+                             CVarFlags::EditCheckbox};
+AutoCVarInt tonemap_enabled{"renderer.tonemap_enabled", "Tonemapping Enabled", 1,
+                            CVarFlags::EditCheckbox};
+AutoCVarInt gammacorrect_enabled{"renderer.gammacorrect_enabled", "Gamma Correction Enabled", 1,
+                                 CVarFlags::EditCheckbox};
+
 AutoCVarInt convoluted_skybox{"renderer.convoluted_skybox", "convoluted_skybox", 1,
                               CVarFlags::EditCheckbox};
 AutoCVarInt normal_map_enabled{"renderer.normal_map", "Normal Map", 1, CVarFlags::EditCheckbox};
@@ -163,7 +170,7 @@ VkRender2::VkRender2(const InitInfo& info)
       .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
       .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
       .minLod = -1000,
-      .maxLod = 1,
+      .maxLod = 1000,
       .borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
   });
   default_mat_data_.white_img_handle =
@@ -346,22 +353,71 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
 
     {
       TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "convolute cube");
-      // convolute
+      bool use_raster = false;
+      use_raster = true;
+      if (use_raster) {
+        state_
+            .transition(env_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                        VK_ACCESS_2_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+            .transition(
+                convoluted_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+            .flush_barriers();
+        static const mat4 PROJ = glm::perspective(glm::radians(90.f), 1.f, .1f, 512.f);
+        static const std::array<glm::mat4, 6> VIEW_MATRICES = {
+            glm::rotate(
+                glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
+                glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f)),
+            glm::rotate(
+                glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
+                glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f)),
+            glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f)),
+            glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f)),
+            glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f)),
+            glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
+        };
+
+        for (u32 i = 0; i < 6; i++) {
+          auto color_attachment = init::rendering_attachment_info(
+              convoluted_cubemap_tex_views_[i]->view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+          auto rendering_info =
+              init::rendering_info(convoluted_cubemap_tex_->extent_2d(), &color_attachment);
+          vkCmdBeginRenderingKHR(cmd, &rendering_info);
+          set_viewport_and_scissor(cmd, convoluted_cubemap_tex_->extent_2d());
+          PipelineManager::get().bind_graphics(cmd, convolute_cube_raster_pipeline_);
+          struct {
+            mat4 vp;
+            u32 in_tex_idx, sampler_idx, vertex_buffer_idx;
+          } pc{PROJ * VIEW_MATRICES[i], env_cubemap_tex_->view().sampled_img_resource().handle,
+               linear_sampler_->resource_info.handle,
+               static_vertex_buf_->buffer.resource_info_->handle};
+          ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
+          vkCmdDraw(cmd, 36, 1, cube_vertices_gpu_offset_ / sizeof(gfx::Vertex), 0);
+          vkCmdEndRenderingKHR(cmd);
+        }
+
+      } else {
+        // convolute
+        state_
+            .transition(env_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                        VK_ACCESS_2_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+            .transition(convoluted_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                        VK_ACCESS_2_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL)
+            .flush_barriers();
+        PipelineManager::get().bind_compute(cmd, convolute_cube_pipeline_);
+        struct {
+          u32 in_tex_idx, out_tex_idx, sampler_idx, in_img_size_x;
+        } pc{env_cubemap_tex_->view().storage_img_resource().handle,
+             convoluted_cubemap_tex_->view().storage_img_resource().handle,
+             linear_sampler_->resource_info.handle, env_cubemap_tex_->extent_2d().width};
+        ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
+        ctx.dispatch(convoluted_cubemap_tex_->extent_2d().width / 16,
+                     convoluted_cubemap_tex_->extent_2d().height / 16, 6);
+      }
       state_
-          .transition(env_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+          .transition(convoluted_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                       VK_ACCESS_2_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-          .transition(convoluted_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                      VK_ACCESS_2_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL)
           .flush_barriers();
-      PipelineManager::get().bind_compute(cmd, convolute_cube_pipeline_);
-      struct {
-        u32 in_tex_idx, out_tex_idx, sampler_idx, in_img_size_x;
-      } pc{env_cubemap_tex_->view().sampled_img_resource().handle,
-           convoluted_cubemap_tex_->view().storage_img_resource().handle,
-           linear_sampler_->resource_info.handle, env_cubemap_tex_->extent_2d().width};
-      ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-      ctx.dispatch(convoluted_cubemap_tex_->extent_2d().width / 16,
-                   convoluted_cubemap_tex_->extent_2d().height / 16, 6);
     }
   }
 
@@ -543,21 +599,42 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
       vkCmdEndRenderingKHR(cmd);
     }
 
-    state_.transition(img_->image(), VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_MEMORY_READ_BIT,
-                      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
+    if (postprocess_pass.get()) {
+      u32 postprocess_flags = 0;
+      if (gammacorrect_enabled.get()) {
+        postprocess_flags |= 0x2;
+      }
+      if (tonemap_enabled.get()) {
+        postprocess_flags |= 0x1;
+      }
+      state_
+          .transition(img_->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                      VK_ACCESS_2_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+          .transition(post_processed_img_->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                      VK_ACCESS_2_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL)
+          .flush_barriers();
+      PipelineManager::get().bind_compute(cmd, postprocess_pipeline_);
+      struct {
+        u32 in_tex_idx, out_tex_idx, flags;
+      } pc{img_->view().storage_img_resource().handle,
+           post_processed_img_->view().storage_img_resource().handle, postprocess_flags};
+      ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
+      vkCmdDispatch(cmd, (post_processed_img_->extent_2d().width + 16) / 16,
+                    (post_processed_img_->extent_2d().height + 16) / 16, 1);
+    }
 
-    state_.transition(depth_img_->image(), VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, VK_ACCESS_2_NONE,
-                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT);
-
+    state_.transition(post_processed_img_->image(), VK_PIPELINE_STAGE_2_BLIT_BIT,
+                      VK_ACCESS_2_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                      VK_IMAGE_ASPECT_COLOR_BIT);
     auto& swapchain_img = swapchain_.imgs[curr_swapchain_img_idx()];
     state_.transition(swapchain_img, VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
 
     state_.flush_barriers();
 
-    VkExtent3D dims{glm::min(img_->extent().width, swapchain_.dims.x),
-                    glm::min(img_->extent().height, swapchain_.dims.y), 1};
-    blit_img(cmd, img_->image(), swapchain_img, dims, VK_IMAGE_ASPECT_COLOR_BIT);
+    VkExtent3D dims{glm::min(post_processed_img_->extent().width, swapchain_.dims.x),
+                    glm::min(post_processed_img_->extent().height, swapchain_.dims.y), 1};
+    blit_img(cmd, post_processed_img_->image(), swapchain_img, dims, VK_IMAGE_ASPECT_COLOR_BIT);
 
     if (draw_imgui) {
       state_.transition(
@@ -668,7 +745,8 @@ void VkRender2::create_attachment_imgs() {
   auto win_dims = window_dims();
   uvec3 dims{win_dims, 1};
 
-  img_ = create_texture_2d(VK_FORMAT_R8G8B8A8_UNORM, dims, TextureUsage::General);
+  img_ = create_texture_2d(VK_FORMAT_R16G16B16A16_SFLOAT, dims, TextureUsage::General);
+  post_processed_img_ = create_texture_2d(VK_FORMAT_R8G8B8A8_UNORM, dims, TextureUsage::General);
   depth_img_ = create_texture_2d(VK_FORMAT_D32_SFLOAT, dims, TextureUsage::AttachmentReadOnly);
 }
 
@@ -874,146 +952,6 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
     return {};
   }
   return {};
-  // auto copy_buffer = [](VkCommandBuffer cmd, const Buffer& src_buffer, const Buffer& dst_buffer,
-  //                       u64 src_offset, u64 dst_offset, u64 size) {
-  //   VkBufferCopy2KHR copy{.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2_KHR,
-  //                         .srcOffset = src_offset,
-  //                         .dstOffset = dst_offset,
-  //                         .size = size};
-  //   VkCopyBufferInfo2KHR copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
-  //                                  .srcBuffer = src_buffer.buffer(),
-  //                                  .dstBuffer = dst_buffer.buffer(),
-  //                                  .regionCount = 1,
-  //                                  .pRegions = &copy};
-  //   vkCmdCopyBuffer2KHR(cmd, &copy_info);
-  // };
-  //
-  // // TODO: refactor
-  // auto ret = gfx::load_gltf(path, default_mat_data_);
-  // if (!ret.has_value()) {
-  //   return {};
-  // }
-  // auto res = std::move(ret.value());
-  //
-  // std::vector<mat4> transforms;
-  // std::vector<u32> material_ids;
-  // transforms.reserve(res.scene_graph_data.mesh_node_indices.size());
-  // material_ids.reserve(res.scene_graph_data.mesh_node_indices.size());
-  // u32 material_id_offset = static_draw_stats_.materials;
-  // for (auto& node : res.scene_graph_data.node_datas) {
-  //   for (auto& mesh_indices : node.meshes) {
-  //     transforms.emplace_back(node.world_transform);
-  //     material_ids.emplace_back(mesh_indices.material_id + material_id_offset);
-  //   }
-  // }
-  // u64 transforms_size = transforms.size() * sizeof(mat4);
-  // u64 material_indices_size = material_ids.size() * sizeof(u32);
-  // u64 material_data_size = res.materials.size() * sizeof(gfx::Material);
-  // u64 vertices_size = res.vertices.size() * sizeof(gfx::Vertex);
-  // u64 indices_size = res.indices.size() * sizeof(u32);
-  //
-  // std::vector<VkDrawIndexedIndirectCommand> cmds;
-  // cmds.reserve(res.scene_graph_data.mesh_node_indices.size());
-  //
-  // u32 i = 0;
-  // for (auto& node : res.scene_graph_data.node_datas) {
-  //   for (auto& mesh_indices : node.meshes) {
-  //     auto& mesh = res.mesh_draw_infos[mesh_indices.mesh_idx];
-  //     cmds.emplace_back(
-  //         VkDrawIndexedIndirectCommand{.indexCount = mesh.index_count,
-  //                                      .instanceCount = 1,
-  //                                      .firstIndex = mesh.first_index,
-  //                                      .vertexOffset = static_cast<i32>(mesh.first_vertex),
-  //                                      .firstInstance = i++});
-  //   }
-  // }
-  // u64 draw_indirect_buf_size = cmds.size() * sizeof(VkDrawIndexedIndirectCommand);
-  // SceneHandle handle{loaded_dynamic_scenes_.size()};
-  // loaded_dynamic_scenes_.emplace_back(LoadedScene{
-  //     std::move(res.scene_graph_data),
-  //     std::make_unique<SceneGPUResources>(
-  //         create_storage_buffer(vertices_size),
-  //         Buffer{BufferCreateInfo{
-  //             .size = indices_size,
-  //             .usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-  //         }},
-  //         create_storage_buffer(res.materials.size() * sizeof(gfx::Material)),
-  //         Buffer{BufferCreateInfo{
-  //             .size = draw_indirect_buf_size,
-  //             .usage = VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-  //         }},
-  //         create_storage_buffer(material_indices_size), create_storage_buffer(transforms_size),
-  //         std::move(res.textures), cmds.size()),
-  // });
-  //
-  // auto& gltf_result = loaded_dynamic_scenes_[handle.get()];
-  //
-  // auto* resources = gltf_result.resources.get();
-  //
-  // vk2::Buffer* staging = vk2::StagingBufferPool::get().acquire(
-  //     draw_indirect_buf_size + transforms_size + material_data_size + material_indices_size +
-  //     vertices_size + indices_size);
-  // u64 offset = 0;
-  // memcpy(staging->mapped_data(), cmds.data(), draw_indirect_buf_size);
-  // offset += draw_indirect_buf_size;
-  // memcpy((char*)staging->mapped_data() + offset, transforms.data(), transforms_size);
-  // offset += transforms_size;
-  // memcpy((char*)staging->mapped_data() + offset, res.materials.data(), material_data_size);
-  // offset += material_data_size;
-  // memcpy((char*)staging->mapped_data() + offset, material_ids.data(), material_indices_size);
-  // offset += material_indices_size;
-  // u64 vertices_staging_offset = offset;
-  // memcpy((char*)staging->mapped_data() + offset, res.vertices.data(), vertices_size);
-  // offset += vertices_size;
-  // u64 indices_staging_offset = offset;
-  // memcpy((char*)staging->mapped_data() + offset, res.indices.data(), indices_size);
-  //
-  // {
-  //   transfer_submit([&, this](VkCommandBuffer cmd, VkFence fence,
-  //                             std::queue<InFlightResource<vk2::Buffer*>>& transfers) {
-  //     copy_buffer(cmd, *staging, resources->vertex_buffer, vertices_staging_offset, 0,
-  //                 vertices_size);
-  //     copy_buffer(cmd, *staging, resources->index_buffer, indices_staging_offset, 0,
-  //     indices_size); copy_buffer(cmd, *staging, resources->draw_indirect_buffer, 0, 0,
-  //     draw_indirect_buf_size); copy_buffer(cmd, *staging, resources->instance_buffer,
-  //     draw_indirect_buf_size, 0,
-  //                 transforms_size);
-  //     copy_buffer(cmd, *staging, resources->materials_buffer,
-  //                 draw_indirect_buf_size + transforms_size, 0, material_data_size);
-  //     copy_buffer(cmd, *staging, resources->material_indices,
-  //                 draw_indirect_buf_size + transforms_size + material_data_size, 0,
-  //                 material_indices_size);
-  //     {
-  //       transfer_q_state_.reset(cmd)
-  //           .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
-  //                                  VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT,
-  //                                  resources->vertex_buffer.buffer(), queues_.transfer_queue_idx,
-  //                                  queues_.graphics_queue_idx)
-  //           .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT,
-  //                                  VK_ACCESS_2_INDEX_READ_BIT, resources->index_buffer.buffer(),
-  //                                  queues_.transfer_queue_idx, queues_.graphics_queue_idx)
-  //           .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
-  //                                  VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT,
-  //                                  resources->draw_indirect_buffer.buffer(),
-  //                                  queues_.transfer_queue_idx, queues_.graphics_queue_idx)
-  //           .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
-  //                                  VK_ACCESS_2_SHADER_READ_BIT,
-  //                                  resources->instance_buffer.buffer(),
-  //                                  queues_.transfer_queue_idx, queues_.graphics_queue_idx)
-  //           .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
-  //                                  VK_ACCESS_2_SHADER_READ_BIT,
-  //                                  resources->materials_buffer.buffer(),
-  //                                  queues_.transfer_queue_idx, queues_.graphics_queue_idx)
-  //           .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
-  //                                  VK_ACCESS_2_SHADER_READ_BIT,
-  //                                  resources->material_indices.buffer(),
-  //                                  queues_.transfer_queue_idx, queues_.graphics_queue_idx)
-  //           .flush_barriers();
-  //     }
-  //     transfers.emplace(staging, fence);
-  //   });
-  // }
-  // return handle;
 }
 
 void VkRender2::submit_static(SceneHandle, mat4) {}
@@ -1081,8 +1019,9 @@ void VkRender2::transfer_submit(
 }
 
 void VkRender2::init_pipelines() {
-  img_pipeline_ = PipelineManager::get().load_compute_pipeline(
-      {"debug/clear_img.comp", default_pipeline_layout_});
+  postprocess_pipeline_ =
+      PipelineManager::get().load_compute_pipeline({"postprocess/postprocess.comp"});
+  img_pipeline_ = PipelineManager::get().load_compute_pipeline({"debug/clear_img.comp"});
   draw_pipeline_ = PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
       .vertex_path = "debug/basic.vert",
       .fragment_path = "debug/basic.frag",
@@ -1217,7 +1156,17 @@ void VkRender2::init_ibl() {
   convolute_cube_pipeline_ = PipelineManager::get().load_compute_pipeline(ComputePipelineCreateInfo{
       .path = "ibl/cube_convolute.comp",
   });
-
+  convolute_cube_raster_pipeline_ =
+      PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
+          .vertex_path = "ibl/cube_convolute.vert",
+          .fragment_path = "ibl/cube_convolute.frag",
+          .rendering =
+              {
+                  .color_formats = {convoluted_cubemap_tex_->format()},
+                  .color_formats_cnt = 1,
+              },
+          .rasterization = {.cull_mode = CullMode::None},
+      });
   equirect_to_cube_pipeline_ =
       PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
           .vertex_path = "ibl/equirect_to_cube.vert",
@@ -1230,19 +1179,26 @@ void VkRender2::init_ibl() {
           // .rasterization = {.cull_mode = CullMode::None},
       });
 
-  for (u32 i = 0; i < 6; i++) {
-    cubemap_tex_views_[i] =
-        TextureView{*env_cubemap_tex_, TextureViewCreateInfo{
-                                           .format = env_cubemap_tex_->format(),
-                                           .range =
-                                               {
-                                                   .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                                   .baseMipLevel = 0,
-                                                   .levelCount = 1,
-                                                   .baseArrayLayer = i,
-                                                   .layerCount = 1,
-                                               },
-                                           .view_type = VK_IMAGE_VIEW_TYPE_2D,
-                                       }};
-  }
+  auto make_cubemap_views =
+      [](const vk2::Texture& tex) -> std::array<std::optional<vk2::TextureView>, 6> {
+    std::array<std::optional<vk2::TextureView>, 6> result;
+    for (u32 i = 0; i < 6; i++) {
+      result[i] = TextureView{tex, TextureViewCreateInfo{
+                                       .format = tex.format(),
+                                       .range =
+                                           {
+                                               .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                               .baseMipLevel = 0,
+                                               .levelCount = 1,
+                                               .baseArrayLayer = i,
+                                               .layerCount = 1,
+                                           },
+                                       .view_type = VK_IMAGE_VIEW_TYPE_2D,
+                                   }};
+    }
+    return result;
+  };
+
+  cubemap_tex_views_ = make_cubemap_views(env_cubemap_tex_.value());
+  convoluted_cubemap_tex_views_ = make_cubemap_views(convoluted_cubemap_tex_.value());
 }

@@ -121,7 +121,8 @@ void App::run() {
     }
   }
 
-  std::filesystem::path env_tex = "/home/tony/Downloads/golden_gate_hills_4k.hdr";
+  std::filesystem::path env_tex = "/home/tony/Downloads/newport_loft.hdr";
+  // std::filesystem::path env_tex = "/home/tony/Downloads/golden_gate_hills_4k.hdr";
   // auto env_tex = resource_dir / "test.hdr";
 
   while (!glfwWindowShouldClose(window)) {

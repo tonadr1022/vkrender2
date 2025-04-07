@@ -23,6 +23,7 @@
 #extension GL_EXT_nonuniform_qualifier : require
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_shader_image_load_formatted : require   // readable images without explicit format
 
 #define BINDLESS_STORAGE_BUFFER_BINDING 1
 #define BINDLESS_SAMPLER_BINDING 0
@@ -36,6 +37,8 @@
   layout(set = 0, binding = BINDLESS_STORAGE_IMAGE_BINDING) uniform type t_storage_images_##type[]
 #define VK2_DECLARE_STORAGE_IMAGES_WO(type) \
   layout(set = 0, binding = BINDLESS_STORAGE_IMAGE_BINDING) writeonly uniform type t_storage_images_##type[]
+#define VK2_DECLARE_STORAGE_IMAGES_RO(type) \
+  layout(set = 0, binding = BINDLESS_STORAGE_IMAGE_BINDING) readonly uniform type t_storage_images_##type[]
 
 #define VK2_DECLARE_STORAGE_BUFFERS(blockname) \
   layout(set = 0, binding = BINDLESS_STORAGE_BUFFER_BINDING) buffer blockname
