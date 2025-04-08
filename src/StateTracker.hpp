@@ -10,7 +10,8 @@
 
 namespace vk2 {
 class Buffer;
-}
+class Texture;
+}  // namespace vk2
 
 struct BufferBarrier {
   VkPipelineStageFlags2 src_stage{};
@@ -28,6 +29,9 @@ struct BufferBarrier {
 };
 
 VkBufferMemoryBarrier2 buffer_memory_barrier(const BufferBarrier& t);
+void transition_image(VkCommandBuffer cmd, vk2::Texture& image, VkImageLayout old_layout,
+                      VkImageLayout new_layout,
+                      VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
 
 class StateTracker {
  public:
@@ -39,19 +43,23 @@ class StateTracker {
 
   void flush_barriers();
 
-  StateTracker& add_image(VkImage image, VkAccessFlags2 access, VkPipelineStageFlags2 stage);
-
   VkImageSubresourceRange default_image_subresource_range(
       VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
 
   StateTracker& transition(VkImage image, VkPipelineStageFlags2 dst_stage,
                            VkAccessFlags2 dst_access, VkImageLayout new_layout,
                            VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
-  StateTracker& transition_img_to_copy_dst(VkImage image,
+  StateTracker& transition(vk2::Texture& image, VkPipelineStageFlags2 dst_stage,
+                           VkAccessFlags2 dst_access, VkImageLayout new_layout,
+                           VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
+  StateTracker& transition_img_to_copy_dst(vk2::Texture& image,
                                            VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
   StateTracker& transition_buffer_to_transfer_dst(VkBuffer buffer);
 
   StateTracker& transition(VkImage image, VkPipelineStageFlags2 dst_stage,
+                           VkAccessFlags2 dst_access, VkImageLayout new_layout,
+                           const VkImageSubresourceRange& range);
+  StateTracker& transition(vk2::Texture& image, VkPipelineStageFlags2 dst_stage,
                            VkAccessFlags2 dst_access, VkImageLayout new_layout,
                            const VkImageSubresourceRange& range);
   StateTracker& buffer_barrier(VkBuffer buffer, VkPipelineStageFlags2 dst_stage,
@@ -66,8 +74,6 @@ class StateTracker {
 
   StateTracker& reset(VkCommandBuffer cmd);
   StateTracker& flush_transfers(u32 queue_idx);
-
- private:
   struct ImageState {
     VkImage image;
     VkAccessFlags2 curr_access;
@@ -81,6 +87,16 @@ class StateTracker {
     VkPipelineStageFlags2 curr_stage;
   };
 
+  [[nodiscard]] ImageState* get_img_state(VkImage image) {
+    for (auto& img : tracked_imgs_) {
+      if (img.image == image) {
+        return &img;
+      }
+    }
+    return nullptr;
+  }
+
+ private:
   std::vector<ImageState> tracked_imgs_;
   std::vector<BufferState> tracked_buffers_;
   std::vector<VkImageMemoryBarrier2> img_barriers_;

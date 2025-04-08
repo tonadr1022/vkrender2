@@ -68,5 +68,8 @@ VkImageCreateInfo img_create_info_2d(VkFormat format, uvec2 dims, bool mipmap,
 void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout currentLayout,
                       VkImageLayout newLayout);
 
+void begin_debug_utils_label(VkCommandBuffer cmd, const char* name);
+void end_debug_utils_label(VkCommandBuffer cmd);
+
 VkImageSubresourceRange subresource_range_whole(VkImageAspectFlags aspect);
 }  // namespace vk2::init

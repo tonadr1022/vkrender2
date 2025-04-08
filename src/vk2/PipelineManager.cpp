@@ -351,8 +351,16 @@ VkPipeline PipelineManager::load_graphics_pipeline_impl(const GraphicsPipelineCr
   for (const auto& attachment : info.blend.attachments) {
     attachments[i++] = convert_color_blend_attachment(attachment);
   }
+  u32 color_format_cnt = 0;
+  for (auto format : info.rendering.color_formats) {
+    if (format != VK_FORMAT_UNDEFINED) {
+      color_format_cnt++;
+    } else {
+      break;
+    }
+  }
   // dummy blend attachment if color attachment is specified but no blending
-  if (i == 0 && info.rendering.color_formats_cnt > 0) {
+  if (i == 0 && color_format_cnt > 0) {
     attachment_cnt = 1;
     attachments[0] =
         convert_color_blend_attachment(GraphicsPipelineCreateInfo::ColorBlendAttachment{});
@@ -412,7 +420,7 @@ VkPipeline PipelineManager::load_graphics_pipeline_impl(const GraphicsPipelineCr
 
   VkPipelineRenderingCreateInfo rendering_info{
       .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-      .colorAttachmentCount = static_cast<u32>(info.rendering.color_formats_cnt),
+      .colorAttachmentCount = color_format_cnt,
       .pColorAttachmentFormats = info.rendering.color_formats.data(),
       .depthAttachmentFormat = info.rendering.depth_format,
       .stencilAttachmentFormat = info.rendering.stencil_format};

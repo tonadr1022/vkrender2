@@ -27,6 +27,7 @@ Texture::~Texture() {
 Texture::Texture(Texture&& other) noexcept
     : create_info_(std::exchange(other.create_info_, {})),
       view_(std::move(other.view_)),
+      name_(std::move(other.name_)),
       image_(std::exchange(other.image_, nullptr)),
       allocation_(std::exchange(other.allocation_, nullptr)) {}
 
@@ -35,6 +36,7 @@ Texture& Texture::operator=(Texture&& other) noexcept {
     return *this;
   }
   this->~Texture();
+  name_ = std::move(other.name_);
   create_info_ = std::exchange(other.create_info_, {});
   view_ = std::move(other.view_);
   image_ = std::exchange(other.image_, nullptr);
@@ -133,6 +135,16 @@ Texture::Texture(const TextureCreateInfo& create_info) {
   }
 
   create_info_ = create_info;
+#ifndef NDEBUG
+  if (create_info.name.size()) {
+    VkDebugUtilsObjectNameInfoEXT name_info = {
+        .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+        .objectType = VK_OBJECT_TYPE_IMAGE,
+        .objectHandle = (u64)image_,
+        .pObjectName = create_info.name.c_str()};
+    vkSetDebugUtilsObjectNameEXT(get_device().device(), &name_info);
+  }
+#endif
   view_ = TextureView{*this, TextureViewCreateInfo{.format = create_info.format,
                                                    .range =
                                                        {
@@ -235,8 +247,9 @@ TextureView::~TextureView() {
   }
 }
 
-Texture create_texture_2d(VkFormat format, uvec3 dims, TextureUsage usage) {
-  return Texture{TextureCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
+Texture create_texture_2d(VkFormat format, uvec3 dims, TextureUsage usage, std::string name) {
+  return Texture{TextureCreateInfo{.name = std::move(name),
+                                   .view_type = VK_IMAGE_VIEW_TYPE_2D,
                                    .format = format,
                                    .extent = VkExtent3D{dims.x, dims.y, dims.z},
                                    .usage = usage}};
@@ -436,4 +449,30 @@ u64 img_to_buffer_size(VkFormat format, uvec3 extent) {
   }
   return static_cast<u64>(extent.x) * extent.y * extent.z * format_storage_size(format);
 }
+
+uint32_t get_mip_levels(uvec2 size) { return get_mip_levels(VkExtent2D{size.x, size.y}); }
+
+TextureCubeAndViews::TextureCubeAndViews(const TextureCreateInfo& info) {
+  texture = Texture{info};
+  if (!texture->image()) {
+    texture = {};
+    return;
+  }
+  for (u32 i = 0; i < 6; i++) {
+    img_views[i] =
+        TextureView{*texture, TextureViewCreateInfo{
+                                  .format = texture->format(),
+                                  .range =
+                                      {
+                                          .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                          .baseMipLevel = 0,
+                                          .levelCount = texture->create_info().mip_levels,
+                                          .baseArrayLayer = i,
+                                          .layerCount = 1,
+                                      },
+                                  .view_type = VK_IMAGE_VIEW_TYPE_2D,
+                              }};
+  }
+}
+
 }  // namespace vk2

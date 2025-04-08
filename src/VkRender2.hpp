@@ -248,6 +248,7 @@ struct VkRender2 final : public BaseRenderer {
   vk2::PipelineHandle skybox_pipeline_;
   vk2::PipelineHandle convolute_cube_pipeline_;
   vk2::PipelineHandle convolute_cube_raster_pipeline_;
+  vk2::PipelineHandle prefilter_env_map_pipeline_;
   vk2::PipelineHandle postprocess_pipeline_;
   VkPipelineLayout default_pipeline_layout_{};
   std::queue<InFlightResource<vk2::Buffer*>> pending_buffer_transfers_;
@@ -268,9 +269,18 @@ struct VkRender2 final : public BaseRenderer {
   std::filesystem::path env_tex_path_;
   std::optional<vk2::Texture> env_equirect_tex_;
   std::optional<vk2::Texture> env_cubemap_tex_;
+
   std::optional<vk2::Texture> irradiance_cubemap_tex_;
+  std::optional<vk2::TextureCubeAndViews> prefiltered_env_map_tex_;
+  i32 prefilter_mip_skybox_level_{};
+  // TODO: enum loser
+  bool render_prefilter_mip_skybox_{};
+  void make_cubemap_views_all_mips(const vk2::Texture& texture,
+                                   std::vector<std::optional<vk2::TextureView>>& views);
+  std::vector<std::optional<vk2::TextureView>> prefiltered_env_tex_views_;
   std::array<std::optional<vk2::TextureView>, 6> cubemap_tex_views_;
   std::array<std::optional<vk2::TextureView>, 6> convoluted_cubemap_tex_views_;
+  void generate_mipmaps(StateTracker& state, VkCommandBuffer cmd, vk2::Texture& tex);
   u64 cube_vertices_gpu_offset_{};
   // u64 cube_indices_gpu_offset_{};
   // std::optional<vk2::Buffer> cube_vertex_buf_;

@@ -9,28 +9,14 @@
 #include "Common.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/Initializers.hpp"
-#include "vk2/VkCommon.hpp"
+#include "vk2/Texture.hpp"
 
 void StateTracker::flush_barriers() {
   if (buffer_barriers_.empty() && img_barriers_.empty()) return;
   VkDependencyInfo info = vk2::init::dependency_info(buffer_barriers_, img_barriers_);
   vkCmdPipelineBarrier2KHR(cmd_, &info);
-  // if (print) {
-  //   for (const auto& b : buffer_barriers_) {
-  //     LINFO("srcStage: {}\tsrcAccess: {}\tdstStage: {}\tdstAccess: {}",
-  //           string_VkPipelineStageFlags2(b.srcStageMask), string_VkAccessFlags2(b.srcAccessMask),
-  //           string_VkPipelineStageFlags2(b.dstStageMask),
-  //           string_VkAccessFlags2(b.dstAccessMask));
-  //   }
-  // }
   buffer_barriers_.clear();
   img_barriers_.clear();
-}
-
-StateTracker& StateTracker::add_image(VkImage image, VkAccessFlags2 access,
-                                      VkPipelineStageFlags2 stage) {
-  tracked_imgs_.push_back(ImageState{image, access, stage});
-  return *this;
 }
 
 VkImageSubresourceRange StateTracker::default_image_subresource_range(VkImageAspectFlags aspect) {
@@ -41,6 +27,12 @@ VkImageSubresourceRange StateTracker::default_image_subresource_range(VkImageAsp
           .layerCount = VK_REMAINING_ARRAY_LAYERS};
 }
 
+StateTracker& StateTracker::transition(vk2::Texture& image, VkPipelineStageFlags2 dst_stage,
+                                       VkAccessFlags2 dst_access, VkImageLayout new_layout,
+                                       VkImageAspectFlags aspect) {
+  transition(image, dst_stage, dst_access, new_layout, default_image_subresource_range(aspect));
+  return *this;
+}
 StateTracker& StateTracker::transition(VkImage image, VkPipelineStageFlags2 dst_stage,
                                        VkAccessFlags2 dst_access, VkImageLayout new_layout,
                                        VkImageAspectFlags aspect) {
@@ -48,11 +40,18 @@ StateTracker& StateTracker::transition(VkImage image, VkPipelineStageFlags2 dst_
   return *this;
 }
 
+StateTracker& StateTracker::transition(vk2::Texture& image, VkPipelineStageFlags2 dst_stage,
+                                       VkAccessFlags2 dst_access, VkImageLayout new_layout,
+                                       const VkImageSubresourceRange& range) {
+  image.curr_layout = new_layout;
+  return transition(image.image(), dst_stage, dst_access, new_layout, range);
+}
+
 StateTracker& StateTracker::transition(VkImage image, VkPipelineStageFlags2 dst_stage,
                                        VkAccessFlags2 dst_access, VkImageLayout new_layout,
                                        const VkImageSubresourceRange& range) {
-  auto it = std::ranges::find_if(tracked_imgs_,
-                                 [image](const ImageState& img) { return img.image == image; });
+  auto it = std::ranges::find_if(
+      tracked_imgs_, [image = image](const ImageState& img) { return img.image == image; });
   if (it == tracked_imgs_.end()) {
     tracked_imgs_.push_back(
         ImageState{image, 0, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_IMAGE_LAYOUT_UNDEFINED});
@@ -168,18 +167,19 @@ StateTracker& StateTracker::reset(VkCommandBuffer cmd) {
   return *this;
 }
 void StateTracker::barrier() {
-  vkCmdPipelineBarrier2KHR(
-      cmd_, vk2::addr(VkDependencyInfo{
-                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                .memoryBarrierCount = 1,
-                .pMemoryBarriers = vk2::addr(VkMemoryBarrier2{
-                    .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-                    .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                    .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
-                    .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                    .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
-                }),
-            }));
+  VkMemoryBarrier2 barrier{
+      .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+      .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+      .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+      .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+      .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+  };
+  VkDependencyInfo info{
+      .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+      .memoryBarrierCount = 1,
+      .pMemoryBarriers = &barrier,
+  };
+  vkCmdPipelineBarrier2KHR(cmd_, &info);
 }
 StateTracker& StateTracker::buffer_barrier(const vk2::Buffer& buffer,
                                            VkPipelineStageFlags2 dst_stage,
@@ -187,11 +187,32 @@ StateTracker& StateTracker::buffer_barrier(const vk2::Buffer& buffer,
   return buffer_barrier(buffer.buffer(), dst_stage, dst_access);
 }
 
-StateTracker& StateTracker::transition_img_to_copy_dst(VkImage image, VkImageAspectFlags aspect) {
+StateTracker& StateTracker::transition_img_to_copy_dst(vk2::Texture& image,
+                                                       VkImageAspectFlags aspect) {
   return transition(image, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, aspect);
 }
 
 StateTracker& StateTracker::transition_buffer_to_transfer_dst(VkBuffer buffer) {
   return buffer_barrier(buffer, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+}
+
+void transition_image(VkCommandBuffer cmd, vk2::Texture& image, VkImageLayout old_layout,
+                      VkImageLayout new_layout, VkImageAspectFlags aspect) {
+  VkImageMemoryBarrier2 b{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+  b.image = image.image();
+  b.srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+  b.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+  b.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+  b.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+  b.oldLayout = old_layout;
+  b.newLayout = new_layout;
+  image.curr_layout = new_layout;
+  b.subresourceRange = VkImageSubresourceRange{.aspectMask = aspect,
+                                               .baseMipLevel = 0,
+                                               .levelCount = VK_REMAINING_MIP_LEVELS,
+                                               .baseArrayLayer = 0,
+                                               .layerCount = VK_REMAINING_ARRAY_LAYERS};
+  auto dep_info = vk2::init::dependency_info({}, SPAN1(b));
+  vkCmdPipelineBarrier2KHR(cmd, &dep_info);
 }

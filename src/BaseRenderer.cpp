@@ -146,6 +146,15 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info)
 
   queues_.is_unified_graphics_transfer = queues_.graphics_queue_idx == queues_.transfer_queue_idx;
 
+#ifndef NDEBUG
+  VkDebugUtilsObjectNameInfoEXT name_info = {
+      .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+      .objectType = VK_OBJECT_TYPE_QUEUE,
+      .objectHandle = reinterpret_cast<uint64_t>(queues_.graphics_queue),
+      .pObjectName = "GraphicsQueue"};
+  vkSetDebugUtilsObjectNameEXT(device_, &name_info);
+#endif
+
   {
     ZoneScopedN("init swapchain");
 #if defined(VK_USE_PLATFORM_WAYLAND_KHR)

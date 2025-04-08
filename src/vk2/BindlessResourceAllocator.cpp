@@ -5,7 +5,6 @@
 
 #include <tracy/Tracy.hpp>
 
-#include "Logger.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/Resource.hpp"
 #include "vk2/Texture.hpp"
@@ -142,17 +141,6 @@ void BindlessResourceAllocator::init(VkDevice device, VmaAllocator allocator) {
 void BindlessResourceAllocator::shutdown() {
   assert(instance);
   delete instance;
-}
-
-VkImageView BindlessResourceAllocator::create_image_view(const ImageViewCreateInfo& info) const {
-  VkImageView view;
-  VkImageViewCreateInfo i{.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-                          .image = info.image,
-                          .viewType = VK_IMAGE_VIEW_TYPE_2D,
-                          .format = info.format,
-                          .subresourceRange = info.subresource_range};
-  VK_CHECK(vkCreateImageView(device_, &i, nullptr, &view));
-  return view;
 }
 
 BindlessResourceAllocator::~BindlessResourceAllocator() {

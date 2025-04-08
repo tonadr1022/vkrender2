@@ -705,59 +705,57 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
         }
       }
       futures.clear();
-      VkRender2::get().transfer_submit([start_copy_idx, end_copy_idx = img_i - 1, &img_upload_infos,
-                                        &result, &state, curr_staging_offset, &img_staging_buf,
-                                        batch_upload_size](
-                                           VkCommandBuffer cmd, VkFence fence,
-                                           std::queue<InFlightResource<vk2::Buffer*>>& transfers) {
-        state.reset(cmd);
-        for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
-          const auto& img_upload = img_upload_infos[i];
-          state.transition(result->textures[img_upload.img_idx].image(),
-                           VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        }
-        state.flush_barriers();
+      VkRender2::get().transfer_submit(
+          [start_copy_idx, end_copy_idx = img_i - 1, &img_upload_infos, &result, &state,
+           curr_staging_offset, &img_staging_buf,
+           batch_upload_size](VkCommandBuffer cmd, VkFence fence,
+                              std::queue<InFlightResource<vk2::Buffer*>>& transfers) {
+            state.reset(cmd);
+            for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
+              const auto& img_upload = img_upload_infos[i];
+              state.transition(result->textures[img_upload.img_idx].image(),
+                               VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            }
+            state.flush_barriers();
 
-        for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
-          const auto& img_upload = img_upload_infos[i];
-          const auto& texture = result->textures[img_upload.img_idx];
-          vkCmdCopyBufferToImage2KHR(
-              cmd, vk2::addr(VkCopyBufferToImageInfo2{
-                       .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2_KHR,
-                       .srcBuffer = img_staging_buf->buffer(),
-                       .dstImage = texture.image(),
-                       .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                       .regionCount = 1,
-                       .pRegions = vk2::addr(VkBufferImageCopy2{
-                           .sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
-                           .bufferOffset = img_upload.staging_offset - curr_staging_offset,
-                           // .bufferRowLength = (img_upload.extent.x + 3) & ~3,  // Align to BC7
-                           // 4x4 blocks .bufferImageHeight = (img_upload.extent.y + 3) & ~3,
-                           .bufferRowLength = 0,
-                           .bufferImageHeight = 0,
-                           .imageSubresource =
-                               {
-                                   .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                   .mipLevel = img_upload.level,
-                                   .layerCount = 1,
-                               },
-                           .imageExtent = VkExtent3D{img_upload.extent.x, img_upload.extent.y, 1}
-
-                       })
-
-                   }));
-        }
-        for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
-          state.transition(result->textures[img_upload_infos[i].img_idx].image(),
-                           VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                           VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
-                           VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
-        }
-        state.flush_barriers();
-        transfers.emplace(img_staging_buf, fence);
-        img_staging_buf = vk2::StagingBufferPool::get().acquire(batch_upload_size);
-      });
+            for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
+              const auto& img_upload = img_upload_infos[i];
+              const auto& texture = result->textures[img_upload.img_idx];
+              VkBufferImageCopy2 img_copy{
+                  .sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
+                  .bufferOffset = img_upload.staging_offset - curr_staging_offset,
+                  // .bufferRowLength = (img_upload.extent.x + 3) & ~3,  // Align to BC7
+                  // 4x4 blocks .bufferImageHeight = (img_upload.extent.y + 3) & ~3,
+                  .bufferRowLength = 0,
+                  .bufferImageHeight = 0,
+                  .imageSubresource =
+                      {
+                          .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                          .mipLevel = img_upload.level,
+                          .layerCount = 1,
+                      },
+                  .imageExtent = VkExtent3D{img_upload.extent.x, img_upload.extent.y, 1}};
+              VkCopyBufferToImageInfo2 img_copy_info{
+                  .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2_KHR,
+                  .srcBuffer = img_staging_buf->buffer(),
+                  .dstImage = texture.image(),
+                  .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                  .regionCount = 1,
+                  .pRegions = &img_copy,
+              };
+              vkCmdCopyBufferToImage2KHR(cmd, &img_copy_info);
+            }
+            for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
+              state.transition(result->textures[img_upload_infos[i].img_idx].image(),
+                               VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                               VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                               VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
+            }
+            state.flush_barriers();
+            transfers.emplace(img_staging_buf, fence);
+            img_staging_buf = vk2::StagingBufferPool::get().acquire(batch_upload_size);
+          });
 
       curr_staging_offset += max_batch_upload_size;
       start_copy_idx = img_i;

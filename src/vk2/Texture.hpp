@@ -2,7 +2,9 @@
 
 #include <vulkan/vulkan_core.h>
 
+#include <array>
 #include <optional>
+#include <string>
 
 #include "vk2/Resource.hpp"
 #include "vk_mem_alloc.h"
@@ -33,6 +35,7 @@ enum class TextureUsage : u8 {
 };
 
 struct TextureCreateInfo {
+  std::string name;
   VkImageViewType view_type{};
   VkFormat format{};
   VkExtent3D extent{};
@@ -94,6 +97,9 @@ class Texture {
 
   [[nodiscard]] TextureView& view() { return view_.value(); }
   [[nodiscard]] const TextureView& view() const { return view_.value(); }
+  [[nodiscard]] const TextureCreateInfo& create_info() const { return create_info_; }
+
+  VkImageLayout curr_layout{VK_IMAGE_LAYOUT_UNDEFINED};
 
  private:
   friend class Device;
@@ -102,10 +108,17 @@ class Texture {
 
   TextureCreateInfo create_info_;
   std::optional<TextureView> view_;
+  std::string name_;
   VkImage image_;
   VmaAllocation allocation_;
   VmaAllocator allocator_;
   VkDevice device_;
+};
+
+struct TextureCubeAndViews {
+  explicit TextureCubeAndViews(const TextureCreateInfo& info);
+  std::optional<vk2::Texture> texture;
+  std::array<std::optional<vk2::TextureView>, 6> img_views;
 };
 
 void blit_img(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent3D extent,
@@ -122,10 +135,11 @@ struct TextureViewDeleteInfo {
   VkImageView view;
 };
 
-Texture create_texture_2d(VkFormat format, uvec3 dims, TextureUsage usage);
+Texture create_texture_2d(VkFormat format, uvec3 dims, TextureUsage usage, std::string name = {});
 Texture create_texture_2d_mip(VkFormat format, uvec3 dims, TextureUsage usage, u32 levels);
 
 uint32_t get_mip_levels(VkExtent2D size);
+uint32_t get_mip_levels(uvec2 size);
 VkImageType vkviewtype_to_img_type(VkImageViewType view_type);
 bool format_is_stencil(VkFormat format);
 bool format_is_depth(VkFormat format);

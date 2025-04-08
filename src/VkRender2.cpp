@@ -2,6 +2,7 @@
 
 // clang-format off
 #include <volk.h>
+#include <vulkan/vk_enum_string_helper.h>
 #include <vulkan/vulkan_core.h>
 #include <imgui_impl_vulkan.h>
 // clang-format on
@@ -12,7 +13,6 @@
 #include <tracy/TracyVulkan.hpp>
 
 #include "GLFW/glfw3.h"
-#include "Logger.hpp"
 #include "SceneLoader.hpp"
 #include "StateTracker.hpp"
 #include "glm/packing.hpp"
@@ -130,30 +130,31 @@ VkRender2::VkRender2(const InitInfo& info)
   memcpy((char*)staging->mapped_data(), (void*)&white, sizeof(u32));
   default_data_.white_img =
       vk2::create_texture_2d(VK_FORMAT_R8G8B8A8_SRGB, {1, 1, 1}, TextureUsage::ReadOnly);
+
   immediate_submit([this, staging](VkCommandBuffer cmd) {
     // TODO: extract
     state_.reset(cmd);
     state_.transition(default_data_.white_img->image(), VK_PIPELINE_STAGE_2_TRANSFER_BIT,
                       VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     state_.flush_barriers();
-    vkCmdCopyBufferToImage2KHR(cmd, vk2::addr(VkCopyBufferToImageInfo2{
-                                        .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2_KHR,
-                                        .srcBuffer = staging->buffer(),
-                                        .dstImage = default_data_.white_img->image(),
-                                        .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                        .regionCount = 1,
-                                        .pRegions = vk2::addr(VkBufferImageCopy2{
-                                            .sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
-                                            .bufferOffset = 0,
-                                            .bufferRowLength = 0,
-                                            .bufferImageHeight = 0,
-                                            .imageSubresource =
-                                                {
-                                                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                                    .mipLevel = 0,
-                                                    .layerCount = 1,
-                                                },
-                                            .imageExtent = VkExtent3D{1, 1, 1}})}));
+    VkBufferImageCopy2 img_copy{.sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
+                                .bufferOffset = 0,
+                                .bufferRowLength = 0,
+                                .bufferImageHeight = 0,
+                                .imageSubresource =
+                                    {
+                                        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                        .mipLevel = 0,
+                                        .layerCount = 1,
+                                    },
+                                .imageExtent = VkExtent3D{1, 1, 1}};
+    VkCopyBufferToImageInfo2 copy{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2_KHR,
+                                  .srcBuffer = staging->buffer(),
+                                  .dstImage = default_data_.white_img->image(),
+                                  .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                  .regionCount = 1,
+                                  .pRegions = &img_copy};
+    vkCmdCopyBufferToImage2KHR(cmd, &copy);
     state_.transition(default_data_.white_img->image(), VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                       VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
                       VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
@@ -230,14 +231,13 @@ VkRender2::VkRender2(const InitInfo& info)
           .transition_buffer_to_transfer_dst(static_vertex_buf_->buffer.buffer())
           .transition_buffer_to_transfer_dst(static_index_buf_->buffer.buffer())
           .flush_barriers();
-
-      vkCmdCopyBuffer2KHR(
-          cmd, vk2::addr(VkCopyBufferInfo2KHR{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
-                                              .srcBuffer = staging->buffer(),
-                                              .dstBuffer = static_vertex_buf_->buffer.buffer(),
-                                              .regionCount = 1,
-                                              .pRegions = addr(init::buffer_copy(
-                                                  0, cube_vertices_gpu_offset_, vert_buf_size))}));
+      VkBufferCopy2KHR buf_copy = init::buffer_copy(0, cube_vertices_gpu_offset_, vert_buf_size);
+      VkCopyBufferInfo2KHR buf_copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+                                         .srcBuffer = staging->buffer(),
+                                         .dstBuffer = static_vertex_buf_->buffer.buffer(),
+                                         .regionCount = 1,
+                                         .pRegions = &buf_copy};
+      vkCmdCopyBuffer2KHR(cmd, &buf_copy_info);
       // vkCmdCopyBuffer2KHR(cmd, vk2::addr(VkCopyBufferInfo2KHR{
       //                              .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
       //                              .srcBuffer = staging->buffer(),
@@ -247,14 +247,15 @@ VkRender2::VkRender2(const InitInfo& info)
       //                                  vert_buf_size, cube_indices_gpu_offset_,
       //                                  index_buf_size))}));
 
-      // TODO: this would be solved by a render graph. double barrier happens if load scene at same
-      // time before drawing transfer_q_state_
+      // TODO: this would be solved by a render graph. double barrier happens if load scene at
+      // same time before drawing transfer_q_state_
       //     .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
       //                            VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT,
-      //                            static_vertex_buf_->buffer.buffer(), queues_.transfer_queue_idx,
-      //                            queues_.graphics_queue_idx)
+      //                            static_vertex_buf_->buffer.buffer(),
+      //                            queues_.transfer_queue_idx, queues_.graphics_queue_idx)
       //     .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT,
-      //                            VK_ACCESS_2_INDEX_READ_BIT, static_index_buf_->buffer.buffer(),
+      //                            VK_ACCESS_2_INDEX_READ_BIT,
+      //                            static_index_buf_->buffer.buffer(),
       //                            queues_.transfer_queue_idx, queues_.graphics_queue_idx)
       //     .flush_barriers();
       transfers.emplace(staging, fence);
@@ -339,7 +340,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
     {
       TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "equirect to cube");
       state_
-          .transition(env_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+          .transition(*env_cubemap_tex_, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                       VK_ACCESS_2_MEMORY_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
           .flush_barriers();
       PipelineManager::get().bind_compute(cmd, equirect_to_cube_pipeline2_);
@@ -350,6 +351,15 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
       ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
       ctx.dispatch(env_cubemap_tex_->extent_2d().width / 16,
                    env_cubemap_tex_->extent_2d().height / 16, 6);
+      state_
+          .transition(*env_cubemap_tex_, VK_PIPELINE_STAGE_2_BLIT_BIT,
+                      VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT,
+                      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+          .flush_barriers();
+      init::begin_debug_utils_label(cmd, "gen mipmap");
+      // TODO: use state in gen mipmaps for transitions
+      generate_mipmaps(state_, cmd, *env_cubemap_tex_);
+      init::end_debug_utils_label(cmd);
     }
 
     {
@@ -358,11 +368,12 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
       use_raster = true;
       if (use_raster) {
         state_
-            .transition(env_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            .transition(*env_cubemap_tex_, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                         VK_ACCESS_2_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
             .transition(
-                irradiance_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+                *irradiance_cubemap_tex_, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT,
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
             .flush_barriers();
         static const mat4 PROJ = glm::perspective(glm::radians(90.f), 1.f, .1f, 512.f);
         static const std::array<glm::mat4, 6> VIEW_MATRICES = {
@@ -397,12 +408,71 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
           vkCmdEndRenderingKHR(cmd);
         }
 
+        state_
+            .transition(
+                *prefiltered_env_map_tex_->texture, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+            .flush_barriers();
+
+        // make image views
+        std::vector<std::array<std::optional<vk2::TextureView>, 6>> cube_mip_views;
+        u32 mip_levels = prefiltered_env_map_tex_->texture->create_info().mip_levels;
+        for (u32 mip = 0; mip < mip_levels; mip++) {
+          auto& texture = prefiltered_env_map_tex_->texture.value();
+          std::array<std::optional<vk2::TextureView>, 6> mip_views;
+          cube_mip_views.emplace_back(std::array<std::optional<vk2::TextureView>, 6>{});
+          for (u32 layer = 0; layer < 6; layer++) {
+            cube_mip_views.back()[layer] =
+                TextureView{texture, TextureViewCreateInfo{
+                                         .format = texture.format(),
+                                         .range =
+                                             {
+                                                 .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                                 .baseMipLevel = mip,
+                                                 .levelCount = 1,
+                                                 .baseArrayLayer = layer,
+                                                 .layerCount = 1,
+                                             },
+                                         .view_type = VK_IMAGE_VIEW_TYPE_2D,
+                                     }};
+          }
+        }
+
+        for (u32 mip = 0; mip < mip_levels; mip++) {
+          float roughness = (float)mip / (float)(mip_levels - 1);
+          for (u32 i = 0; i < 6; i++) {
+            auto color_attachment = init::rendering_attachment_info(
+                cube_mip_views[mip][i]->view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            u32 size = prefiltered_env_map_tex_->texture->extent_2d().width;
+            unsigned int mip_width = size * std::pow(0.5, mip);
+            unsigned int mip_height = size * std::pow(0.5, mip);
+            auto rendering_info =
+                init::rendering_info(VkExtent2D{mip_width, mip_height}, &color_attachment);
+            vkCmdBeginRenderingKHR(cmd, &rendering_info);
+            set_viewport_and_scissor(cmd, prefiltered_env_map_tex_->texture->extent_2d());
+            PipelineManager::get().bind_graphics(cmd, prefilter_env_map_pipeline_);
+
+            struct {
+              mat4 vp;
+              float roughness;
+              u32 in_tex_idx, sampler_idx, vertex_buffer_idx;
+            } pc{PROJ * VIEW_MATRICES[i], roughness,
+                 env_cubemap_tex_->view().sampled_img_resource().handle,
+                 linear_sampler_->resource_info.handle,
+                 static_vertex_buf_->buffer.resource_info_->handle};
+            ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
+            vkCmdDraw(cmd, 36, 1, cube_vertices_gpu_offset_ / sizeof(gfx::Vertex), 0);
+            vkCmdEndRenderingKHR(cmd);
+          }
+        }
+
       } else {
         // convolute
         state_
-            .transition(env_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+            .transition(*env_cubemap_tex_, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                         VK_ACCESS_2_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-            .transition(irradiance_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+            .transition(*irradiance_cubemap_tex_, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                         VK_ACCESS_2_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL)
             .flush_barriers();
         PipelineManager::get().bind_compute(cmd, convolute_cube_pipeline_);
@@ -416,7 +486,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
                      irradiance_cubemap_tex_->extent_2d().height / 16, 6);
       }
       state_
-          .transition(irradiance_cubemap_tex_->image(), VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+          .transition(*irradiance_cubemap_tex_, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                       VK_ACCESS_2_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
           .flush_barriers();
     }
@@ -428,8 +498,8 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
     vk2::BindlessResourceAllocator::get().set_frame_num(curr_frame_num());
     vk2::BindlessResourceAllocator::get().flush_deletions();
 
-    state_.transition(img_->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                      VK_ACCESS_2_MEMORY_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL);
+    state_.transition(*img_, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
+                      VK_IMAGE_LAYOUT_GENERAL);
     state_.flush_barriers();
 
     {
@@ -524,19 +594,18 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
 
     // draw
     {
+      init::begin_debug_utils_label(cmd, "draw");
       state_
           .transition(
-              img_->image(), VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+              *img_, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
               VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
               VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT)
           .buffer_barrier(csm_->get_shadow_data_buffer(curr_frame_num()).buffer(),
                           VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT)
-          .transition(csm_->get_shadow_img().image(), VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                      VK_ACCESS_2_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                      VK_IMAGE_ASPECT_DEPTH_BIT)
-          .transition(depth_img_->image(),
-                      VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
-                          VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+          .transition(csm_->get_shadow_img(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                      VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_MEMORY_READ_BIT,
+                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT)
+          .transition(*depth_img_, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                       VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                       VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT)
           .flush_barriers();
@@ -591,16 +660,33 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
       {
         TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "Draw skybox");
         PipelineManager::get().bind_graphics(cmd, skybox_pipeline_);
+        // TODO:  use an enum this is awful
+        u32 skybox_handle{};
+        if (render_prefilter_mip_skybox_) {
+          assert(prefiltered_env_tex_views_.size() > (size_t)prefilter_mip_skybox_level_);
+          skybox_handle = prefiltered_env_tex_views_[prefilter_mip_skybox_level_]
+                              ->sampled_img_resource()
+                              .handle;
+        } else {
+          skybox_handle = convoluted_skybox.get()
+                              ? irradiance_cubemap_tex_->view().sampled_img_resource().handle
+                              : env_cubemap_tex_->view().sampled_img_resource().handle;
+        }
         struct {
           u32 scene_buffer, tex_idx, sampler_idx;
-        } pc{scene_buffer_handle,
-             convoluted_skybox.get() ? irradiance_cubemap_tex_->view().sampled_img_resource().handle
-                                     : env_cubemap_tex_->view().sampled_img_resource().handle,
-             linear_sampler_->resource_info.handle};
+        } pc{scene_buffer_handle, skybox_handle, linear_sampler_->resource_info.handle};
         ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
         vkCmdDraw(cmd, 36, 1, 0, 0);
       }
       vkCmdEndRenderingKHR(cmd);
+      // Add after vkCmdEndRenderingKHR(cmd):
+      state_
+          .transition(*depth_img_, VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                      VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                      VK_IMAGE_LAYOUT_GENERAL,  // Or whatever your next layout is
+                      VK_IMAGE_ASPECT_DEPTH_BIT)
+          .flush_barriers();
+      init::end_debug_utils_label(cmd);
     }
 
     if (postprocess_pass.get()) {
@@ -612,9 +698,9 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
         postprocess_flags |= 0x1;
       }
       state_
-          .transition(img_->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                      VK_ACCESS_2_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-          .transition(post_processed_img_->image(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+          .transition(*img_, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT,
+                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+          .transition(*post_processed_img_, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                       VK_ACCESS_2_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL)
           .flush_barriers();
       PipelineManager::get().bind_compute(cmd, postprocess_pipeline_);
@@ -627,7 +713,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
                     (post_processed_img_->extent_2d().height + 16) / 16, 1);
     }
 
-    state_.transition(post_processed_img_->image(), VK_PIPELINE_STAGE_2_BLIT_BIT,
+    state_.transition(*post_processed_img_, VK_PIPELINE_STAGE_2_BLIT_BIT,
                       VK_ACCESS_2_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                       VK_IMAGE_ASPECT_COLOR_BIT);
     auto& swapchain_img = swapchain_.imgs[curr_swapchain_img_idx()];
@@ -697,6 +783,10 @@ void VkRender2::on_gui() {
       ImGui::TreePop();
     }
 
+    ImGui::Checkbox("Render prefilter env map skybox", &render_prefilter_mip_skybox_);
+    ImGui::SliderInt("Prefilter Env Map Layer", &prefilter_mip_skybox_level_, 0,
+                     prefiltered_env_map_tex_->texture->create_info().mip_levels - 1);
+
     if (ImGui::BeginCombo("Debug Mode", debug_mode_to_string(debug_mode_))) {
       for (u32 mode = 0; mode < DEBUG_MODE_COUNT; mode++) {
         if (ImGui::Selectable(debug_mode_to_string(mode), mode == debug_mode_)) {
@@ -751,7 +841,8 @@ void VkRender2::create_attachment_imgs() {
 
   img_ = create_texture_2d(VK_FORMAT_R16G16B16A16_SFLOAT, dims, TextureUsage::General);
   post_processed_img_ = create_texture_2d(VK_FORMAT_R8G8B8A8_UNORM, dims, TextureUsage::General);
-  depth_img_ = create_texture_2d(VK_FORMAT_D32_SFLOAT, dims, TextureUsage::AttachmentReadOnly);
+  depth_img_ =
+      create_texture_2d(VK_FORMAT_D32_SFLOAT, dims, TextureUsage::AttachmentReadOnly, "DepthImg");
 }
 
 SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynamic,
@@ -909,12 +1000,12 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
             init::buffer_copy(cmds_staging_offset + (cmd_i * sizeof(DrawInfo)),
                               obj_draw.draw_cmd_slots[cmd_i].offset(), sizeof(DrawInfo));
       }
-      vkCmdCopyBuffer2KHR(
-          cmd, vk2::addr(VkCopyBufferInfo2KHR{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
-                                              .srcBuffer = staging.get_buffer()->buffer(),
-                                              .dstBuffer = static_draw_info_buf_->buffer.buffer(),
-                                              .regionCount = static_cast<u32>(copies.size()),
-                                              .pRegions = copies.data()}));
+      VkCopyBufferInfo2KHR buf_copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+                                         .srcBuffer = staging.get_buffer()->buffer(),
+                                         .dstBuffer = static_draw_info_buf_->buffer.buffer(),
+                                         .regionCount = static_cast<u32>(copies.size()),
+                                         .pRegions = copies.data()};
+      vkCmdCopyBuffer2KHR(cmd, &buf_copy_info);
       {
         copies.clear();
         for (u64 obj_data_i = 0; obj_data_i < obj_datas.size(); obj_data_i++) {
@@ -922,12 +1013,12 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
               obj_datas_staging_offset + (obj_data_i * sizeof(gfx::ObjectData)),
               obj_draw.obj_data_slots[obj_data_i].offset(), sizeof(gfx::ObjectData)));
         }
-        vkCmdCopyBuffer2KHR(cmd, vk2::addr(VkCopyBufferInfo2KHR{
-                                     .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
-                                     .srcBuffer = staging.get_buffer()->buffer(),
-                                     .dstBuffer = static_object_data_buf_->buffer.buffer(),
-                                     .regionCount = static_cast<u32>(copies.size()),
-                                     .pRegions = copies.data()}));
+        VkCopyBufferInfo2KHR buf_copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+                                           .srcBuffer = staging.get_buffer()->buffer(),
+                                           .dstBuffer = static_object_data_buf_->buffer.buffer(),
+                                           .regionCount = static_cast<u32>(copies.size()),
+                                           .pRegions = copies.data()};
+        vkCmdCopyBuffer2KHR(cmd, &buf_copy_info);
       }
 
       // u64 transforms_gpu_offset = static_object_data_buf_->alloc(obj_datas_size);
@@ -1039,18 +1130,14 @@ void VkRender2::init_pipelines() {
       .vertex_path = "debug/basic.vert",
       .fragment_path = "debug/basic.frag",
       .layout = default_pipeline_layout_,
-      .rendering = {.color_formats = {img_->format()},
-                    .color_formats_cnt = 1,
-                    .depth_format = depth_img_->format()},
+      .rendering = {.color_formats = {img_->format()}, .depth_format = depth_img_->format()},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
   });
   skybox_pipeline_ = PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
       .vertex_path = "skybox/skybox.vert",
       .fragment_path = "skybox/skybox.frag",
       .layout = default_pipeline_layout_,
-      .rendering = {.color_formats = {img_->format()},
-                    .color_formats_cnt = 1,
-                    .depth_format = depth_img_->format()},
+      .rendering = {.color_formats = {img_->format()}, .depth_format = depth_img_->format()},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
   });
   assert(draw_pipeline_);
@@ -1090,24 +1177,25 @@ std::optional<vk2::Texture> VkRender2::load_hdr_img(const std::filesystem::path&
   memcpy(mapped, src, cpu_img_size);
 
   immediate_submit([this, &tex, staging_buf](VkCommandBuffer cmd) {
-    state_.reset(cmd).transition_img_to_copy_dst(tex.image()).flush_barriers();
-    vkCmdCopyBufferToImage2KHR(cmd, vk2::addr(VkCopyBufferToImageInfo2{
-                                        .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2_KHR,
-                                        .srcBuffer = staging_buf->buffer(),
-                                        .dstImage = tex.image(),
-                                        .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                        .regionCount = 1,
-                                        .pRegions = vk2::addr(VkBufferImageCopy2{
-                                            .sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
-                                            .bufferOffset = 0,
-                                            .imageSubresource =
-                                                {
-                                                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                                    .mipLevel = 0,
-                                                    .baseArrayLayer = 0,
-                                                    .layerCount = 1,
-                                                },
-                                            .imageExtent = tex.extent()})}));
+    state_.reset(cmd).transition_img_to_copy_dst(tex).flush_barriers();
+    VkBufferImageCopy2 img_copy_info{.sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
+                                     .bufferOffset = 0,
+                                     .imageSubresource =
+                                         {
+                                             .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                             .mipLevel = 0,
+                                             .baseArrayLayer = 0,
+                                             .layerCount = 1,
+                                         },
+                                     .imageExtent = tex.extent()};
+    VkCopyBufferToImageInfo2 copy_to_img_info{
+        .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2_KHR,
+        .srcBuffer = staging_buf->buffer(),
+        .dstImage = tex.image(),
+        .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .regionCount = 1,
+        .pRegions = &img_copy_info};
+    vkCmdCopyBufferToImage2KHR(cmd, &copy_to_img_info);
     state_
         .transition(tex.image(), VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT,
                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
@@ -1156,12 +1244,24 @@ void VkRender2::init_ibl() {
                                      .mip_levels = 1,
                                      .array_layers = 6,
                                      .usage = TextureUsage::General}};
-  env_cubemap_tex_ = vk2::Texture{TextureCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_CUBE,
+  env_cubemap_tex_ = vk2::Texture{TextureCreateInfo{.name = "env cubemap",
+                                                    .view_type = VK_IMAGE_VIEW_TYPE_CUBE,
                                                     .format = VK_FORMAT_R16G16B16A16_SFLOAT,
                                                     .extent = {skybox_res, skybox_res, 1},
-                                                    .mip_levels = 1,
+                                                    .mip_levels = get_mip_levels({skybox_res}),
                                                     .array_layers = 6,
                                                     .usage = TextureUsage::General}};
+  u32 prefiltered_env_map_res = 256;
+  prefiltered_env_map_tex_ = vk2::TextureCubeAndViews{
+      TextureCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_CUBE,
+                        .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                        .extent = {prefiltered_env_map_res, prefiltered_env_map_res, 1},
+                        .mip_levels = get_mip_levels({prefiltered_env_map_res}),
+                        .array_layers = 6,
+                        .usage = TextureUsage::General}};
+  make_cubemap_views_all_mips(prefiltered_env_map_tex_->texture.value(),
+                              prefiltered_env_tex_views_);
+
   equirect_to_cube_pipeline2_ =
       PipelineManager::get().load_compute_pipeline(ComputePipelineCreateInfo{
           .path = "ibl/eq_to_cube.comp",
@@ -1169,6 +1269,16 @@ void VkRender2::init_ibl() {
   convolute_cube_pipeline_ = PipelineManager::get().load_compute_pipeline(ComputePipelineCreateInfo{
       .path = "ibl/cube_convolute.comp",
   });
+  prefilter_env_map_pipeline_ =
+      PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
+          .vertex_path = "ibl/prefilter_env_map.vert",
+          .fragment_path = "ibl/prefilter_env_map.frag",
+          .rendering =
+              {
+                  .color_formats = {prefiltered_env_map_tex_->texture->format()},
+              },
+          .rasterization = {.cull_mode = CullMode::None},
+      });
   convolute_cube_raster_pipeline_ =
       PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
           .vertex_path = "ibl/cube_convolute.vert",
@@ -1176,7 +1286,6 @@ void VkRender2::init_ibl() {
           .rendering =
               {
                   .color_formats = {irradiance_cubemap_tex_->format()},
-                  .color_formats_cnt = 1,
               },
           .rasterization = {.cull_mode = CullMode::None},
       });
@@ -1187,7 +1296,6 @@ void VkRender2::init_ibl() {
           .rendering =
               {
                   .color_formats = {env_cubemap_tex_->format()},
-                  .color_formats_cnt = 1,
               },
           // .rasterization = {.cull_mode = CullMode::None},
       });
@@ -1202,7 +1310,7 @@ void VkRender2::init_ibl() {
                                            {
                                                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
                                                .baseMipLevel = 0,
-                                               .levelCount = 1,
+                                               .levelCount = tex.create_info().mip_levels,
                                                .baseArrayLayer = i,
                                                .layerCount = 1,
                                            },
@@ -1214,4 +1322,88 @@ void VkRender2::init_ibl() {
 
   cubemap_tex_views_ = make_cubemap_views(env_cubemap_tex_.value());
   convoluted_cubemap_tex_views_ = make_cubemap_views(irradiance_cubemap_tex_.value());
+}
+
+void VkRender2::generate_mipmaps(StateTracker& state, VkCommandBuffer cmd, vk2::Texture& tex) {
+  // TODO: this is unbelievably hacky: using manual barriers outside of state tracker and then
+  // updating state tracker with the result. solve this by updating state tracker to manage
+  // subresource ranges or toss it and make a render graph
+  u32 array_layers = tex.create_info().array_layers;
+  u32 mip_levels = get_mip_levels(tex.extent_2d());
+  VkExtent2D curr_img_size = tex.extent_2d();
+  for (u32 mip_level = 0; mip_level < mip_levels; mip_level++) {
+    VkImageMemoryBarrier2 img_barrier{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+    img_barrier.image = tex.image();
+    img_barrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+    img_barrier.srcStageMask = VK_PIPELINE_STAGE_2_BLIT_BIT;
+    img_barrier.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT;
+    img_barrier.dstStageMask = VK_PIPELINE_STAGE_2_BLIT_BIT;
+    img_barrier.oldLayout = tex.curr_layout;
+    tex.curr_layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    img_barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    img_barrier.subresourceRange = VkImageSubresourceRange{.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                                           .baseMipLevel = mip_level,
+                                                           .levelCount = 1,
+                                                           .baseArrayLayer = 0,
+                                                           .layerCount = array_layers};
+    auto dep_info = init::dependency_info({}, SPAN1(img_barrier));
+    vkCmdPipelineBarrier2KHR(cmd, &dep_info);
+    if (mip_level < mip_levels - 1) {
+      VkExtent2D half_img_size = {curr_img_size.width / 2, curr_img_size.height / 2};
+      VkImageBlit2KHR blit{
+          .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2_KHR,
+          .srcSubresource =
+              VkImageSubresourceLayers{
+                  .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                  .mipLevel = mip_level,
+                  .baseArrayLayer = 0,
+                  .layerCount = array_layers,
+              },
+          .srcOffsets = {VkOffset3D{}, VkOffset3D{static_cast<i32>(curr_img_size.width),
+                                                  static_cast<i32>(curr_img_size.height), 1u}},
+          .dstSubresource = VkImageSubresourceLayers{.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                                     .mipLevel = mip_level + 1,
+                                                     .baseArrayLayer = 0,
+                                                     .layerCount = array_layers},
+          .dstOffsets = {VkOffset3D{}, VkOffset3D{static_cast<i32>(half_img_size.width),
+                                                  static_cast<i32>(half_img_size.height), 1u}}};
+      VkBlitImageInfo2KHR info{.sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2_KHR,
+                               .srcImage = tex.image(),
+                               .srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               .dstImage = tex.image(),
+                               .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                               .regionCount = 1,
+                               .pRegions = &blit,
+                               .filter = VK_FILTER_LINEAR};
+      vkCmdBlitImage2KHR(cmd, &info);
+      curr_img_size = half_img_size;
+    }
+  }
+  {
+    auto* img_state = state.get_img_state(tex.image());
+    transition_image(cmd, tex, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+    if (img_state) {
+      img_state->curr_layout = VK_IMAGE_LAYOUT_GENERAL;
+      img_state->curr_access = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+      img_state->curr_stage = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    }
+  }
+}
+
+void VkRender2::make_cubemap_views_all_mips(const vk2::Texture& texture,
+                                            std::vector<std::optional<vk2::TextureView>>& views) {
+  for (u32 mip = 0; mip < texture.create_info().mip_levels; mip++) {
+    views.emplace_back(TextureView{texture, TextureViewCreateInfo{
+                                                .format = texture.format(),
+                                                .range =
+                                                    {
+                                                        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                                        .baseMipLevel = mip,
+                                                        .levelCount = 1,
+                                                        .baseArrayLayer = 0,
+                                                        .layerCount = VK_REMAINING_ARRAY_LAYERS,
+                                                    },
+                                                .view_type = VK_IMAGE_VIEW_TYPE_CUBE,
+                                            }});
+  }
 }

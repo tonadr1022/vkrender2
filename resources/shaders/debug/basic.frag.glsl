@@ -133,7 +133,8 @@ void main() {
 
     // IBL ambient
     // TODO: read up, idiot
-    vec3 kS = FresnelSchlick(NdotV, F0);
+    // vec3 kS = FresnelSchlick(NdotV, F0);
+    vec3 kS = FresnelSchlickRoughness(NdotV, F0, roughness);
     vec3 kD = (1.0 - kS) * (1.0 - metallic);
     vec3 irradiance = texture(vk2_samplerCube(irradiance_img_idx, sampler_idx), N).rgb * scene_data.ambient_intensity;
     vec3 diffuse = irradiance * albedo;

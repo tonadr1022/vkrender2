@@ -2,6 +2,11 @@
 #define VK2_MATH_H
 // courtesy of: zuex niagara engine
 
+#ifndef PI_DEFINED
+#define PI_DEFINED 1
+const float PI = 3.14159265359;
+#endif
+
 // A Survey of Efficient Representations for Independent Unit Vectors
 vec2 encodeOct(vec3 v) {
     vec2 p = v.xy * (1.0 / (abs(v.x) + abs(v.y) + abs(v.z)));

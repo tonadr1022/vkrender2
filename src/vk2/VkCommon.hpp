@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstddef>
-#include <memory>
 
 namespace vk2 {
 constexpr int min_api_version_major = 1;
@@ -13,11 +12,6 @@ constexpr int min_api_version_minor = 3;
 #endif
 
 void print_vk_error(size_t x, bool exit_prog = false);
-
-template <class T>
-[[nodiscard]] T* addr(T&& v) {
-  return std::addressof(v);
-}
 
 }  // namespace vk2
 

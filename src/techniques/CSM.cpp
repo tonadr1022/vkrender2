@@ -203,7 +203,7 @@ CSM::CSM(VkPipelineLayout pipeline_layout)
       .vertex_path = "fullscreen_quad.vert",
       .fragment_path = "debug/depth_debug.frag",
       .layout = pipeline_layout_,
-      .rendering = {.color_formats = {shadow_map_debug_img_.format()}, .color_formats_cnt = 1},
+      .rendering = {.color_formats = {shadow_map_debug_img_.format()}},
       .rasterization = {.cull_mode = CullMode::Front},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_disable(),
   });
@@ -245,6 +245,7 @@ void CSM::debug_shadow_pass(StateTracker& state, VkCommandBuffer cmd,
 void CSM::render(StateTracker& state, VkCommandBuffer cmd, u32 frame_num, const mat4& cam_view,
                  vec3 light_dir, float aspect_ratio, float fov_deg, const DrawFunc& draw,
                  const AABB& aabb, vec3 view_pos) {
+  init::begin_debug_utils_label(cmd, "csm render");
   // draw shadows
   float shadow_z_far = shadow_z_far_;
   {
@@ -292,11 +293,10 @@ void CSM::render(StateTracker& state, VkCommandBuffer cmd, u32 frame_num, const 
                        VK_ACCESS_2_TRANSFER_WRITE_BIT);
   state.flush_barriers();
   vkCmdUpdateBuffer(cmd, buf.buffer(), 0, sizeof(ShadowData), &data);
-  state.transition(
-      shadow_map_img_.image(),
-      VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-      VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-      VK_IMAGE_ASPECT_DEPTH_BIT);
+  state.transition(shadow_map_img_.image(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                   VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                       VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                   VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT);
   state.flush_barriers();
 
   for (u32 i = 0; i < cascade_count_; i++) {
@@ -314,7 +314,9 @@ void CSM::render(StateTracker& state, VkCommandBuffer cmd, u32 frame_num, const 
     draw(light_matrices_[i]);
     vkCmdEndRenderingKHR(cmd);
   }
+  init::end_debug_utils_label(cmd);
 }
+
 void CSM::on_imgui(VkSampler sampler) {
   if (!imgui_set_) {
     imgui_set_ = ImGui_ImplVulkan_AddTexture(sampler, shadow_map_debug_img_.view().view(),

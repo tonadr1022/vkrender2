@@ -33,7 +33,7 @@ class CSM {
     return shadow_data_bufs_[frame_num % shadow_data_bufs_.size()];
   }
   [[nodiscard]] const vk2::Sampler& get_shadow_sampler() const { return shadow_sampler_; }
-  [[nodiscard]] const vk2::Texture& get_shadow_img() const { return shadow_map_img_; }
+  vk2::Texture& get_shadow_img() { return shadow_map_img_; }
 
  private:
   vk2::PipelineHandle shadow_depth_pipline_;

@@ -237,7 +237,6 @@ struct GraphicsPipelineCreateInfo {
 
   struct RenderingInfo {
     std::array<VkFormat, 5> color_formats{};
-    u32 color_formats_cnt{};
     VkFormat depth_format{VK_FORMAT_UNDEFINED};
     VkFormat stencil_format{VK_FORMAT_UNDEFINED};
   };

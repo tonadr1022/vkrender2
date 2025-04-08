@@ -26,24 +26,22 @@ VkSwapchainKHR create_swapchain(const UpdateSwapchainInfo& info, VkFormat format
           : VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
   VkSwapchainKHR res;
   VkExtent2D extent = {info.dims.x, info.dims.y};
-  VK_CHECK(vkCreateSwapchainKHR(
-      info.device,
-      addr(VkSwapchainCreateInfoKHR{
-          .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
-          .surface = info.surface,
-          .minImageCount = std::max(2u, surface_caps.minImageCount),
-          .imageFormat = format,
-          .imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
-          .imageExtent = extent,
-          .imageArrayLayers = 1,
-          .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-          .queueFamilyIndexCount = 1,
-          .pQueueFamilyIndices = &info.queue_idx,
-          .preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
-          .compositeAlpha = surface_composite,
-          .presentMode = info.present_mode,
-          .oldSwapchain = old}),
-      nullptr, &res));
+  VkSwapchainCreateInfoKHR swap_info{
+      .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+      .surface = info.surface,
+      .minImageCount = std::max(2u, surface_caps.minImageCount),
+      .imageFormat = format,
+      .imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
+      .imageExtent = extent,
+      .imageArrayLayers = 1,
+      .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+      .queueFamilyIndexCount = 1,
+      .pQueueFamilyIndices = &info.queue_idx,
+      .preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
+      .compositeAlpha = surface_composite,
+      .presentMode = info.present_mode,
+      .oldSwapchain = old};
+  VK_CHECK(vkCreateSwapchainKHR(info.device, &swap_info, nullptr, &res));
   return res;
 }
 

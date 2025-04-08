@@ -12,35 +12,6 @@
 
 namespace vk2 {
 
-constexpr VkImageSubresourceRange default_img_subresource_range{
-    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-    .baseMipLevel = 0,
-    .levelCount = 1,
-    .baseArrayLayer = 0,
-    .layerCount = 1,
-};
-struct ImageViewCreateInfo {
-  VkImage image;
-  VkImageViewType view_type;
-  VkFormat format;
-  VkImageSubresourceRange subresource_range{default_img_subresource_range};
-};
-
-// template <typename T>
-// struct ResourceDeleteQueue {
-//   ResourceDeleteQueue(const ResourceDeleteQueue&) = delete;
-//   ResourceDeleteQueue(ResourceDeleteQueue&&) = delete;
-//   ResourceDeleteQueue& operator=(const ResourceDeleteQueue&) = delete;
-//   ResourceDeleteQueue& operator=(ResourceDeleteQueue&&) = delete;
-//
-//   void push(T&& data, u32 frame) { queue.push_back(Entry{data, frame}); }
-//
-//   void flush(u32 frame) {
-//     std::erase_if(queue, [frame](const Entry& e) { return static_cast<bool>(e.frame < frame); });
-//   }
-//   std::deque<Entry> queue;
-// };
-
 class BindlessResourceAllocator {
  public:
   void bind_desc_sets(VkCommandBuffer cmd);
@@ -60,7 +31,6 @@ class BindlessResourceAllocator {
   static void shutdown();
   [[nodiscard]] VkDescriptorSetLayout main_set_layout() const { return main_set_layout_; }
   [[nodiscard]] VkDescriptorSet main_set() const { return main_set_; }
-  [[nodiscard]] VkImageView create_image_view(const ImageViewCreateInfo& info) const;
   void set_frame_num(u32 frame_num);
 
   BindlessResourceInfo allocate_storage_buffer_descriptor(VkBuffer buffer);
