@@ -17,7 +17,6 @@
 #include <optional>
 
 #include "BS_thread_pool.hpp"
-#include "Camera.hpp"
 #include "Scene.hpp"
 #include "StateTracker.hpp"
 #include "ThreadPool.hpp"
@@ -25,7 +24,6 @@
 #include "VkRender2.hpp"
 #include "shaders/common.h.glsl"
 #include "vk2/StagingBufferPool.hpp"
-#include "vk2/VkCommon.hpp"
 
 // #include "ThreadPool.hpp"
 
@@ -366,25 +364,6 @@ void load_scene_graph_data(SceneLoadData& result, fastgltf::Asset& gltf, u32 def
     }
   }
   update_node_transforms(result.node_datas, result.root_node_indices);
-  for (auto& node_idx : camera_node_indices) {
-    auto& node = result.node_datas[node_idx];
-
-    vec3 pos, scale;
-    quat rotation;
-    decompose_matrix(node.world_transform, pos, rotation, scale);
-    Camera c;
-    c.pos = pos;
-    c.set_rotation(rotation);
-    result.cameras.emplace_back(c);
-    // const auto& cam = gltf.cameras[node_idx];
-    // std::visit(fastgltf::visitor{
-    //                [&result, &node](const fastgltf::Camera::Perspective&) {},
-    //                [](const fastgltf::Camera::Orthographic&) {
-    //
-    //                },
-    //            },
-    //            cam.camera);
-  }
 }
 
 struct CpuImageData {
@@ -818,10 +797,14 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
         if (gltf_idx != UINT32_MAX) {
           return result->textures[gltf_idx].view().sampled_img_resource().handle;
         }
+        LERROR("uh oh, no texture for gltf material");
         return default_mat.white_img_handle;
       };
-      Material mat{.ids1 = uvec4{default_mat.white_img_handle},
-                   .ids2 = uvec4(default_mat.white_img_handle, 0, 0, 0)};
+      Material mat{.ids1 = uvec4{0}, .ids2 = uvec4(0)};
+      auto base_col = gltf_mat.pbrData.baseColorFactor;
+      mat.albedo_factors = {base_col.x(), base_col.y(), base_col.z(), base_col.w()};
+      mat.pbr_factors.x = gltf_mat.pbrData.metallicFactor;
+      mat.pbr_factors.y = gltf_mat.pbrData.roughnessFactor;
 
       if (gltf_mat.pbrData.baseColorTexture.has_value()) {
         mat.ids1.x = get_idx(gltf_mat.pbrData.baseColorTexture.value());

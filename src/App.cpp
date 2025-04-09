@@ -104,27 +104,23 @@ void load_cam(Camera& cam) {
 void App::run() {
   load_cam(cam_data);
   float last_time{};
-  vec3 iter{};
-  int len = 0;
-  for (iter.x = -len; iter.x <= len; iter.x++) {
-    for (iter.z = -len; iter.z <= len; iter.z++) {
-      // VkRender2::get().load_scene("/Users/tony/models/Bistro_Godot_opt.glb", false);
-      VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false);
-      // VkRender2::get().load_scene(local_models_dir / "sponza.glb", false);
-      // VkRender2::get().load_scene("/home/tony/models/Models/Sponza/glTF/Sponza.gltf", false);
-      // VkRender2::get().load_scene("/users/tony/Bistro_Godot_opt.glb", false,
-      // glm::translate(mat4{1}, iter * spacing));
-      // VkRender2::get().load_scene(local_models_dir / "ABeautifulGame.glb", false,
-      //                             glm::scale(mat4{1}, vec3{10}));
-      // VkRender2::get().load_scene(local_models_dir / "DamagedHelmet.glb", false);
-    }
-  }
+  // VkRender2::get().load_scene("/Users/tony/models/Bistro_Godot_opt.glb", false);
+  // VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false);
+  // VkRender2::get().load_scene("/home/tony/models/Models/Sponza/glTF/Sponza.gltf", false);
+  // VkRender2::get().load_scene("/users/tony/Bistro_Godot_opt.glb", false,
+  // glm::translate(mat4{1}, iter * spacing));
 
-  std::filesystem::path env_tex = "/home/tony/Downloads/quarry_04_puresky_4k.hdr";
+  // VkRender2::get().load_scene(local_models_dir / "ABeautifulGame.glb", false,
+  //                             glm::scale(mat4{1}, vec3{10}));
+  // VkRender2::get().load_scene(
+  //     "/home/tony/models/Models/MetalRoughSpheres/glTF-Binary/MetalRoughSpheres.glb");
+  VkRender2::get().load_scene(local_models_dir / "sponza.glb", false);
+  std::filesystem::path env_tex = local_models_dir / "quarry_04_puresky_4k.hdr";
+  // std::filesystem::path env_tex = "/home/tony/Downloads/quarry_04_puresky_4k.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/newport_loft.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/golden_gate_hills_4k.hdr";
-  // auto env_tex = resource_dir / "test.hdr";
 
+  VkRender2::get().set_env_map(env_tex);
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
     float curr_t = glfwGetTime();
@@ -134,14 +130,15 @@ void App::run() {
 
     mat4 proj = glm::perspective(glm::radians(fov_degrees), aspect_ratio(), 1000.f, .1f);
     // mat4 proj = glm::perspective(glm::radians(fov_degrees), aspect_ratio(), 0.1f, 1000.f);
-    VkRender2::get().draw({.view = cam_data.get_view(),
-                           .proj = proj,
-                           .view_pos = cam_data.pos,
-                           .light_dir = glm::normalize(scene_data.light_dir),
-                           .light_color = scene_data.light_color * sun_intensity_,
-                           .ambient_intensity = ambient_intensity_,
-                           .fov_degrees = fov_degrees,
-                           .env_tex = env_tex});
+    VkRender2::get().draw({
+        .view = cam_data.get_view(),
+        .proj = proj,
+        .view_pos = cam_data.pos,
+        .light_dir = glm::normalize(scene_data.light_dir),
+        .light_color = scene_data.light_color * sun_intensity_,
+        .ambient_intensity = ambient_intensity_,
+        .fov_degrees = fov_degrees,
+    });
   }
 
   save_cam(cam_data);
@@ -242,13 +239,5 @@ void App::on_imgui() {
     offset++;
   }
   CVarSystem::get().draw_imgui_editor();
-  for (auto scene_handle : scenes_) {
-    auto& scene = VkRender2::get().loaded_dynamic_scenes_[(int)scene_handle.get()];
-    for (auto& c : scene.scene_graph_data.cameras) {
-      if (ImGui::Button("set cam")) {
-        cam_data = c;
-      }
-    }
-  }
   ImGui::End();
 }

@@ -2,7 +2,6 @@
 #include <string>
 #include <vector>
 
-#include "Camera.hpp"
 #include "Common.hpp"
 #include "vk2/Handle.hpp"
 
@@ -27,7 +26,6 @@ struct SceneLoadData {
   std::vector<NodeData> node_datas;
   std::vector<u32> mesh_node_indices;
   std::vector<u32> root_node_indices;
-  std::vector<Camera> cameras;
 };
 
 VK2_DEFINE_HANDLE(Scene);

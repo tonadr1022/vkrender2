@@ -7,46 +7,12 @@
 #include "../resources.h.glsl"
 #include "./prefilter_env_map_common.h.glsl"
 #include "../math.h.glsl"
+#include "../pbr/pbr.h.glsl"
 
 VK2_DECLARE_SAMPLED_IMAGES(textureCube);
 
 layout(location = 0) in vec3 in_pos;
 layout(location = 0) out vec4 out_frag_color;
-
-float radical_inverse_VdC(uint bits) {
-    bits = (bits << 16u) | (bits >> 16u);
-    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
-    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
-    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
-    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
-    return float(bits) * 2.3283064365386963e-10; // / 0x100000000
-}
-
-vec2 hammersley(uint i, uint N) {
-    return vec2(float(i) / float(N), radical_inverse_VdC(i));
-}
-
-vec3 importance_sample_ggx(vec2 Xi, vec3 N, float roughness) {
-    float a = roughness * roughness;
-
-    float phi = 2.0 * PI * Xi.x;
-    float cosTheta = sqrt((1.0 - Xi.y) / (1.0 + (a * a - 1.0) * Xi.y));
-    float sinTheta = sqrt(1.0 - cosTheta * cosTheta);
-
-    // from spherical coordinates to cartesian coordinates
-    vec3 H;
-    H.x = cos(phi) * sinTheta;
-    H.y = sin(phi) * sinTheta;
-    H.z = cosTheta;
-
-    // from tangent-space vector to world-space sample vector
-    vec3 up = abs(N.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
-    vec3 tangent = normalize(cross(up, N));
-    vec3 bitangent = cross(N, tangent);
-
-    vec3 sampleVec = tangent * H.x + bitangent * H.y + N * H.z;
-    return normalize(sampleVec);
-}
 
 const uint SampleCount = 1024u;
 
@@ -61,11 +27,24 @@ void main() {
         vec2 Xi = hammersley(i, SampleCount);
         // sample a half vector in specular lobe
         vec3 H = importance_sample_ggx(Xi, N, roughness);
+
+        float HdotV = max(dot(H, V), 0.0);
+        float NdotH = max(dot(N, H), 0.0);
+
+        // get mip level based on roughness based on pdf and roughness
+        // solves bright spots
+        float D = DistributionGGX(NdotH, roughness);
+        float pdf = (D * NdotH / (4. * HdotV)) + 0.0001;
+        float res = cubemap_res;
+        float sa_texel = 4. * PI / (6. * res * res);
+        float sa_sample = 1. / (float(SampleCount) * pdf + 0.0001);
+        float mip_level = roughness == 0.0 ? 0.0 : 0.5 * log2(sa_sample / sa_texel);
+
         // reflect V along H to get L, sample and add contribution
-        vec3 L = normalize(2. * dot(V, H) * H - V);
+        vec3 L = normalize(2. * HdotV * H - V);
         float NdotL = max(dot(N, L), 0.0);
         if (NdotL > 0.) {
-            color += texture(vk2_samplerCube(cubemap_tex_idx, sampler_idx), L).rgb * NdotL;
+            color += textureLod(vk2_samplerCube(cubemap_tex_idx, sampler_idx), L, mip_level).rgb * NdotL;
             total_weight += NdotL;
         }
     }

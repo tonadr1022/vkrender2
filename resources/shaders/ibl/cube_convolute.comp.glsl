@@ -93,6 +93,5 @@ void main() {
         }
     }
     irradiance *= PI * (1. / float(num_samples));
-    // irradiance = texture(vk2_samplerCube(in_tex_idx, sampler_idx), normal).rgb;
     imageStore(vk2_get_storage_img(imageCube, out_tex_idx), cube_coord, vec4(irradiance, 1.));
 }

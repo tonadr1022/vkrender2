@@ -7,7 +7,6 @@
 #include <vulkan/vk_enum_string_helper.h>
 #include <vulkan/vulkan_core.h>
 
-#include <algorithm>
 #include <cassert>
 #include <filesystem>
 #include <fstream>
@@ -20,7 +19,6 @@
 
 #include "Common.hpp"
 #include "Logger.hpp"
-#include "spirv_reflect.h"
 #include "vk2/Hash.hpp"
 #include "vk2/VkCommon.hpp"
 
@@ -31,7 +29,7 @@ namespace {
 
 bool compile_glsl_to_spirv(std::string path, VkShaderStageFlagBits stage,
                            std::vector<u32>& out_binary, std::vector<std::string>* included_files);
-bool reflect_shader(std::vector<u32>& binary, vk2::ShaderReflectData& out_data);
+// bool reflect_shader(std::vector<u32>& binary, vk2::ShaderReflectData& out_data);
 
 bool load_shader_bytes(const std::string& path, std::vector<uint32_t>& result);
 
@@ -52,95 +50,96 @@ struct PipelineLayoutCreateInfo {
   uint32_t shader_stage_cnt{0};
 };
 
-VkPipelineLayout create_layout(VkDevice device, PipelineLayoutCreateInfo& data,
-                               vk2::DescriptorSetLayoutCache& layout_cache) {
-  ZoneScoped;
-  // for each set, merge the bindings together
-  constexpr int max_descriptor_sets = 4;
-  constexpr int max_set_layout_bindings = 100;
-
-  std::array<vk2::DescriptorSetLayoutData, max_descriptor_sets> merged_layout_datas{};
-  std::array<VkDescriptorSetLayout, max_descriptor_sets> combined_set_layouts{};
-  std::array<uint64_t, max_descriptor_sets> merged_layout_hashes{};
-  // go through each of the possible set indices
-  for (uint32_t set_number = 0; set_number < max_descriptor_sets; set_number++) {
-    // set merged layout info
-    auto& merged_layout = merged_layout_datas[set_number];
-    merged_layout.set_number = set_number;
-
-    std::array<std::pair<VkDescriptorSetLayoutBinding, bool>, max_set_layout_bindings>
-        used_bindings{};
-    for (uint32_t unmerged_set_ly_idx = 0; unmerged_set_ly_idx < data.set_layout_cnt;
-         unmerged_set_ly_idx++) {
-      const auto& unmerged_set_layout = data.set_layouts[unmerged_set_ly_idx];
-      // if the unmerged set corresponds, merge it
-      if (unmerged_set_layout.set_number != set_number) continue;
-
-      // for each of the bindings, if it's already used, add the shader stage since it doesn't need
-      // to be duplicated, otherwise mark used and set it
-      for (const auto& binding : unmerged_set_layout.bindings) {
-        if (binding.binding >= max_set_layout_bindings) {
-          LERROR("exceed max layout bindings for pipeline with shader");
-          return nullptr;
-        }
-
-        if (used_bindings[binding.binding].second) {
-          used_bindings[binding.binding].first.stageFlags |= binding.stageFlags;
-        } else {
-          used_bindings[binding.binding].second = true;
-          used_bindings[binding.binding].first = binding;
-        }
-      }
-    }
-    // add the used bindings to the merged layout
-    for (uint32_t i = 0; i < max_set_layout_bindings; i++) {
-      if (used_bindings[i].second) {
-        merged_layout.bindings.push_back(used_bindings[i].first);
-      }
-    }
-    std::ranges::sort(merged_layout.bindings,
-                      [](VkDescriptorSetLayoutBinding& a, VkDescriptorSetLayoutBinding& b) {
-                        return a.binding < b.binding;
-                      });
-    merged_layout.create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    merged_layout.create_info.bindingCount = merged_layout.bindings.size();
-    merged_layout.create_info.pBindings = merged_layout.bindings.data();
-    merged_layout.create_info.flags = 0;
-    merged_layout.create_info.pNext = nullptr;
-    if (merged_layout.create_info.bindingCount > 0) {
-      auto res = layout_cache.create_layout(device, merged_layout.create_info);
-      merged_layout_hashes[set_number] = res.hash;
-      combined_set_layouts[set_number] = res.layout;
-    } else {
-      merged_layout_hashes[set_number] = 0;
-      combined_set_layouts[set_number] = VK_NULL_HANDLE;
-    }
-  }
-
-  // use dummy layouts for the case when sets are akin to: [null, 1, null, null]
-  // set cnt is the last valid set, so in the above case, 1
-  uint32_t set_cnt = 0;
-  for (uint32_t i = 0; i < max_descriptor_sets; i++) {
-    if (combined_set_layouts[i] != VK_NULL_HANDLE) {
-      set_cnt = i + 1;
-    } else {
-      combined_set_layouts[i] = layout_cache.dummy_layout();
-    }
-  }
-
-  VkPipelineLayoutCreateInfo pipeline_layout_info{
-      .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-      // TODO: flags?
-      .flags = 0,
-      .setLayoutCount = set_cnt,
-      .pSetLayouts = set_cnt == 0 ? nullptr : combined_set_layouts.data(),
-      .pushConstantRangeCount = data.pc_range_cnt,
-      .pPushConstantRanges = data.pc_ranges.data(),
-  };
-  VkPipelineLayout out_layout;
-  VK_CHECK(vkCreatePipelineLayout(device, &pipeline_layout_info, nullptr, &out_layout));
-  return out_layout;
-}
+// VkPipelineLayout create_layout(VkDevice device, PipelineLayoutCreateInfo& data,
+//                                vk2::DescriptorSetLayoutCache& layout_cache) {
+//   ZoneScoped;
+//   // for each set, merge the bindings together
+//   constexpr int max_descriptor_sets = 4;
+//   constexpr int max_set_layout_bindings = 100;
+//
+//   std::array<vk2::DescriptorSetLayoutData, max_descriptor_sets> merged_layout_datas{};
+//   std::array<VkDescriptorSetLayout, max_descriptor_sets> combined_set_layouts{};
+//   std::array<uint64_t, max_descriptor_sets> merged_layout_hashes{};
+//   // go through each of the possible set indices
+//   for (uint32_t set_number = 0; set_number < max_descriptor_sets; set_number++) {
+//     // set merged layout info
+//     auto& merged_layout = merged_layout_datas[set_number];
+//     merged_layout.set_number = set_number;
+//
+//     std::array<std::pair<VkDescriptorSetLayoutBinding, bool>, max_set_layout_bindings>
+//         used_bindings{};
+//     for (uint32_t unmerged_set_ly_idx = 0; unmerged_set_ly_idx < data.set_layout_cnt;
+//          unmerged_set_ly_idx++) {
+//       const auto& unmerged_set_layout = data.set_layouts[unmerged_set_ly_idx];
+//       // if the unmerged set corresponds, merge it
+//       if (unmerged_set_layout.set_number != set_number) continue;
+//
+//       // for each of the bindings, if it's already used, add the shader stage since it doesn't
+//       need
+//       // to be duplicated, otherwise mark used and set it
+//       for (const auto& binding : unmerged_set_layout.bindings) {
+//         if (binding.binding >= max_set_layout_bindings) {
+//           LERROR("exceed max layout bindings for pipeline with shader");
+//           return nullptr;
+//         }
+//
+//         if (used_bindings[binding.binding].second) {
+//           used_bindings[binding.binding].first.stageFlags |= binding.stageFlags;
+//         } else {
+//           used_bindings[binding.binding].second = true;
+//           used_bindings[binding.binding].first = binding;
+//         }
+//       }
+//     }
+//     // add the used bindings to the merged layout
+//     for (uint32_t i = 0; i < max_set_layout_bindings; i++) {
+//       if (used_bindings[i].second) {
+//         merged_layout.bindings.push_back(used_bindings[i].first);
+//       }
+//     }
+//     std::ranges::sort(merged_layout.bindings,
+//                       [](VkDescriptorSetLayoutBinding& a, VkDescriptorSetLayoutBinding& b) {
+//                         return a.binding < b.binding;
+//                       });
+//     merged_layout.create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+//     merged_layout.create_info.bindingCount = merged_layout.bindings.size();
+//     merged_layout.create_info.pBindings = merged_layout.bindings.data();
+//     merged_layout.create_info.flags = 0;
+//     merged_layout.create_info.pNext = nullptr;
+//     if (merged_layout.create_info.bindingCount > 0) {
+//       auto res = layout_cache.create_layout(device, merged_layout.create_info);
+//       merged_layout_hashes[set_number] = res.hash;
+//       combined_set_layouts[set_number] = res.layout;
+//     } else {
+//       merged_layout_hashes[set_number] = 0;
+//       combined_set_layouts[set_number] = VK_NULL_HANDLE;
+//     }
+//   }
+//
+//   // use dummy layouts for the case when sets are akin to: [null, 1, null, null]
+//   // set cnt is the last valid set, so in the above case, 1
+//   uint32_t set_cnt = 0;
+//   for (uint32_t i = 0; i < max_descriptor_sets; i++) {
+//     if (combined_set_layouts[i] != VK_NULL_HANDLE) {
+//       set_cnt = i + 1;
+//     } else {
+//       combined_set_layouts[i] = layout_cache.dummy_layout();
+//     }
+//   }
+//
+//   VkPipelineLayoutCreateInfo pipeline_layout_info{
+//       .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+//       // TODO: flags?
+//       .flags = 0,
+//       .setLayoutCount = set_cnt,
+//       .pSetLayouts = set_cnt == 0 ? nullptr : combined_set_layouts.data(),
+//       .pushConstantRangeCount = data.pc_range_cnt,
+//       .pPushConstantRanges = data.pc_ranges.data(),
+//   };
+//   VkPipelineLayout out_layout;
+//   VK_CHECK(vkCreatePipelineLayout(device, &pipeline_layout_info, nullptr, &out_layout));
+//   return out_layout;
+// }
 
 }  // namespace
 
@@ -297,11 +296,12 @@ ShaderManager::LoadProgramResult ShaderManager::load_program(
     }
 
     if (create_pipeline_layout) {
-      // reflect shader
-      if (!reflect_shader(spirv_binaries[i].binary_data, result.modules[i].refl_data)) {
-        LERROR("failed to reflect spirv binary: {}", path);
-        return result;
-      }
+      assert(0 && "no don't do that use bindless please");
+      // // reflect shader
+      // if (!reflect_shader(spirv_binaries[i].binary_data, result.modules[i].refl_data)) {
+      //   LERROR("failed to reflect spirv binary: {}", path);
+      //   return result;
+      // }
     }
 
     {
@@ -321,25 +321,26 @@ ShaderManager::LoadProgramResult ShaderManager::load_program(
   }
 
   if (create_pipeline_layout) {
-    // merge individual module data for layout creation
-    PipelineLayoutCreateInfo data{};
-    data.shader_stage_cnt = result.module_cnt;
-    for (u64 i = 0; i < shader_create_infos.size(); i++) {
-      const auto& module = result.modules[i];
-      const auto& refl_data = module.refl_data;
-      data.shader_stage_flags |= refl_data.shader_stage;
-      if (refl_data.has_pc_range) {
-        data.pc_ranges[data.pc_range_cnt++] = refl_data.range;
-      }
-      for (u64 set_layout_idx = 0; set_layout_idx < refl_data.set_layout_cnt; set_layout_idx++) {
-        data.set_layouts[data.set_layout_cnt++] = refl_data.set_layouts[set_layout_idx];
-      }
-    }
-    result.layout = create_layout(device_, data, layout_cache_);
-    if (!result.layout) {
-      LERROR("Failed to create pipeline layout for pipeline with shader stage 0: {}",
-             shader_create_infos[0].path.string());
-    }
+    assert(0 && "no don't do that use bindless please");
+    // // merge individual module data for layout creation
+    // PipelineLayoutCreateInfo data{};
+    // data.shader_stage_cnt = result.module_cnt;
+    // for (u64 i = 0; i < shader_create_infos.size(); i++) {
+    //   const auto& module = result.modules[i];
+    //   const auto& refl_data = module.refl_data;
+    //   data.shader_stage_flags |= refl_data.shader_stage;
+    //   if (refl_data.has_pc_range) {
+    //     data.pc_ranges[data.pc_range_cnt++] = refl_data.range;
+    //   }
+    //   for (u64 set_layout_idx = 0; set_layout_idx < refl_data.set_layout_cnt; set_layout_idx++) {
+    //     data.set_layouts[data.set_layout_cnt++] = refl_data.set_layouts[set_layout_idx];
+    //   }
+    // }
+    // result.layout = create_layout(device_, data, layout_cache_);
+    // if (!result.layout) {
+    //   LERROR("Failed to create pipeline layout for pipeline with shader stage 0: {}",
+    //          shader_create_infos[0].path.string());
+    // }
   }
 
   return result;
@@ -555,56 +556,56 @@ bool compile_glsl_to_spirv(std::string path, VkShaderStageFlagBits stage,
     }                                        \
   } while (0)
 
-bool reflect_shader(std::vector<u32>& binary, vk2::ShaderReflectData& out_data) {
-  ZoneScoped;
-  spv_reflect::ShaderModule refl_module{binary};
-  TRY(refl_module.GetResult());
-  out_data.shader_stage = refl_module.GetShaderStage();
-  u32 cnt;
-  TRY(refl_module.EnumerateDescriptorSets(&cnt, nullptr));
-  std::vector<SpvReflectDescriptorSet*> refl_sets(cnt);
-  TRY(refl_module.EnumerateDescriptorSets(&cnt, refl_sets.data()));
-
-  TRY(refl_module.EnumeratePushConstantBlocks(&cnt, nullptr));
-  std::vector<SpvReflectBlockVariable*> refl_pc_blocks(cnt);
-  TRY(refl_module.EnumeratePushConstantBlocks(&cnt, refl_pc_blocks.data()));
-  if (cnt > 1) {
-    LERROR("shader module has > 1 push constant block, not supported.");
-    return false;
-  }
-  if (cnt > 0) {
-    out_data.has_pc_range = true;
-    out_data.range = VkPushConstantRange{
-        .stageFlags = static_cast<VkShaderStageFlags>(refl_module.GetShaderStage()),
-        .offset = refl_pc_blocks[0]->offset,
-        .size = refl_pc_blocks[0]->size};
-  }
-
-  for (const SpvReflectDescriptorSet* set : refl_sets) {
-    const SpvReflectDescriptorSet& refl_set = *set;
-    vk2::DescriptorSetLayoutData& layout = out_data.set_layouts[out_data.set_layout_cnt++];
-    layout.bindings.resize(refl_set.binding_count);
-    for (uint32_t binding_idx = 0; binding_idx < refl_set.binding_count; binding_idx++) {
-      auto& binding = layout.bindings[binding_idx];
-      const auto& refl_binding = *(refl_set.bindings[binding_idx]);
-      binding.binding = refl_binding.binding;
-      binding.descriptorType = static_cast<VkDescriptorType>(refl_binding.descriptor_type);
-      binding.descriptorCount = 1;
-      if (binding.descriptorCount > 1) {
-        for (uint32_t dim_idx = 0; dim_idx < refl_binding.array.dims_count; dim_idx++) {
-          binding.descriptorCount *= refl_binding.array.dims[dim_idx];
-        }
-      }
-      binding.stageFlags = static_cast<VkShaderStageFlagBits>(refl_module.GetShaderStage());
-    }
-    layout.set_number = refl_set.set;
-    layout.create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layout.create_info.bindingCount = refl_set.binding_count;
-    // NOTE: must move the vector and not copy, or the pBindings will be invalidated
-    layout.create_info.pBindings = layout.bindings.data();
-  }
-  return true;
-}
+// bool reflect_shader(std::vector<u32>& binary, vk2::ShaderReflectData& out_data) {
+//   ZoneScoped;
+//   spv_reflect::ShaderModule refl_module{binary};
+//   TRY(refl_module.GetResult());
+//   out_data.shader_stage = refl_module.GetShaderStage();
+//   u32 cnt;
+//   TRY(refl_module.EnumerateDescriptorSets(&cnt, nullptr));
+//   std::vector<SpvReflectDescriptorSet*> refl_sets(cnt);
+//   TRY(refl_module.EnumerateDescriptorSets(&cnt, refl_sets.data()));
+//
+//   TRY(refl_module.EnumeratePushConstantBlocks(&cnt, nullptr));
+//   std::vector<SpvReflectBlockVariable*> refl_pc_blocks(cnt);
+//   TRY(refl_module.EnumeratePushConstantBlocks(&cnt, refl_pc_blocks.data()));
+//   if (cnt > 1) {
+//     LERROR("shader module has > 1 push constant block, not supported.");
+//     return false;
+//   }
+//   if (cnt > 0) {
+//     out_data.has_pc_range = true;
+//     out_data.range = VkPushConstantRange{
+//         .stageFlags = static_cast<VkShaderStageFlags>(refl_module.GetShaderStage()),
+//         .offset = refl_pc_blocks[0]->offset,
+//         .size = refl_pc_blocks[0]->size};
+//   }
+//
+//   for (const SpvReflectDescriptorSet* set : refl_sets) {
+//     const SpvReflectDescriptorSet& refl_set = *set;
+//     vk2::DescriptorSetLayoutData& layout = out_data.set_layouts[out_data.set_layout_cnt++];
+//     layout.bindings.resize(refl_set.binding_count);
+//     for (uint32_t binding_idx = 0; binding_idx < refl_set.binding_count; binding_idx++) {
+//       auto& binding = layout.bindings[binding_idx];
+//       const auto& refl_binding = *(refl_set.bindings[binding_idx]);
+//       binding.binding = refl_binding.binding;
+//       binding.descriptorType = static_cast<VkDescriptorType>(refl_binding.descriptor_type);
+//       binding.descriptorCount = 1;
+//       if (binding.descriptorCount > 1) {
+//         for (uint32_t dim_idx = 0; dim_idx < refl_binding.array.dims_count; dim_idx++) {
+//           binding.descriptorCount *= refl_binding.array.dims[dim_idx];
+//         }
+//       }
+//       binding.stageFlags = static_cast<VkShaderStageFlagBits>(refl_module.GetShaderStage());
+//     }
+//     layout.set_number = refl_set.set;
+//     layout.create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+//     layout.create_info.bindingCount = refl_set.binding_count;
+//     // NOTE: must move the vector and not copy, or the pBindings will be invalidated
+//     layout.create_info.pBindings = layout.bindings.data();
+//   }
+//   return true;
+// }
 
 bool load_shader_bytes(const std::string& path, std::vector<uint32_t>& result) {
   ZoneScoped;

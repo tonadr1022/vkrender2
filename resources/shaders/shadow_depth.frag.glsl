@@ -7,12 +7,7 @@ layout(location = 1) flat in uint material_id;
 
 #include "./common.h.glsl"
 #include "./shadow_depth_common.h.glsl"
-
-struct Material {
-    vec4 emissive_factors;
-    uvec4 ids; // albedo, normal, metal_rough, emissive
-    uvec4 ids2; // ao, w is flags
-};
+#include "./material.h.glsl"
 
 VK2_DECLARE_SAMPLED_IMAGES(texture2D);
 

@@ -19,6 +19,7 @@ src/util/IndexAllocator.cpp
 src/util/CVar.cpp
 src/util/FileWatcher.cpp
 
+src/IBL.cpp
 src/techniques/CSM.cpp
 
 src/vk2/Rendering.cpp
@@ -85,7 +86,6 @@ vk-bootstrap::vk-bootstrap
 VulkanMemoryAllocator
 glslang
 glslang-default-resource-limits
-spirv-reflect-static
 BS_thread_pool
 stb_image
 mikktspace

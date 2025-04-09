@@ -5,6 +5,7 @@
 #include "../common.h.glsl"
 #include "../pbr/pbr.h.glsl"
 #include "./basic_common.h.glsl"
+#include "../material.h.glsl"
 #include "../shadows/shadows.h.glsl"
 
 layout(location = 0) in vec3 in_normal;
@@ -15,12 +16,6 @@ layout(location = 4) in vec3 in_tangent;
 layout(location = 5) flat in uint material_id;
 
 layout(location = 0) out vec4 out_frag_color;
-
-struct Material {
-    vec4 emissive_factors;
-    uvec4 ids; // albedo, normal, metal_rough, emissive
-    uvec4 ids2; // ao, w is flags
-};
 
 VK2_DECLARE_SAMPLED_IMAGES(texture2D);
 VK2_DECLARE_SAMPLED_IMAGES(textureCube);
@@ -46,24 +41,22 @@ void main() {
     SceneData scene_data = scene_data_buffer[scene_buffer].data;
     uvec4 debug_flags = scene_data.debug_flags;
     Material material = materials[materials_buffer].mats[nonuniformEXT(material_id)];
-    vec4 color = texture(vk2_sampler2D(material.ids.x, sampler_idx), in_uv);
+    vec4 color = material.albedo_factors;
+    if (material.ids.x != 0) {
+        color *= texture(vk2_sampler2D(material.ids.x, sampler_idx), in_uv);
+    }
     if (color.a < .5) {
         discard;
     }
-    vec3 emissive = texture(vk2_sampler2D(material.ids.w, sampler_idx), in_uv).rgb *
-            material.emissive_factors.w * material.emissive_factors.rgb;
-    // if (material.emissive_factors.w > 1.) {
-    //     out_frag_color = vec4(1.);
-    //     return;
-    // } else {
-    //     out_frag_color = vec4(0.);
-    //     return;
-    // }
+    vec3 emissive = material.emissive_factors.w * material.emissive_factors.rgb;
+    if (material.ids.w != 0) {
+        emissive *= texture(vk2_sampler2D(material.ids.w, sampler_idx), in_uv).rgb;
+    }
     float ao = 1.0;
     if ((debug_flags.x & AO_ENABLED_BIT) != 0) {
-        if ((material.ids2.w & METALLIC_ROUGHNESS_TEX_MASK) == PACKED_OCCLUSION_ROUGHNESS_METALLIC) {
+        if (material.ids.z != 0 && (material.ids2.w & METALLIC_ROUGHNESS_TEX_MASK) == PACKED_OCCLUSION_ROUGHNESS_METALLIC) {
             ao = texture(vk2_sampler2D(material.ids.z, sampler_idx), in_uv).r;
-        } else {
+        } else if (material.ids2.x != 0) {
             ao = texture(vk2_sampler2D(material.ids2.x, sampler_idx), in_uv).r;
         }
         if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_AO_MAP) {
@@ -71,9 +64,13 @@ void main() {
             return;
         }
     }
-    vec3 metal_rough = texture(vk2_sampler2D(material.ids.z, sampler_idx), in_uv).rgb;
-    float metallic = metal_rough.b;
-    float roughness = metal_rough.g;
+    float metallic = material.pbr_factors.x;
+    float roughness = material.pbr_factors.y;
+    if (material.ids.z != 0) {
+        vec3 metal_rough = texture(vk2_sampler2D(material.ids.z, sampler_idx), in_uv).rgb;
+        metallic = metal_rough.b;
+        roughness = metal_rough.g;
+    }
 
     vec3 N;
     if ((debug_flags.x & NORMAL_MAPS_ENABLED_BIT) != 0 && material.ids.y != 0) {
@@ -83,6 +80,10 @@ void main() {
     } else {
         N = normalize(in_normal);
     }
+    // TODO: sep pass?
+    if (!gl_FrontFacing) {
+        N = -N;
+    }
     if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_NORMALS) {
         out_frag_color = vec4(N, 1.);
         return;
@@ -90,9 +91,6 @@ void main() {
 
     vec3 V = normalize(scene_data.view_pos - in_frag_pos);
 
-    // vec3 gammaCorrected = pow(color.rgb, vec3(1.0 / 2.2));
-    // out_frag_color = vec4(gammaCorrected, 1.);
-    // return;
     if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_CASCADE_LEVELS) {
         out_frag_color = vec4(cascade_debug_color(shadow_datas[shadow_buffer_idx].data, scene_data, in_frag_pos), 1.);
         return;
@@ -132,13 +130,25 @@ void main() {
     }
 
     // IBL ambient
-    // TODO: read up, idiot
-    // vec3 kS = FresnelSchlick(NdotV, F0);
-    vec3 kS = FresnelSchlickRoughness(NdotV, F0, roughness);
-    vec3 kD = (1.0 - kS) * (1.0 - metallic);
-    vec3 irradiance = texture(vk2_samplerCube(irradiance_img_idx, sampler_idx), N).rgb * scene_data.ambient_intensity;
-    vec3 diffuse = irradiance * albedo;
-    vec3 ambient = (kD * diffuse) * ao * scene_data.ambient_intensity;
-    vec3 outputColor = light_out + emissive + ambient;
-    out_frag_color = vec4(outputColor, 1.);
+    vec3 ambient = vec3(0.07) * albedo;
+    {
+        vec3 F = FresnelSchlickRoughness(NdotV, F0, roughness);
+
+        vec3 kS = F;
+        vec3 kD = (1.0 - kS) * (1.0 - metallic);
+        vec3 irradiance = texture(vk2_samplerCube(irradiance_img_idx, sampler_idx), N).rgb;
+        vec3 diffuse = irradiance * albedo;
+
+        const float MaxReflectionLod = 4.;
+        vec3 R = reflect(-V, N);
+        vec3 prefiltered_color = textureLod(vk2_samplerCube(prefiltered_env_map_idx,
+                    linear_clamp_to_edge_sampler_idx), R, roughness * MaxReflectionLod).rgb;
+        vec2 env_brdf = texture(vk2_sampler2D(brdf_lut_idx, linear_clamp_to_edge_sampler_idx), vec2(NdotV, roughness)).rg;
+        vec3 specular = prefiltered_color * (F * env_brdf.x + env_brdf.y);
+
+        ambient = (kD * diffuse + specular) * ao * scene_data.ambient_intensity;
+        vec3 outputColor = light_out + emissive + ambient;
+        // outputColor = emissive + ambient;
+        out_frag_color = vec4(outputColor, 1.);
+    }
 }

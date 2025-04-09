@@ -216,3 +216,26 @@ void transition_image(VkCommandBuffer cmd, vk2::Texture& image, VkImageLayout ol
   auto dep_info = vk2::init::dependency_info({}, SPAN1(b));
   vkCmdPipelineBarrier2KHR(cmd, &dep_info);
 }
+
+void transition_image_discard(VkCommandBuffer cmd, vk2::Texture& image, VkImageLayout layout,
+                              VkPipelineStageFlags2 stage, VkAccessFlags2 access,
+                              const VkImageSubresourceRange& range) {
+  VkImageMemoryBarrier2 b{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+  b.image = image.image();
+  b.srcAccessMask = 0;
+  b.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+  b.dstAccessMask = access;
+  b.dstStageMask = stage;
+  b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  b.newLayout = layout;
+  b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  b.subresourceRange = range;
+  auto dep_info = vk2::init::dependency_info({}, SPAN1(b));
+  vkCmdPipelineBarrier2KHR(cmd, &dep_info);
+}
+void transition_image(VkCommandBuffer cmd, vk2::Texture& image, VkImageLayout new_layout,
+                      VkImageAspectFlags aspect) {
+  transition_image(cmd, image, image.curr_layout, new_layout, aspect);
+  image.curr_layout = new_layout;
+}

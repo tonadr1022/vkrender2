@@ -41,7 +41,7 @@ void main() {
 
     // TODO: something else lol
     // out_normal = normalize(transpose(inverse(mat3(model))) * v.normal);
-    out_normal = vec3(model * vec4(v.normal, 0.));
+    out_normal = normalize(vec3(model * vec4(v.normal, 0.)));
     vec3 T = normalize(vec3(model * vec4(v.tangent.xyz, 0.)));
     vec3 N = out_normal;
     out_bitangent = cross(N, T);

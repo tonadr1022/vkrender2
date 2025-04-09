@@ -31,7 +31,9 @@ struct MeshBounds {
 };
 
 struct Material {
-  vec4 emissive_factors;
+  vec4 emissive_factors{0.};
+  vec4 albedo_factors{1.};
+  vec4 pbr_factors;
   uvec4 ids1;  // albedo, normal, metal_rough, emissive
   uvec4 ids2;  // ao
 };

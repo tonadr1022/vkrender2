@@ -4,4 +4,5 @@ layout(push_constant) uniform PC {
     uint cubemap_tex_idx;
     uint sampler_idx;
     uint vertex_buffer_idx;
+    float cubemap_res;
 };

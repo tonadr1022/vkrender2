@@ -179,14 +179,11 @@ CSM::CSM(VkPipelineLayout pipeline_layout)
                                               },
                                           }};
   }
-  shadow_sampler_ = SamplerCache::get().get_or_create_sampler(VkSamplerCreateInfo{
-      .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-      .magFilter = VK_FILTER_LINEAR,
-      .minFilter = VK_FILTER_LINEAR,
-      .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-      .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-      .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-      .borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE
+  shadow_sampler_ = SamplerCache::get().get_or_create_sampler(SamplerCreateInfo{
+      .min_filter = VK_FILTER_LINEAR,
+      .mag_filter = VK_FILTER_LINEAR,
+      .address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+      .border_color = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE
 
   });
   shadow_depth_pipline_ = PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
@@ -248,7 +245,7 @@ void CSM::render(StateTracker& state, VkCommandBuffer cmd, u32 frame_num, const 
   init::begin_debug_utils_label(cmd, "csm render");
   // draw shadows
   float shadow_z_far = shadow_z_far_;
-  {
+  if (aabb_based_z_far_) {
     std::array<vec3, 8> aabb_corners;
     aabb.get_corners(aabb_corners);
     float max_dist = std::numeric_limits<float>::lowest();
@@ -258,6 +255,7 @@ void CSM::render(StateTracker& state, VkCommandBuffer cmd, u32 frame_num, const 
     shadow_z_far = max_dist;
     shadow_z_far_ = max_dist;
   }
+  shadow_z_far = std::max(shadow_z_far, 50.f);
 
   std::array<float, max_cascade_levels - 1> levels;
   for (u32 i = 0; i < cascade_count_ - 1; i++) {
@@ -325,6 +323,7 @@ void CSM::on_imgui(VkSampler sampler) {
   ImGui::Checkbox("shadow map debug", &debug_render_enabled_);
   ImGui::SliderFloat("Z mult", &z_mult_, 0.0, 50.f);
   ImGui::DragFloat("Shadow z far", &shadow_z_far_, 1., 0.f, 10000.f);
+  ImGui::Checkbox("AABB Based Shadow Z Far", &aabb_based_z_far_);
   ImGui::DragFloat("Min Bias", &min_bias_, .001, 0.00001, max_bias_);
   ImGui::DragFloat("Max Bias", &max_bias_, .001, min_bias_, 0.01);
   ImGui::DragFloat("Cascade Split Linear Factor", &cascade_linear_factor_, .001f, 0.f, 1.f);

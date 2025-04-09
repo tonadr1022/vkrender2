@@ -9,6 +9,7 @@
 
 #include "AABB.hpp"
 #include "BaseRenderer.hpp"
+#include "IBL.hpp"
 #include "Scene.hpp"
 #include "SceneLoader.hpp"
 #include "StateTracker.hpp"
@@ -37,17 +38,21 @@ struct LinearAllocator {
     curr_offset = 0;
   }
 };
+
 struct CmdEncoder {
-  explicit CmdEncoder(VkCommandBuffer cmd) : cmd_(cmd) {}
+  explicit CmdEncoder(VkCommandBuffer cmd, VkPipelineLayout default_pipeline_layout)
+      : default_pipeline_layout_(default_pipeline_layout), cmd_(cmd) {}
   void dispatch(u32 work_groups_x, u32 work_groups_y, u32 work_groups_z);
   void bind_compute_pipeline(VkPipeline pipeline);
   void bind_descriptor_set(VkPipelineBindPoint bind_point, VkPipelineLayout layout,
                            VkDescriptorSet* set, u32 idx);
   void push_constants(VkPipelineLayout layout, u32 size, void* data);
+  void push_constants(u32 size, void* data);
 
   [[nodiscard]] VkCommandBuffer cmd() const { return cmd_; }
 
  private:
+  VkPipelineLayout default_pipeline_layout_;
   VkCommandBuffer cmd_;
 };
 
@@ -89,9 +94,12 @@ struct VkRender2 final : public BaseRenderer {
 
   // TODO: private
   void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
+  void immediate_submit(std::function<void(CmdEncoder& cmd)>&& function);
   void transfer_submit(std::function<void(VkCommandBuffer cmd, VkFence fence,
                                           std::queue<InFlightResource<vk2::Buffer*>>&)>&& function);
   [[nodiscard]] const QueueFamilies& get_queues() const { return queues_; }
+  void set_env_map(const std::filesystem::path& path);
+  void bind_bindless_descriptors(CmdEncoder& ctx);
 
  private:
   void on_draw(const SceneDrawInfo& info) override;
@@ -129,7 +137,6 @@ struct VkRender2 final : public BaseRenderer {
   FrameData& curr_frame_2() { return per_frame_data_2_[curr_frame_num() % 2]; }
   void init_pipelines();
   void init_indirect_drawing();
-  void init_ibl();
   static constexpr u32 max_draws{100'000};
 
   struct SceneUniforms {
@@ -193,7 +200,7 @@ struct VkRender2 final : public BaseRenderer {
     u64 num_indices;
     u64 materials_idx_offset;
   };
-  struct DrawInfo {
+  struct GPUDrawInfo {
     u32 index_cnt;
     u32 first_index;
     u32 vertex_offset;
@@ -201,22 +208,25 @@ struct VkRender2 final : public BaseRenderer {
   };
 
   struct ObjectDraw {
-    std::vector<util::SlotAllocator<DrawInfo>::Slot> draw_cmd_slots;
+    std::vector<util::SlotAllocator<GPUDrawInfo>::Slot> draw_cmd_slots;
     std::vector<util::SlotAllocator<gfx::ObjectData>::Slot> obj_data_slots;
   };
-  // std::vector<ObjectDraw> static_draws_;
 
   std::unordered_map<SceneHandle, ObjectDraw> active_static_draws_;
   std::unordered_map<std::string, StaticSceneGPUResources> static_scenes_;
 
   DrawStats static_draw_stats_{};
+  // TODO: this is disgusting, but eventually a rewrite will wipe this out anyway
+ public:
   std::optional<LinearBuffer> static_vertex_buf_;
+
+ private:
   std::optional<LinearBuffer> static_index_buf_;
   std::optional<LinearBuffer> static_materials_buf_;
   std::optional<LinearBuffer> static_instance_data_buf_;
 
   AABB scene_aabb_{};
-  std::optional<SlotBuffer<DrawInfo>> static_draw_info_buf_;
+  std::optional<SlotBuffer<GPUDrawInfo>> static_draw_info_buf_;
   std::optional<SlotBuffer<gfx::ObjectData>> static_object_data_buf_;
   std::vector<vk2::Texture> static_textures_;
   std::optional<vk2::Buffer> final_draw_cmd_buf_;
@@ -229,6 +239,7 @@ struct VkRender2 final : public BaseRenderer {
   std::optional<vk2::Texture> post_processed_img_;
 
   std::optional<vk2::Sampler> linear_sampler_;
+  std::optional<vk2::Sampler> linear_sampler_clamp_to_edge_;
   struct DefaultData {
     std::optional<vk2::Texture> white_img;
   } default_data_;
@@ -238,17 +249,14 @@ struct VkRender2 final : public BaseRenderer {
     u32 instance_id;
   };
 
+  std::filesystem::path default_env_map_path_;
   std::optional<CSM> csm_;
+  std::optional<IBL> ibl_;
   vk2::DeletionQueue main_del_q_;
   vk2::PipelineHandle img_pipeline_;
   vk2::PipelineHandle draw_pipeline_;
   vk2::PipelineHandle cull_objs_pipeline_;
-  vk2::PipelineHandle equirect_to_cube_pipeline_;
-  vk2::PipelineHandle equirect_to_cube_pipeline2_;
   vk2::PipelineHandle skybox_pipeline_;
-  vk2::PipelineHandle convolute_cube_pipeline_;
-  vk2::PipelineHandle convolute_cube_raster_pipeline_;
-  vk2::PipelineHandle prefilter_env_map_pipeline_;
   vk2::PipelineHandle postprocess_pipeline_;
   VkPipelineLayout default_pipeline_layout_{};
   std::queue<InFlightResource<vk2::Buffer*>> pending_buffer_transfers_;
@@ -265,21 +273,12 @@ struct VkRender2 final : public BaseRenderer {
 
   u32 debug_mode_{DEBUG_MODE_NONE};
   const char* debug_mode_to_string(u32 mode);
-  std::optional<vk2::Texture> load_hdr_img(const std::filesystem::path& path, bool flip = false);
   std::filesystem::path env_tex_path_;
-  std::optional<vk2::Texture> env_equirect_tex_;
-  std::optional<vk2::Texture> env_cubemap_tex_;
-
-  std::optional<vk2::Texture> irradiance_cubemap_tex_;
-  std::optional<vk2::TextureCubeAndViews> prefiltered_env_map_tex_;
   i32 prefilter_mip_skybox_level_{};
   // TODO: enum loser
   bool render_prefilter_mip_skybox_{};
   void make_cubemap_views_all_mips(const vk2::Texture& texture,
                                    std::vector<std::optional<vk2::TextureView>>& views);
-  std::vector<std::optional<vk2::TextureView>> prefiltered_env_tex_views_;
-  std::array<std::optional<vk2::TextureView>, 6> cubemap_tex_views_;
-  std::array<std::optional<vk2::TextureView>, 6> convoluted_cubemap_tex_views_;
   void generate_mipmaps(StateTracker& state, VkCommandBuffer cmd, vk2::Texture& tex);
   u64 cube_vertices_gpu_offset_{};
   // u64 cube_indices_gpu_offset_{};
@@ -287,5 +286,9 @@ struct VkRender2 final : public BaseRenderer {
   // std::optional<vk2::Buffer> cube_index_buf_;
 
  public:
+  std::optional<vk2::Texture> load_hdr_img(CmdEncoder& ctx, const std::filesystem::path& path,
+                                           bool flip = false);
+  void draw_cube(VkCommandBuffer cmd) const;
+  void generate_mipmaps(CmdEncoder& ctx, vk2::Texture& tex);
   [[nodiscard]] const DefaultData& get_default_data() const { return default_data_; }
 };

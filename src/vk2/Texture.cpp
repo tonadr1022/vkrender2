@@ -287,12 +287,6 @@ void blit_img(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent3D extent,
   vkCmdBlitImage2KHR(cmd, &blit_info);
 };
 
-// Sampler::Sampler(const VkSamplerCreateInfo& info) {
-//   sampler_ = SamplerCache::get().get_or_create_sampler(info);
-//   assert(sampler_);
-//   resource_info_ = BindlessResourceAllocator::get().allocate_sampler_descriptor(sampler_);
-// }
-
 uint32_t format_storage_size(VkFormat format) {
   switch (format) {
     case VK_FORMAT_R8_UNORM:

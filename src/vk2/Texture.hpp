@@ -11,20 +11,6 @@
 
 namespace vk2 {
 
-// TODO: separate view class
-// view class owns the bindless resource info.
-
-// There are generally few enough samplers s.t. they don't need to be deleted.
-// thus, they are immutable and can be trivially copied
-// class Sampler {
-//  public:
-//   explicit Sampler(const VkSamplerCreateInfo& info);
-//
-//  private:
-//   BindlessResourceInfo resource_info_;
-//   VkSampler sampler_;
-// };
-
 enum class TextureUsage : u8 {
   // general computation, i.e. StorageImage
   General,

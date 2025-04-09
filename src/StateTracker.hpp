@@ -33,6 +33,19 @@ void transition_image(VkCommandBuffer cmd, vk2::Texture& image, VkImageLayout ol
                       VkImageLayout new_layout,
                       VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
 
+void transition_image(VkCommandBuffer cmd, vk2::Texture& image, VkImageLayout new_layout,
+                      VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
+constexpr VkImageSubresourceRange default_image_subresource_range{
+    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+    .baseMipLevel = 0,
+    .levelCount = VK_REMAINING_MIP_LEVELS,
+    .baseArrayLayer = 0,
+    .layerCount = VK_REMAINING_ARRAY_LAYERS};
+
+void transition_image_discard(
+    VkCommandBuffer cmd, vk2::Texture& image, VkImageLayout layout, VkPipelineStageFlags2 stage,
+    VkAccessFlags2 access, const VkImageSubresourceRange& range = default_image_subresource_range);
+
 class StateTracker {
  public:
   explicit StateTracker() {

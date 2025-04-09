@@ -33,7 +33,7 @@ struct App {
   std::filesystem::path local_models_dir;
   std::vector<SceneHandle> scenes_;
   float sun_intensity_{1.};
-  float ambient_intensity_{1.};
+  float ambient_intensity_{.1};
   struct SceneData {
     vec3 light_dir{2., -3.5, 2};
     vec3 light_color{1.0, 1.0, 1.0};

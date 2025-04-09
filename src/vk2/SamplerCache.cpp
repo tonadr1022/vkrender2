@@ -10,11 +10,11 @@
 
 namespace vk2 {
 
-Sampler SamplerCache::get_or_create_sampler(const VkSamplerCreateInfo& info) {
+Sampler SamplerCache::get_or_create_sampler(const SamplerCreateInfo& info) {
   ZoneScoped;
-  auto h = std::make_tuple(info.addressModeU, info.addressModeV, info.addressModeW, info.minFilter,
-                           info.magFilter, info.anisotropyEnable, info.maxAnisotropy, info.flags,
-                           info.compareEnable, info.compareOp);
+  auto h =
+      std::make_tuple(info.address_mode, info.min_filter, info.mag_filter, info.anisotropy_enable,
+                      info.max_anisotropy, info.compare_enable, info.compare_op);
   auto hash = detail::hashing::hash<decltype(h)>{}(h);
 
   auto it = sampler_cache_.find(hash);
@@ -23,7 +23,21 @@ Sampler SamplerCache::get_or_create_sampler(const VkSamplerCreateInfo& info) {
   }
 
   Sampler sampler;
-  vkCreateSampler(device_, &info, nullptr, &sampler.sampler);
+  VkSamplerCreateInfo cinfo{.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+                            .magFilter = info.mag_filter,
+                            .minFilter = info.min_filter,
+                            .mipmapMode = info.mipmap_mode,
+                            .addressModeU = info.address_mode,
+                            .addressModeV = info.address_mode,
+                            .addressModeW = info.address_mode,
+                            .anisotropyEnable = info.anisotropy_enable,
+                            .maxAnisotropy = info.max_anisotropy,
+                            .compareEnable = info.compare_enable,
+                            .compareOp = info.compare_op,
+                            .minLod = info.min_lod,
+                            .maxLod = info.max_lod,
+                            .borderColor = info.border_color};
+  vkCreateSampler(device_, &cinfo, nullptr, &sampler.sampler);
   assert(sampler.sampler);
   sampler.resource_info =
       BindlessResourceAllocator::get().allocate_sampler_descriptor(sampler.sampler);
@@ -57,4 +71,12 @@ void SamplerCache::destroy() {
   delete instance;
 }
 
+Sampler SamplerCache::get_linear_sampler() {
+  return get_or_create_sampler({
+      .min_filter = VK_FILTER_LINEAR,
+      .mag_filter = VK_FILTER_LINEAR,
+      .mipmap_mode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+      .address_mode = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+  });
+}
 }  // namespace vk2

@@ -57,6 +57,7 @@ class CSM {
   float depth_bias_constant_factor_{.001f};
   float depth_bias_slope_factor_{2.5f};
   bool depth_bias_enabled_{true};
+  bool aabb_based_z_far_{true};
   float pcf_scale_{1.};
   float min_bias_{0.001};
   float max_bias_{0.001};
