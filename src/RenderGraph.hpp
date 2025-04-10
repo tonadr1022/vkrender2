@@ -1,0 +1,204 @@
+#pragma once
+
+#include <vulkan/vulkan_core.h>
+
+#include <expected>
+#include <string>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+
+#include "FixedVector.hpp"
+#include "Types.hpp"
+#include "VkRender2.hpp"
+
+namespace gfx {
+
+// TODO: separate types
+struct ResourceProxy {
+  std::string name;
+  Access access;
+};
+using VoidResult = std::expected<void, const char*>;
+
+using ExecuteFn = std::function<void(CmdEncoder& cmd)>;
+
+enum class AttachmentType : uint8_t { Color, Depth, Stencil };
+
+enum class SizeClass : uint8_t { Absolute, SwapchainRelative, InputRelative };
+
+using AttachmentInfoFlags = uint8_t;
+
+struct AttachmentInfo {
+  SizeClass size_class{SizeClass::SwapchainRelative};
+  float size_x = 1.f, size_y = 1.f, size_z = 1.f;
+  ImageUsageFlags aux_flags{};
+  Format format{};
+};
+
+struct BufferInfo {
+  size_t size{};
+  BufferUsageFlags usage{};
+};
+
+struct BufferUsage {
+  std::string name;
+  size_t size{};
+  BufferUsageFlags usage{};
+};
+
+struct TextureUsage {
+  std::string name;
+};
+
+struct PassCreateInfo {};
+
+enum class ResourceType : uint8_t { Buffer, Texture };
+struct RenderGraph;
+
+struct RenderResource {
+  static constexpr uint32_t unused = UINT32_MAX;
+  RenderResource(ResourceType type, uint32_t idx) : type_(type), idx_(idx) {}
+  RenderResource(std::string name, uint32_t phyisical_idx, ResourceType type, uint32_t idx)
+      : name(std::move(name)), phyisical_idx(phyisical_idx), type_(type), idx_(idx) {}
+
+  [[nodiscard]] ResourceType get_type() const { return type_; }
+  [[nodiscard]] uint32_t get_idx() const { return idx_; }
+
+  void read_in_pass(uint32_t pass) { read_passes_.emplace_back(pass); }
+  [[nodiscard]] std::span<const uint32_t> get_read_passes() const { return read_passes_; }
+
+  void written_in_pass(uint32_t pass) { written_passes_.emplace_back(pass); }
+  [[nodiscard]] std::span<const uint32_t> get_written_passes() const { return written_passes_; }
+
+  std::string name;
+  uint32_t phyisical_idx{unused};
+
+ private:
+  ResourceType type_;
+  uint32_t idx_{unused};
+  // TODO: flat set
+  util::fixed_vector<uint32_t, 10> written_passes_;
+  util::fixed_vector<uint32_t, 10> read_passes_;
+};
+
+enum class ResourceUsage : uint8_t {
+  ColorOutput,
+  TextureInput,
+  DepthStencilOutput,
+  DepthStencilInput
+};
+bool is_texture_usage(ResourceUsage usage);
+
+using RenderResourceHandle = uint32_t;
+
+struct Pass {
+  explicit Pass(std::string name, ExecuteFn fn, RenderGraph& graph, uint32_t idx);
+  RenderResourceHandle add_color_output(const std::string& name, const AttachmentInfo& info,
+                                        const std::string& input = "");
+  RenderResourceHandle set_depth_stencil_input(const std::string& name);
+  RenderResourceHandle add_texture_input(const std::string& name);
+  RenderResourceHandle set_depth_stencil_output(const std::string& name,
+                                                const AttachmentInfo& info);
+
+  // TODO: assign queue to the pass
+  [[nodiscard]] const std::string& get_name() const { return name_; }
+  [[nodiscard]] uint32_t get_idx() const { return idx_; }
+
+  struct UsageAndHandle {
+    uint32_t idx;
+    ResourceUsage usage;
+  };
+
+  [[nodiscard]] std::vector<UsageAndHandle> get_resource_reads() const { return resource_reads_; }
+  [[nodiscard]] std::vector<UsageAndHandle> get_resource_writes() const { return resource_writes_; }
+
+ private:
+  std::vector<UsageAndHandle> resource_reads_;
+  std::vector<UsageAndHandle> resource_writes_;
+
+  const std::string name_;
+  ExecuteFn execute_;
+  RenderGraph& graph_;
+  const uint32_t idx_;
+
+  // [[nodiscard]] bool contains_input(const std::string& name) const;
+};
+
+struct RenderTextureResource : public RenderResource {
+  explicit RenderTextureResource(uint32_t idx) : RenderResource(ResourceType::Texture, idx) {}
+  AttachmentInfo info;
+  VkImageUsageFlags image_usage{};
+  bool transient = false;
+};
+
+struct RenderGraph {
+  explicit RenderGraph(std::string name = "RenderGraph");
+  Pass& add_pass(const std::string& name, ExecuteFn execute);
+  void set_backbuffer_img(const std::string& name) { backbuffer_img_ = name; }
+
+  VoidResult bake();
+  void execute();
+  void log();
+
+  uint32_t get_or_add_texture_resource(const std::string& name);
+  RenderTextureResource* get_texture_resource(uint32_t idx);
+
+ private:
+  std::string name_;
+  std::vector<Pass> passes_;
+  std::string backbuffer_img_;
+
+  struct Barrier {
+    uint32_t resource_idx;
+    VkImageLayout layout;
+    VkAccessFlags2 access;
+    VkPipelineStageFlags2 stages;
+  };
+
+  // invalidate barriers are when gpu cache needs to be invalidated (read)
+  // flush barriers are when gpu cache needs to be flushed (write)
+
+  struct Barriers {
+    std::vector<Barrier> invalidate;
+    std::vector<Barrier> flush;
+  };
+  std::vector<Barriers> pass_barriers_;
+
+  static constexpr uint32_t handle_unused = UINT32_MAX;
+
+  struct PhysicalPass {
+    std::string name;
+    std::vector<Barrier> invalidate_barriers;
+    std::vector<Barrier> flush_barriers;
+    std::vector<uint32_t> physical_color_attachments;
+    uint32_t physical_depth_stencil{handle_unused};
+  };
+  std::vector<PhysicalPass> physical_passes_;
+
+  void prune_duplicates(std::vector<uint32_t>& data);
+
+  // TODO: pool
+  std::vector<std::unique_ptr<RenderResource>> resources_;
+  std::unordered_map<std::string, uint32_t> resource_to_idx_map_;
+
+  // TODO: bitset
+  std::vector<std::unordered_set<uint32_t>> pass_dependencies_;
+  std::vector<uint32_t> pass_stack_;
+  VoidResult traverse_dependencies_recursive(uint32_t pass_i, uint32_t stack_size);
+
+  std::unordered_set<uint32_t> dup_prune_set_;
+};
+
+// https://github.com/martty/vuk/blob/master/src/RenderGraphImpl.hpp
+template <typename Iterator, typename Compare>
+void topological_sort(Iterator begin, Iterator end, Compare cmp) {
+  while (begin != end) {
+    auto const new_begin = std::partition(begin, end, [&](auto const& a) {
+      return std::none_of(begin, end, [&](auto const& b) { return cmp(b, a); });
+    });
+    assert(new_begin != begin && "not a partial ordering");
+    begin = new_begin;
+  }
+}
+}  // namespace gfx

@@ -14,6 +14,7 @@
 
 #include "GLFW/glfw3.h"
 #include "Logger.hpp"
+#include "RenderGraph.hpp"
 #include "SceneLoader.hpp"
 #include "StateTracker.hpp"
 #include "glm/packing.hpp"
