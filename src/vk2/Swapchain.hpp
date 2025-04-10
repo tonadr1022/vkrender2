@@ -6,7 +6,7 @@
 
 #include "Common.hpp"
 
-namespace vk2 {
+namespace gfx::vk2 {
 
 struct UpdateSwapchainInfo {
   VkPhysicalDevice phys_device;
@@ -37,4 +37,4 @@ struct Swapchain {
   void init(const UpdateSwapchainInfo& info, VkFormat format, VkSwapchainKHR old);
 };
 
-}  // namespace vk2
+}  // namespace gfx::vk2

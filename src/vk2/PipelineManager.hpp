@@ -11,6 +11,8 @@
 #include "vk2/Handle.hpp"
 #include "vk2/ShaderCompiler.hpp"
 
+namespace gfx {
+
 enum ColorComponentFlagBits : u8 {
   ColorComponentRBit = 0x00000001,
   ColorComponentGBit = 0x00000002,
@@ -168,7 +170,8 @@ using SampleCountFlags = u32;
 
 enum class FrontFace : u8 { CounterClockwise = 0, Clockwise };
 
-namespace vk2 {
+}  // namespace gfx
+namespace gfx::vk2 {
 
 struct Pipeline {
   VkPipeline pipeline;
@@ -335,4 +338,4 @@ class PipelineManager {
   VkDevice device_;
   bool hot_reload_{false};
 };
-}  // namespace vk2
+}  // namespace gfx::vk2

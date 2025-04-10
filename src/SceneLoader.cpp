@@ -640,7 +640,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
         staging_offset += size;
       }
       result->textures.emplace_back(vk2::create_texture_2d_mip(
-          img.format, {img.w, img.h, 1}, vk2::TextureUsage::ReadOnly, ktx->numLevels));
+          img.format, {img.w, img.h, 1}, vk2::ImageUsage::ReadOnly, ktx->numLevels));
 
       assert(tot == ktx->dataSize);
       (void)tot;
@@ -656,8 +656,8 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
                         .staging_offset = staging_offset,
                         .level = 0,
                         .img_idx = static_cast<u32>(result->textures.size())});
-      result->textures.emplace_back(vk2::create_texture_2d_mip(img.format, {img.w, img.h, 1},
-                                                               vk2::TextureUsage::ReadOnly, 1));
+      result->textures.emplace_back(
+          vk2::create_texture_2d_mip(img.format, {img.w, img.h, 1}, vk2::ImageUsage::ReadOnly, 1));
       staging_offset += size;
     }
   }

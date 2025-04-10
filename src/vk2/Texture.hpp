@@ -9,9 +9,9 @@
 #include "vk2/Resource.hpp"
 #include "vk_mem_alloc.h"
 
-namespace vk2 {
+namespace gfx::vk2 {
 
-enum class TextureUsage : u8 {
+enum class ImageUsage : u8 {
   // general computation, i.e. StorageImage
   General,
   // asset textures read from shader
@@ -20,7 +20,7 @@ enum class TextureUsage : u8 {
   AttachmentReadOnly
 };
 
-struct TextureCreateInfo {
+struct ImageCreateInfo {
   std::string name;
   VkImageViewType view_type{};
   VkFormat format{};
@@ -28,25 +28,27 @@ struct TextureCreateInfo {
   u32 mip_levels{1};
   u32 array_layers{1};
   VkSampleCountFlagBits samples{VK_SAMPLE_COUNT_1_BIT};
-  TextureUsage usage{TextureUsage::General};
+  ImageUsage usage{ImageUsage::General};
+  VkImageUsageFlags override_usage_flags{};
+  bool make_view{true};
 };
 
-struct TextureViewCreateInfo {
+struct ImageViewCreateInfo {
   VkFormat format;
   VkImageSubresourceRange range;
   VkComponentMapping components{};
   VkImageViewType view_type{VK_IMAGE_VIEW_TYPE_MAX_ENUM};
 };
 
-class Texture;
-class TextureView {
+class Image;
+class ImageView {
  public:
-  explicit TextureView(const Texture& texture, const TextureViewCreateInfo& info);
-  ~TextureView();
-  TextureView(TextureView&& other) noexcept;
-  TextureView& operator=(TextureView&& other) noexcept;
-  TextureView(const TextureView&) = delete;
-  TextureView& operator=(const TextureView&) = delete;
+  explicit ImageView(const Image& texture, const ImageViewCreateInfo& info);
+  ~ImageView();
+  ImageView(ImageView&& other) noexcept;
+  ImageView& operator=(ImageView&& other) noexcept;
+  ImageView(const ImageView&) = delete;
+  ImageView& operator=(const ImageView&) = delete;
 
   // TODO: use pointers or optionals?
   [[nodiscard]] const BindlessResourceInfo& storage_img_resource() const {
@@ -59,20 +61,20 @@ class TextureView {
 
  private:
   VkImageView view_;
-  TextureViewCreateInfo create_info_;
+  ImageViewCreateInfo create_info_;
   // TODO: make a bindless texture view class for this
   std::optional<BindlessResourceInfo> storage_image_resource_info_;
   std::optional<BindlessResourceInfo> sampled_image_resource_info_;
 };
 
-class Texture {
+class Image {
  public:
-  explicit Texture(const TextureCreateInfo& create_info);
-  ~Texture();
-  Texture& operator=(const Texture& other) = delete;
-  Texture(const Texture& other) = delete;
-  Texture(Texture&& other) noexcept;
-  Texture& operator=(Texture&& other) noexcept;
+  explicit Image(const ImageCreateInfo& create_info);
+  ~Image();
+  Image& operator=(const Image& other) = delete;
+  Image(const Image& other) = delete;
+  Image(Image&& other) noexcept;
+  Image& operator=(Image&& other) noexcept;
 
   [[nodiscard]] VkExtent2D extent_2d() const {
     return {create_info_.extent.width, create_info_.extent.height};
@@ -81,19 +83,19 @@ class Texture {
   [[nodiscard]] VkImage image() const { return image_; }
   [[nodiscard]] VkFormat format() const { return create_info_.format; }
 
-  [[nodiscard]] TextureView& view() { return view_.value(); }
-  [[nodiscard]] const TextureView& view() const { return view_.value(); }
-  [[nodiscard]] const TextureCreateInfo& create_info() const { return create_info_; }
+  [[nodiscard]] ImageView& view() { return view_.value(); }
+  [[nodiscard]] const ImageView& view() const { return view_.value(); }
+  [[nodiscard]] const ImageCreateInfo& create_info() const { return create_info_; }
 
   VkImageLayout curr_layout{VK_IMAGE_LAYOUT_UNDEFINED};
 
  private:
   friend class Device;
   friend class BindlessResourceAllocator;
-  friend class TextureView;
+  friend class ImageView;
 
-  TextureCreateInfo create_info_;
-  std::optional<TextureView> view_;
+  ImageCreateInfo create_info_;
+  std::optional<ImageView> view_;
   std::string name_;
   VkImage image_;
   VmaAllocation allocation_;
@@ -102,9 +104,9 @@ class Texture {
 };
 
 struct TextureCubeAndViews {
-  explicit TextureCubeAndViews(const TextureCreateInfo& info);
-  std::optional<vk2::Texture> texture;
-  std::array<std::optional<vk2::TextureView>, 6> img_views;
+  explicit TextureCubeAndViews(const ImageCreateInfo& info);
+  std::optional<vk2::Image> texture;
+  std::array<std::optional<vk2::ImageView>, 6> img_views;
 };
 
 void blit_img(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent3D extent,
@@ -121,8 +123,8 @@ struct TextureViewDeleteInfo {
   VkImageView view;
 };
 
-Texture create_texture_2d(VkFormat format, uvec3 dims, TextureUsage usage, std::string name = {});
-Texture create_texture_2d_mip(VkFormat format, uvec3 dims, TextureUsage usage, u32 levels);
+Image create_texture_2d(VkFormat format, uvec3 dims, ImageUsage usage, std::string name = {});
+Image create_texture_2d_mip(VkFormat format, uvec3 dims, ImageUsage usage, u32 levels);
 
 uint32_t get_mip_levels(VkExtent2D size);
 uint32_t get_mip_levels(uvec2 size);
@@ -137,4 +139,4 @@ bool format_is_block_compreesed(VkFormat format);
 u64 block_compressed_image_size(VkFormat format, uvec3 extent);
 u64 img_to_buffer_size(VkFormat format, uvec3 extent);
 
-}  // namespace vk2
+}  // namespace gfx::vk2

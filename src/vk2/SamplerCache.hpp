@@ -5,7 +5,7 @@
 #include <unordered_map>
 
 #include "vk2/Resource.hpp"
-namespace vk2 {
+namespace gfx::vk2 {
 
 // TODO: manage lifetimes instead of clearing all
 struct Sampler {
@@ -40,4 +40,4 @@ struct SamplerCache {
   std::unordered_map<uint64_t, Sampler> sampler_cache_;
 };
 
-}  // namespace vk2
+}  // namespace gfx::vk2

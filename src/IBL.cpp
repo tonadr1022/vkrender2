@@ -10,7 +10,7 @@
 #include "vk2/Rendering.hpp"
 #include "vk2/SamplerCache.hpp"
 
-using namespace vk2;
+using namespace gfx::vk2;
 
 namespace {
 
@@ -27,6 +27,8 @@ const std::array<glm::mat4, 6> VIEW_MATRICES = {
 };
 }  // namespace
 
+namespace gfx {
+
 void IBL::load_env_map(CmdEncoder& ctx, const std::filesystem::path& path) {
   env_equirect_tex_ = VkRender2::get().load_hdr_img(ctx, path);
   equirect_to_cube(ctx);
@@ -38,27 +40,27 @@ IBL::IBL() {
   u32 skybox_res = 1024;
   u32 convoluted_res = 32;
   irradiance_cubemap_tex_ =
-      vk2::Texture{TextureCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_CUBE,
-                                     .format = VK_FORMAT_R16G16B16A16_SFLOAT,
-                                     .extent = {convoluted_res, convoluted_res, 1},
-                                     .mip_levels = 1,
-                                     .array_layers = 6,
-                                     .usage = TextureUsage::General}};
-  env_cubemap_tex_ = vk2::Texture{TextureCreateInfo{.name = "env cubemap",
-                                                    .view_type = VK_IMAGE_VIEW_TYPE_CUBE,
-                                                    .format = VK_FORMAT_R16G16B16A16_SFLOAT,
-                                                    .extent = {skybox_res, skybox_res, 1},
-                                                    .mip_levels = get_mip_levels({skybox_res}),
-                                                    .array_layers = 6,
-                                                    .usage = TextureUsage::General}};
+      vk2::Image{ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_CUBE,
+                                 .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                                 .extent = {convoluted_res, convoluted_res, 1},
+                                 .mip_levels = 1,
+                                 .array_layers = 6,
+                                 .usage = ImageUsage::General}};
+  env_cubemap_tex_ = vk2::Image{ImageCreateInfo{.name = "env cubemap",
+                                                .view_type = VK_IMAGE_VIEW_TYPE_CUBE,
+                                                .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                                                .extent = {skybox_res, skybox_res, 1},
+                                                .mip_levels = get_mip_levels({skybox_res}),
+                                                .array_layers = 6,
+                                                .usage = ImageUsage::General}};
   u32 prefiltered_env_map_res = 256;
   prefiltered_env_map_tex_ = vk2::TextureCubeAndViews{
-      TextureCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_CUBE,
-                        .format = VK_FORMAT_R16G16B16A16_SFLOAT,
-                        .extent = {prefiltered_env_map_res, prefiltered_env_map_res, 1},
-                        .mip_levels = get_mip_levels({prefiltered_env_map_res}),
-                        .array_layers = 6,
-                        .usage = TextureUsage::General}};
+      ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_CUBE,
+                      .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                      .extent = {prefiltered_env_map_res, prefiltered_env_map_res, 1},
+                      .mip_levels = get_mip_levels({prefiltered_env_map_res}),
+                      .array_layers = 6,
+                      .usage = ImageUsage::General}};
   make_cubemap_views_all_mips(prefiltered_env_map_tex_->texture.value(),
                               prefiltered_env_tex_views_);
 
@@ -104,52 +106,52 @@ IBL::IBL() {
       });
 
   auto make_cubemap_views =
-      [](const vk2::Texture& tex) -> std::array<std::optional<vk2::TextureView>, 6> {
-    std::array<std::optional<vk2::TextureView>, 6> result;
+      [](const vk2::Image& tex) -> std::array<std::optional<vk2::ImageView>, 6> {
+    std::array<std::optional<vk2::ImageView>, 6> result;
     for (u32 i = 0; i < 6; i++) {
-      result[i] = TextureView{tex, TextureViewCreateInfo{
-                                       .format = tex.format(),
-                                       .range =
-                                           {
-                                               .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                               .baseMipLevel = 0,
-                                               .levelCount = tex.create_info().mip_levels,
-                                               .baseArrayLayer = i,
-                                               .layerCount = 1,
-                                           },
-                                       .view_type = VK_IMAGE_VIEW_TYPE_2D,
-                                   }};
+      result[i] = ImageView{tex, ImageViewCreateInfo{
+                                     .format = tex.format(),
+                                     .range =
+                                         {
+                                             .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                             .baseMipLevel = 0,
+                                             .levelCount = tex.create_info().mip_levels,
+                                             .baseArrayLayer = i,
+                                             .layerCount = 1,
+                                         },
+                                     .view_type = VK_IMAGE_VIEW_TYPE_2D,
+                                 }};
     }
     return result;
   };
 
   cubemap_tex_views_ = make_cubemap_views(env_cubemap_tex_.value());
   convoluted_cubemap_tex_views_ = make_cubemap_views(irradiance_cubemap_tex_.value());
-  brdf_lut_ = vk2::Texture{TextureCreateInfo{.name = "brdf lut",
-                                             .view_type = VK_IMAGE_VIEW_TYPE_2D,
-                                             .format = VK_FORMAT_R16G16_SFLOAT,
-                                             .extent = {512, 512, 1},
-                                             .mip_levels = 1,
-                                             .array_layers = 1,
-                                             .usage = TextureUsage::General}};
+  brdf_lut_ = vk2::Image{ImageCreateInfo{.name = "brdf lut",
+                                         .view_type = VK_IMAGE_VIEW_TYPE_2D,
+                                         .format = VK_FORMAT_R16G16_SFLOAT,
+                                         .extent = {512, 512, 1},
+                                         .mip_levels = 1,
+                                         .array_layers = 1,
+                                         .usage = ImageUsage::General}};
   make_brdf_lut();
 }
 
-void IBL::make_cubemap_views_all_mips(const vk2::Texture& texture,
-                                      std::vector<std::optional<vk2::TextureView>>& views) {
+void IBL::make_cubemap_views_all_mips(const vk2::Image& texture,
+                                      std::vector<std::optional<vk2::ImageView>>& views) {
   for (u32 mip = 0; mip < texture.create_info().mip_levels; mip++) {
-    views.emplace_back(TextureView{texture, TextureViewCreateInfo{
-                                                .format = texture.format(),
-                                                .range =
-                                                    {
-                                                        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                                        .baseMipLevel = mip,
-                                                        .levelCount = 1,
-                                                        .baseArrayLayer = 0,
-                                                        .layerCount = VK_REMAINING_ARRAY_LAYERS,
-                                                    },
-                                                .view_type = VK_IMAGE_VIEW_TYPE_CUBE,
-                                            }});
+    views.emplace_back(ImageView{texture, ImageViewCreateInfo{
+                                              .format = texture.format(),
+                                              .range =
+                                                  {
+                                                      .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                                      .baseMipLevel = mip,
+                                                      .levelCount = 1,
+                                                      .baseArrayLayer = 0,
+                                                      .layerCount = VK_REMAINING_ARRAY_LAYERS,
+                                                  },
+                                              .view_type = VK_IMAGE_VIEW_TYPE_CUBE,
+                                          }});
   }
 }
 
@@ -237,26 +239,26 @@ void IBL::prefilter_env_map(CmdEncoder& ctx) {
                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
   // make image views
-  std::vector<std::array<std::optional<vk2::TextureView>, 6>> cube_mip_views;
+  std::vector<std::array<std::optional<vk2::ImageView>, 6>> cube_mip_views;
   u32 mip_levels = prefiltered_env_map_tex_->texture->create_info().mip_levels;
   for (u32 mip = 0; mip < mip_levels; mip++) {
     auto& texture = prefiltered_env_map_tex_->texture.value();
-    std::array<std::optional<vk2::TextureView>, 6> mip_views;
-    cube_mip_views.emplace_back(std::array<std::optional<vk2::TextureView>, 6>{});
+    std::array<std::optional<vk2::ImageView>, 6> mip_views;
+    cube_mip_views.emplace_back(std::array<std::optional<vk2::ImageView>, 6>{});
     for (u32 layer = 0; layer < 6; layer++) {
       cube_mip_views.back()[layer] =
-          TextureView{texture, TextureViewCreateInfo{
-                                   .format = texture.format(),
-                                   .range =
-                                       {
-                                           .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                           .baseMipLevel = mip,
-                                           .levelCount = 1,
-                                           .baseArrayLayer = layer,
-                                           .layerCount = 1,
-                                       },
-                                   .view_type = VK_IMAGE_VIEW_TYPE_2D,
-                               }};
+          ImageView{texture, ImageViewCreateInfo{
+                                 .format = texture.format(),
+                                 .range =
+                                     {
+                                         .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                         .baseMipLevel = mip,
+                                         .levelCount = 1,
+                                         .baseArrayLayer = layer,
+                                         .layerCount = 1,
+                                     },
+                                 .view_type = VK_IMAGE_VIEW_TYPE_2D,
+                             }};
     }
   }
 
@@ -303,3 +305,4 @@ void IBL::prefilter_env_map(CmdEncoder& ctx) {
 
   transition_image(cmd, *irradiance_cubemap_tex_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
+}  // namespace gfx

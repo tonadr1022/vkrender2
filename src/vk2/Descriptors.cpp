@@ -7,6 +7,8 @@
 #include "vk2/Hash.hpp"
 #include "vk2/VkCommon.hpp"
 
+namespace gfx {
+
 namespace {
 
 uint64_t hash_descriptor_set_layout_create_info(const VkDescriptorSetLayoutCreateInfo& info) {
@@ -62,3 +64,4 @@ void DescriptorSetLayoutCache::init(VkDevice device) {
   VK_CHECK(vkCreateDescriptorSetLayout(device_, &create_info, nullptr, &dummy_layout_));
 }
 }  // namespace vk2
+}  // namespace gfx

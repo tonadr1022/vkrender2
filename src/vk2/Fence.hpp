@@ -2,7 +2,7 @@
 #include <vulkan/vulkan_core.h>
 
 #include <vector>
-namespace vk2 {
+namespace gfx::vk2 {
 
 // TODO: thread safety
 struct FencePool {
@@ -20,4 +20,4 @@ struct FencePool {
   explicit FencePool(VkDevice device);
   ~FencePool();
 };
-}  // namespace vk2
+}  // namespace gfx::vk2

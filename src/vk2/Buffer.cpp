@@ -9,7 +9,7 @@
 #include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Device.hpp"
 
-namespace vk2 {
+namespace gfx::vk2 {
 
 // https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/usage_patterns.html
 Buffer::Buffer(const BufferCreateInfo &cinfo, std::string name) : name_(std::move(name)) {
@@ -85,4 +85,4 @@ Buffer create_storage_buffer(u64 size) {
       .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
   }};
 }
-}  // namespace vk2
+}  // namespace gfx::vk2

@@ -25,6 +25,7 @@ std::optional<std::filesystem::path> get_resource_dir() {
 
 }  // namespace
 
+using namespace gfx;
 App::App(const InitInfo& info) : cam(cam_data, .1) {
   auto resource_dir_ret = get_resource_dir();
   if (!resource_dir_ret.has_value()) {

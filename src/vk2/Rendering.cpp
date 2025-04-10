@@ -2,7 +2,7 @@
 
 #include <volk.h>
 
-namespace vk2 {
+namespace gfx::vk2 {
 void set_viewport_and_scissor(VkCommandBuffer cmd, VkExtent2D extent) {
   VkViewport viewport{.x = 0,
                       .y = 0,
@@ -16,4 +16,4 @@ void set_viewport_and_scissor(VkCommandBuffer cmd, VkExtent2D extent) {
                    .extent = VkExtent2D{.width = extent.width, .height = extent.height}};
   vkCmdSetScissor(cmd, 0, 1, &scissor);
 }
-}  // namespace vk2
+}  // namespace gfx::vk2

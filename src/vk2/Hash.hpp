@@ -4,7 +4,7 @@
 
 // src: https://github.com/JuanDiegoMontoya/Frogfood/blob/main/src/Fvog/detail/Hash2.h
 
-namespace vk2::detail::hashing {
+namespace gfx::vk2::detail::hashing {
 template <typename T>
 struct hash;
 
@@ -36,4 +36,4 @@ struct hash<std::tuple<TT...>> {
     return seed;
   }
 };
-}  // namespace vk2::detail::hashing
+}  // namespace gfx::vk2::detail::hashing

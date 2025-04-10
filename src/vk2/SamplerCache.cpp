@@ -8,7 +8,7 @@
 #include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Hash.hpp"
 
-namespace vk2 {
+namespace gfx::vk2 {
 
 Sampler SamplerCache::get_or_create_sampler(const SamplerCreateInfo& info) {
   ZoneScoped;
@@ -79,4 +79,4 @@ Sampler SamplerCache::get_linear_sampler() {
       .address_mode = VK_SAMPLER_ADDRESS_MODE_REPEAT,
   });
 }
-}  // namespace vk2
+}  // namespace gfx::vk2

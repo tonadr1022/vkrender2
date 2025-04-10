@@ -24,6 +24,7 @@ src/IBL.cpp
 src/techniques/CSM.cpp
 
 src/vk2/Rendering.cpp
+src/vk2/VkTypes.cpp
 src/vk2/StagingBufferPool.cpp
 src/vk2/Fence.cpp
 src/vk2/BindlessResourceAllocator.cpp

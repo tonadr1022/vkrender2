@@ -4,7 +4,7 @@
 
 #include <unordered_map>
 
-namespace vk2 {
+namespace gfx::vk2 {
 
 struct DescriptorSetLayoutAndHash {
   VkDescriptorSetLayout layout;
@@ -23,4 +23,4 @@ struct DescriptorSetLayoutCache {
   std::unordered_map<uint64_t, VkDescriptorSetLayout> cache_;
   VkDevice device_;
 };
-}  // namespace vk2
+}  // namespace gfx::vk2

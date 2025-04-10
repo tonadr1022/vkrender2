@@ -11,7 +11,7 @@
 #include "VkBootstrap.h"
 #include "VkCommon.hpp"
 
-namespace vk2 {
+namespace gfx::vk2 {
 namespace {
 Device* g_device{};
 }
@@ -228,19 +228,41 @@ VkSemaphore Device::create_semaphore(bool timeline) const {
 }
 
 void Device::destroy_fence(VkFence fence) const { vkDestroyFence(device_, fence, nullptr); }
+
 void Device::destroy_semaphore(VkSemaphore semaphore) const {
   vkDestroySemaphore(device_, semaphore, nullptr);
 }
+
 void Device::destroy_command_pool(VkCommandPool pool) const {
   vkDestroyCommandPool(device_, pool, nullptr);
 }
 
-// void Device::destroy_img(AllocatedImage& img) {
-//   vmaDestroyImage(allocator_, img.image, img.allocation);
-// }
 void Device::create_buffer(const VkBufferCreateInfo* info,
                            const VmaAllocationCreateInfo* alloc_info, VkBuffer& buffer,
                            VmaAllocation& allocation, VmaAllocationInfo& out_alloc_info) {
   VK_CHECK(vmaCreateBuffer(allocator_, info, alloc_info, &buffer, &allocation, &out_alloc_info));
 }
-}  // namespace vk2
+
+ImageHandle Device::create_image(const ImageCreateInfo& info) {
+  ImageHandle handle = image_index_allocator_.alloc();
+  if (handle >= images_.size()) {
+    images_.emplace_back(std::make_unique<vk2::Image>(info));
+  } else {
+    images_[handle] = std::make_unique<vk2::Image>(info);
+  }
+  return handle;
+}
+
+vk2::Image* Device::get_image(ImageHandle handle) {
+  if (handle >= images_.size()) {
+    return nullptr;
+  }
+  return images_[handle].get();
+}
+
+void Device::destroy_image(ImageHandle handle) {
+  image_index_allocator_.free(handle);
+  images_[handle].reset();
+}
+
+}  // namespace gfx::vk2

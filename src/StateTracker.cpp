@@ -11,6 +11,8 @@
 #include "vk2/Initializers.hpp"
 #include "vk2/Texture.hpp"
 
+namespace gfx {
+
 void StateTracker::flush_barriers() {
   if (buffer_barriers_.empty() && img_barriers_.empty()) return;
   VkDependencyInfo info = vk2::init::dependency_info(buffer_barriers_, img_barriers_);
@@ -27,7 +29,7 @@ VkImageSubresourceRange StateTracker::default_image_subresource_range(VkImageAsp
           .layerCount = VK_REMAINING_ARRAY_LAYERS};
 }
 
-StateTracker& StateTracker::transition(vk2::Texture& image, VkPipelineStageFlags2 dst_stage,
+StateTracker& StateTracker::transition(vk2::Image& image, VkPipelineStageFlags2 dst_stage,
                                        VkAccessFlags2 dst_access, VkImageLayout new_layout,
                                        VkImageAspectFlags aspect) {
   transition(image, dst_stage, dst_access, new_layout, default_image_subresource_range(aspect));
@@ -40,7 +42,7 @@ StateTracker& StateTracker::transition(VkImage image, VkPipelineStageFlags2 dst_
   return *this;
 }
 
-StateTracker& StateTracker::transition(vk2::Texture& image, VkPipelineStageFlags2 dst_stage,
+StateTracker& StateTracker::transition(vk2::Image& image, VkPipelineStageFlags2 dst_stage,
                                        VkAccessFlags2 dst_access, VkImageLayout new_layout,
                                        const VkImageSubresourceRange& range) {
   image.curr_layout = new_layout;
@@ -187,7 +189,7 @@ StateTracker& StateTracker::buffer_barrier(const vk2::Buffer& buffer,
   return buffer_barrier(buffer.buffer(), dst_stage, dst_access);
 }
 
-StateTracker& StateTracker::transition_img_to_copy_dst(vk2::Texture& image,
+StateTracker& StateTracker::transition_img_to_copy_dst(vk2::Image& image,
                                                        VkImageAspectFlags aspect) {
   return transition(image, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, aspect);
@@ -197,7 +199,7 @@ StateTracker& StateTracker::transition_buffer_to_transfer_dst(VkBuffer buffer) {
   return buffer_barrier(buffer, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
 }
 
-void transition_image(VkCommandBuffer cmd, vk2::Texture& image, VkImageLayout old_layout,
+void transition_image(VkCommandBuffer cmd, vk2::Image& image, VkImageLayout old_layout,
                       VkImageLayout new_layout, VkImageAspectFlags aspect) {
   VkImageMemoryBarrier2 b{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
   b.image = image.image();
@@ -217,7 +219,7 @@ void transition_image(VkCommandBuffer cmd, vk2::Texture& image, VkImageLayout ol
   vkCmdPipelineBarrier2KHR(cmd, &dep_info);
 }
 
-void transition_image_discard(VkCommandBuffer cmd, vk2::Texture& image, VkImageLayout layout,
+void transition_image_discard(VkCommandBuffer cmd, vk2::Image& image, VkImageLayout layout,
                               VkPipelineStageFlags2 stage, VkAccessFlags2 access,
                               const VkImageSubresourceRange& range) {
   VkImageMemoryBarrier2 b{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
@@ -234,8 +236,10 @@ void transition_image_discard(VkCommandBuffer cmd, vk2::Texture& image, VkImageL
   auto dep_info = vk2::init::dependency_info({}, SPAN1(b));
   vkCmdPipelineBarrier2KHR(cmd, &dep_info);
 }
-void transition_image(VkCommandBuffer cmd, vk2::Texture& image, VkImageLayout new_layout,
+void transition_image(VkCommandBuffer cmd, vk2::Image& image, VkImageLayout new_layout,
                       VkImageAspectFlags aspect) {
   transition_image(cmd, image, image.curr_layout, new_layout, aspect);
   image.curr_layout = new_layout;
 }
+
+}  // namespace gfx

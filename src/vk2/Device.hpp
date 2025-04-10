@@ -3,14 +3,23 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan_core.h>
 
+#include <memory>
 #include <span>
 
 #include "Common.hpp"
 #include "VkBootstrap.h"
+#include "util/IndexAllocator.hpp"
 #include "vk2/DeletionQueue.hpp"
 #include "vk2/Texture.hpp"
 
-namespace vk2 {
+namespace gfx {
+
+template <typename T>
+using RefPtr = std::shared_ptr<T>;
+
+}  // namespace gfx
+
+namespace gfx::vk2 {
 
 class Device {
  public:
@@ -45,9 +54,14 @@ class Device {
   // void destroy_img(AllocatedImage& img);
   [[nodiscard]] VmaAllocator allocator() const { return allocator_; }
 
+  [[nodiscard]] RefPtr<Image> create_image(const ImageCreateInfo& info);
+
  private:
   void init_impl(const CreateInfo& info);
   void destroy_impl();
+
+  util::IndexAllocator image_index_allocator_;
+  std::vector<std::unique_ptr<vk2::Image>> images_;
 
   // non owning
   VkSurfaceKHR surface_;
@@ -62,4 +76,4 @@ class Device {
 
 Device& get_device();
 
-}  // namespace vk2
+}  // namespace gfx::vk2

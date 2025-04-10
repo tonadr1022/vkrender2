@@ -12,6 +12,7 @@
 #include "FixedVector.hpp"
 #include "Types.hpp"
 #include "VkRender2.hpp"
+#include "vk2/Device.hpp"
 
 namespace gfx {
 
@@ -47,7 +48,7 @@ struct ResourceDimensions {
   BufferInfo buffer_info;
   uint32_t width{}, height{}, depth{}, layers{1}, levels{1}, samples{1};
   VkImageUsageFlags image_usage_flags{};
-  // TODO: queues, surface transform
+  // TODO: queues
 };
 
 struct BufferUsage {
@@ -102,6 +103,7 @@ enum class ResourceUsage : uint8_t {
   ColorInput,
   ColorOutput,
   TextureInput,
+  StorageImageInput,
   DepthStencilOutput,
   DepthStencilInput
 };
@@ -110,11 +112,14 @@ bool is_texture_usage(ResourceUsage usage);
 using RenderResourceHandle = uint32_t;
 
 struct RenderGraphPass {
-  explicit RenderGraphPass(std::string name, ExecuteFn fn, RenderGraph& graph, uint32_t idx);
+  enum class Type : uint8_t { Compute, Graphics };
+  explicit RenderGraphPass(std::string name, ExecuteFn fn, RenderGraph& graph, uint32_t idx,
+                           Type type);
   RenderResourceHandle add_color_output(const std::string& name, const AttachmentInfo& info,
                                         const std::string& input = "");
   RenderResourceHandle set_depth_stencil_input(const std::string& name);
   RenderResourceHandle add_texture_input(const std::string& name);
+  RenderResourceHandle add_storage_image_input(const std::string& name);
   RenderResourceHandle set_depth_stencil_output(const std::string& name,
                                                 const AttachmentInfo& info);
 
@@ -124,11 +129,15 @@ struct RenderGraphPass {
 
   struct UsageAndHandle {
     uint32_t idx{};
+    VkAccessFlags2 access{};
+    VkPipelineStageFlags2 stages{};
     ResourceUsage usage{};
   };
 
-  [[nodiscard]] std::vector<UsageAndHandle> get_resource_inputs() const { return resource_inputs_; }
-  [[nodiscard]] std::vector<UsageAndHandle> get_resource_outputs() const {
+  [[nodiscard]] const std::vector<UsageAndHandle>& get_resource_inputs() const {
+    return resource_inputs_;
+  }
+  [[nodiscard]] const std::vector<UsageAndHandle>& get_resource_outputs() const {
     return resource_outputs_;
   }
 
@@ -140,6 +149,7 @@ struct RenderGraphPass {
   ExecuteFn execute_;
   RenderGraph& graph_;
   const uint32_t idx_;
+  const Type type_{Type::Graphics};
 
   // [[nodiscard]] bool contains_input(const std::string& name) const;
 };
@@ -153,13 +163,20 @@ struct RenderPass {};
 struct RenderGraph {
   explicit RenderGraph(std::string name = "RenderGraph");
   void set_swapchain_info(const RenderGraphSwapchainInfo& info);
-  RenderGraphPass& add_pass(const std::string& name, ExecuteFn execute);
+  RenderGraphPass& add_pass(const std::string& name, ExecuteFn execute,
+                            RenderGraphPass::Type type = RenderGraphPass::Type::Graphics);
   void set_backbuffer_img(const std::string& name) { backbuffer_img_ = name; }
 
   VoidResult bake();
   VoidResult output_graphvis(const std::filesystem::path& path);
+  void setup_attachments();
+  struct RenderGraphResourceHandle {
+    uint32_t idx;
+    enum class Type : uint8_t { Image, Buffer } type;
+  };
+  std::vector<RenderGraphResourceHandle> phys_resource_handles_;
+
   void execute();
-  void log();
 
   uint32_t get_or_add_texture_resource(const std::string& name);
   RenderTextureResource* get_texture_resource(uint32_t idx);
@@ -181,20 +198,18 @@ struct RenderGraph {
   // invalidate barriers are when gpu cache needs to be invalidated (read)
   // flush barriers are when gpu cache needs to be flushed (write)
 
-  struct Barriers {
-    std::vector<Barrier> invalidate;
-    std::vector<Barrier> flush;
-  };
-  std::vector<Barriers> pass_barriers_;
+  // std::vector<Barrier> pass_flush_barriers_;
+  // std::vector<Barrier> pass_invalidate_barriers_;
 
   struct PhysicalPass {
     std::string name;
-    std::vector<Barrier> invalidate_barriers;
     std::vector<Barrier> flush_barriers;
+    std::vector<Barrier> invalidate_barriers;
     std::vector<uint32_t> physical_color_attachments;
     uint32_t physical_depth_stencil{RenderResource::unused};
     void reset();
   };
+
   std::vector<PhysicalPass> physical_passes_;
   void clear_physical_passes();
   PhysicalPass get_physical_pass();
@@ -214,6 +229,8 @@ struct RenderGraph {
   VoidResult traverse_dependencies_recursive(uint32_t pass_i, uint32_t stack_size);
 
   std::unordered_set<uint32_t> dup_prune_set_;
+
+  std::vector<RefPtr<vk2::Image>> physical_image_attachments_;
 
   ResourceDimensions get_resource_dims(const RenderTextureResource& resource) const;
   void build_physical_resource_reqs();

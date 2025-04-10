@@ -11,6 +11,9 @@
 #include <utility>
 
 #include "Logger.hpp"
+#include "vk2/Device.hpp"
+#include "vk2/Texture.hpp"
+#include "vk2/VkTypes.hpp"
 
 namespace gfx {
 
@@ -26,16 +29,36 @@ RenderResourceHandle RenderGraphPass::add_color_output(const std::string& name,
   if (input.size()) {
     assert(0 && "unimplemented");
   }
-  resource_outputs_.emplace_back(handle, ResourceUsage::ColorOutput);
+  UsageAndHandle usage{.idx = handle, .usage = ResourceUsage::ColorOutput};
+  resource_outputs_.emplace_back(usage);
   return handle;
 }
 
+RenderResourceHandle RenderGraphPass::add_storage_image_input(const std::string& name) {
+  uint32_t handle = graph_.get_or_add_texture_resource(name);
+  RenderTextureResource* res = graph_.get_texture_resource(handle);
+  res->read_in_pass(idx_);
+  res->image_usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+  UsageAndHandle usage{.idx = handle, .usage = ResourceUsage::StorageImageInput};
+  usage.access = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
+  usage.stages = type_ == Type::Graphics ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT
+                                         : VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+  resource_inputs_.emplace_back(usage);
+
+  return handle;
+}
 RenderResourceHandle RenderGraphPass::add_texture_input(const std::string& name) {
   uint32_t handle = graph_.get_or_add_texture_resource(name);
   RenderTextureResource* res = graph_.get_texture_resource(handle);
   res->read_in_pass(idx_);
   res->image_usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
-  resource_inputs_.emplace_back(handle, ResourceUsage::TextureInput);
+  UsageAndHandle usage{.idx = handle, .usage = ResourceUsage::TextureInput};
+  usage.access = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
+  usage.stages = type_ == Type::Graphics ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT
+                                         : VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+
+  resource_inputs_.emplace_back(usage);
+
   return handle;
 }
 
@@ -44,7 +67,8 @@ RenderResourceHandle RenderGraphPass::set_depth_stencil_input(const std::string&
   RenderTextureResource* res = graph_.get_texture_resource(handle);
   res->read_in_pass(idx_);
   res->image_usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-  resource_inputs_.emplace_back(handle, ResourceUsage::DepthStencilInput);
+  UsageAndHandle usage{.idx = handle, .usage = ResourceUsage::DepthStencilInput};
+  resource_inputs_.emplace_back(usage);
   return handle;
 }
 
@@ -55,18 +79,21 @@ RenderResourceHandle RenderGraphPass::set_depth_stencil_output(const std::string
   res->written_in_pass(idx_);
   res->image_usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
   res->info = info;
-  resource_outputs_.emplace_back(handle, ResourceUsage::DepthStencilOutput);
+  UsageAndHandle usage{.idx = handle, .usage = ResourceUsage::DepthStencilOutput};
+  resource_outputs_.emplace_back(usage);
   return handle;
 }
 
-RenderGraphPass::RenderGraphPass(std::string name, ExecuteFn fn, RenderGraph& graph, uint32_t idx)
-    : name_(std::move(name)), execute_(std::move(fn)), graph_(graph), idx_(idx) {}
+RenderGraphPass::RenderGraphPass(std::string name, ExecuteFn fn, RenderGraph& graph, uint32_t idx,
+                                 Type type)
+    : name_(std::move(name)), execute_(std::move(fn)), graph_(graph), idx_(idx), type_(type) {}
 
 RenderGraph::RenderGraph(std::string name) : name_(std::move(name)) {}
 
-RenderGraphPass& RenderGraph::add_pass(const std::string& name, ExecuteFn execute) {
+RenderGraphPass& RenderGraph::add_pass(const std::string& name, ExecuteFn execute,
+                                       RenderGraphPass::Type type) {
   auto idx = passes_.size();
-  passes_.emplace_back(name, std::move(execute), *this, idx);
+  passes_.emplace_back(name, std::move(execute), *this, idx, type);
   return passes_.back();
 }
 
@@ -101,7 +128,8 @@ VoidResult RenderGraph::bake() {
     pass_dependencies_.resize(passes_.size());
     for (uint32_t pass_i = 0; pass_i < passes_.size(); pass_i++) {
       auto& pass = passes_[pass_i];
-      for (auto& usage : pass.get_resource_outputs()) {
+      for (const auto& usage : pass.get_resource_outputs()) {
+        LINFO("usage: {} {}", usage.idx, resources_[usage.idx]->name);
         if (resources_[usage.idx]->name == backbuffer_img_) {
           // TODO: move this to validation phase
           if (usage.usage != ResourceUsage::ColorOutput) {
@@ -160,12 +188,13 @@ VoidResult RenderGraph::bake() {
   {
     ZoneScopedN("build physical passes");
     physical_passes_.reserve(passes_.size());
-    for (auto& pass : passes_) {
+    for (const auto& pass_i : pass_stack_) {
+      const auto& pass = passes_[pass_i];
       PhysicalPass phys_pass = get_physical_pass();
       // TODO: don't allocate string here
       phys_pass.name = pass.get_name();
 
-      for (auto& output : pass.get_resource_outputs()) {
+      for (const auto& output : pass.get_resource_outputs()) {
         if (is_texture_usage(output.usage)) {
           auto* tex = get_texture_resource(output.idx);
           if (output.usage == ResourceUsage::ColorOutput) {
@@ -194,14 +223,87 @@ VoidResult RenderGraph::bake() {
 
   {
     ZoneScopedN("build barriers");
+    auto get_access = [](std::vector<Barrier>& barriers, uint32_t idx) -> Barrier& {
+      auto it = std::ranges::find_if(
+          barriers, [idx](const Barrier& barrier) { return barrier.resource_idx == idx; });
+      if (it != barriers.end()) {
+        return *it;
+      }
+      return barriers.emplace_back(Barrier{
+          .resource_idx = idx, .layout = VK_IMAGE_LAYOUT_UNDEFINED, .access = 0, .stages = 0});
+    };
+
+    for (const auto& pass_i : pass_stack_) {
+      auto& pass = passes_[pass_i];
+      auto& phys_pass = physical_passes_[pass_i];
+      auto get_invalidate_access = [&get_access, &phys_pass](uint32_t idx) -> Barrier& {
+        return get_access(phys_pass.invalidate_barriers, idx);
+      };
+      auto get_flush_access = [&get_access, &phys_pass](uint32_t idx) -> Barrier& {
+        return get_access(phys_pass.flush_barriers, idx);
+      };
+
+      auto process_resources = [&](const std::vector<RenderGraphPass::UsageAndHandle>& resources) {
+        for (const auto& input : resources) {
+          auto* res = resources_[input.idx].get();
+          if (input.usage == ResourceUsage::DepthStencilOutput) {
+            auto& barrier = get_flush_access(res->physical_idx);
+            barrier.stages |=
+                VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_MESH_SHADER_BIT_EXT;
+            barrier.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            barrier.access |= VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+          } else if (input.usage == ResourceUsage::ColorOutput) {
+            auto& barrier = get_flush_access(res->physical_idx);
+            barrier.stages |= VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+            barrier.access |= VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+            barrier.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+          } else if (input.usage == ResourceUsage::TextureInput ||
+                     input.usage == ResourceUsage::StorageImageInput) {
+            auto& barrier = get_invalidate_access(res->physical_idx);
+            barrier.stages |= input.stages;
+            barrier.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            barrier.access = input.access;
+            // barrier.stages |= VK_PIPELINE_STAGE_2_
+          } else {
+            assert(0);
+          }
+        }
+      };
+
+      process_resources(pass.get_resource_inputs());
+      process_resources(pass.get_resource_outputs());
+    }
+
+    for (const auto& pass_i : pass_stack_) {
+      auto& pass = passes_[pass_i];
+      auto& phys_pass = physical_passes_[pass_i];
+      LINFO("\npass: {}", pass.get_name());
+      LINFO("\nflush barriers (writes)");
+      for (const auto& barrier : phys_pass.flush_barriers) {
+        LINFO("access: {}, layout: {}, idx: {}, stages: {}", string_VkAccessFlags2(barrier.access),
+              string_VkImageLayout(barrier.layout), barrier.resource_idx,
+              string_VkPipelineStageFlags2(barrier.stages));
+      }
+    }
+    // TODO: aliasing to reuse images
   }
 
   return {};
 }
 
-void RenderGraph::log() {}
-
-void RenderGraph::execute() {}
+void RenderGraph::execute() {
+  // for (auto pass_i : pass_stack_) {
+  //   auto& phys_pass = physical_passes_[pass_i];
+  //   util::fixed_vector<VkImageMemoryBarrier2, 8> img_barriers;
+  //   for (auto& b : phys_pass.invalidate_barriers) {
+  //     // auto& resource = physical_res
+  //     VkImageMemoryBarrier2 img_barrier{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+  //     // img_barrier.
+  //   }
+  //
+  //   // emit pre pass barriers
+  // }
+}
 
 // TODO: not recursive
 VoidResult RenderGraph::traverse_dependencies_recursive(uint32_t pass_i, uint32_t stack_size) {
@@ -285,6 +387,7 @@ RenderTextureResource* RenderGraph::get_texture_resource(uint32_t idx) {
 bool is_texture_usage(ResourceUsage usage) {
   switch (usage) {
     case ResourceUsage::ColorOutput:
+    case ResourceUsage::StorageImageInput:
     case ResourceUsage::ColorInput:
     case ResourceUsage::TextureInput:
     case ResourceUsage::DepthStencilOutput:
@@ -431,4 +534,42 @@ VoidResult RenderGraph::output_graphvis(const std::filesystem::path& path) {
 
   return {};
 }
+
+void RenderGraph::setup_attachments() {
+  // only make attachments if they don't match prev frame
+  physical_image_attachments_.resize(physical_resource_dims_.size());
+  for (size_t i = 0; i < physical_resource_dims_.size(); i++) {
+    auto& dims = physical_resource_dims_[i];
+    if (!dims.buffer_info.size) {
+      auto* img = vk2::get_device().get_image(physical_image_attachments_[i]);
+      if (img) {
+        const auto& cinfo = img->create_info();
+        if (cinfo.extent.width == dims.width && cinfo.extent.height == dims.height &&
+            cinfo.extent.depth == dims.depth && cinfo.array_layers == dims.layers &&
+            cinfo.mip_levels == dims.levels && cinfo.samples == dims.samples &&
+            cinfo.format == vk2::to_vkformat(dims.format) &&
+            cinfo.override_usage_flags == dims.image_usage_flags) {
+          // use existing
+        } else {
+          vk2::ImageCreateInfo info{};
+          if (dims.depth == 1) {
+            info.view_type = VK_IMAGE_VIEW_TYPE_2D;
+          } else {
+            info.view_type = VK_IMAGE_VIEW_TYPE_3D;
+          }
+          info.extent = VkExtent3D{dims.width, dims.height, dims.depth};
+          info.array_layers = dims.layers;
+          info.mip_levels = dims.levels;
+          info.samples = (VkSampleCountFlagBits)(1 << (dims.samples - 1));
+          info.format = vk2::to_vkformat(dims.format);
+          info.override_usage_flags = dims.image_usage_flags;
+          // auto handle = vk2::get_device().create_image(info);
+        }
+      }
+
+      // make a new image if needed
+    }
+  }
+}
+
 }  // namespace gfx

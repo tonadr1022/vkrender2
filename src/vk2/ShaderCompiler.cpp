@@ -42,7 +42,7 @@ namespace {
 struct PipelineLayoutCreateInfo {
   // NOTE: expand these if ever needed
   static constexpr const int max_pc_ranges = 4;
-  std::array<vk2::DescriptorSetLayoutData, 4> set_layouts;
+  std::array<gfx::vk2::DescriptorSetLayoutData, 4> set_layouts;
   uint32_t set_layout_cnt{0};
   std::array<VkPushConstantRange, max_pc_ranges> pc_ranges;
   uint32_t pc_range_cnt{0};
@@ -143,7 +143,7 @@ struct PipelineLayoutCreateInfo {
 
 }  // namespace
 
-namespace vk2 {
+namespace gfx::vk2 {
 
 bool ShaderManager::get_dirty_stages(std::span<ShaderCreateInfo> infos,
                                      std::span<bool> dirty_flags) {
@@ -375,7 +375,7 @@ ShaderManager::~ShaderManager() {
   glslang::FinalizeProcess();
 }
 
-}  // namespace vk2
+}  // namespace gfx::vk2
 
 namespace {
 

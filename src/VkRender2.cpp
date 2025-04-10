@@ -37,6 +37,8 @@
 #include "vk2/Texture.hpp"
 #include "vk2/VkCommon.hpp"
 
+namespace gfx {
+
 namespace {
 VkRender2* vkrender2_instance{};
 
@@ -132,7 +134,7 @@ VkRender2::VkRender2(const InitInfo& info)
   vk2::Buffer* staging = vk2::StagingBufferPool::get().acquire(32);
   memcpy((char*)staging->mapped_data(), (void*)&white, sizeof(u32));
   default_data_.white_img =
-      vk2::create_texture_2d(VK_FORMAT_R8G8B8A8_SRGB, {1, 1, 1}, TextureUsage::ReadOnly);
+      vk2::create_texture_2d(VK_FORMAT_R8G8B8A8_SRGB, {1, 1, 1}, ImageUsage::ReadOnly);
 
   immediate_submit([this, staging](VkCommandBuffer cmd) {
     // TODO: extract
@@ -516,14 +518,13 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
       // Add after vkCmdEndRenderingKHR(cmd):
       state_
           .transition(*depth_img_, VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                      VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                      VK_IMAGE_LAYOUT_GENERAL,  // Or whatever your next layout is
+                      VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
                       VK_IMAGE_ASPECT_DEPTH_BIT)
           .flush_barriers();
       init::end_debug_utils_label(cmd);
     }
 
-    vk2::Texture* final_img = &img_.value();
+    vk2::Image* final_img = &img_.value();
     if (debug_mode_ == DEBUG_MODE_NONE && postprocess_pass.get()) {
       final_img = &post_processed_img_.value();
       u32 postprocess_flags = 0;
@@ -674,10 +675,10 @@ void VkRender2::create_attachment_imgs() {
   auto win_dims = window_dims();
   uvec3 dims{win_dims, 1};
 
-  img_ = create_texture_2d(VK_FORMAT_R16G16B16A16_SFLOAT, dims, TextureUsage::General);
-  post_processed_img_ = create_texture_2d(VK_FORMAT_R8G8B8A8_UNORM, dims, TextureUsage::General);
+  img_ = create_texture_2d(VK_FORMAT_R16G16B16A16_SFLOAT, dims, ImageUsage::General);
+  post_processed_img_ = create_texture_2d(VK_FORMAT_R8G8B8A8_UNORM, dims, ImageUsage::General);
   depth_img_ =
-      create_texture_2d(VK_FORMAT_D32_SFLOAT, dims, TextureUsage::AttachmentReadOnly, "DepthImg");
+      create_texture_2d(VK_FORMAT_D32_SFLOAT, dims, ImageUsage::AttachmentReadOnly, "DepthImg");
 }
 
 SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynamic,
@@ -994,17 +995,17 @@ void VkRender2::init_indirect_drawing() {
   cull_objs_pipeline_ = PipelineManager::get().load_compute_pipeline({"cull_objects.comp"});
 }
 
-std::optional<vk2::Texture> VkRender2::load_hdr_img(CmdEncoder& ctx,
-                                                    const std::filesystem::path& path, bool flip) {
+std::optional<vk2::Image> VkRender2::load_hdr_img(CmdEncoder& ctx,
+                                                  const std::filesystem::path& path, bool flip) {
   VkCommandBuffer cmd = ctx.cmd();
   auto cpu_img_data = gfx::loader::load_hdr(path, 4, flip);
   if (!cpu_img_data.has_value()) return std::nullopt;
-  auto tex = vk2::Texture{TextureCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
-                                            .format = VK_FORMAT_R32G32B32A32_SFLOAT,
-                                            .extent = {cpu_img_data->w, cpu_img_data->h, 1},
-                                            .mip_levels = 1,
-                                            .array_layers = 1,
-                                            .usage = TextureUsage::ReadOnly}};
+  auto tex = vk2::Image{ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
+                                        .format = VK_FORMAT_R32G32B32A32_SFLOAT,
+                                        .extent = {cpu_img_data->w, cpu_img_data->h, 1},
+                                        .mip_levels = 1,
+                                        .array_layers = 1,
+                                        .usage = ImageUsage::ReadOnly}};
   if (!tex.image()) {
     return std::nullopt;
   }
@@ -1039,7 +1040,7 @@ std::optional<vk2::Texture> VkRender2::load_hdr_img(CmdEncoder& ctx,
   return tex;
 }
 
-void VkRender2::generate_mipmaps(StateTracker& state, VkCommandBuffer cmd, vk2::Texture& tex) {
+void VkRender2::generate_mipmaps(StateTracker& state, VkCommandBuffer cmd, vk2::Image& tex) {
   // TODO: this is unbelievably hacky: using manual barriers outside of state tracker and then
   // updating state tracker with the result. solve this by updating state tracker to manage
   // subresource ranges or toss it and make a render graph
@@ -1136,7 +1137,7 @@ void CmdEncoder::push_constants(u32 size, void* data) {
   push_constants(default_pipeline_layout_, size, data);
 }
 
-void VkRender2::generate_mipmaps(CmdEncoder& ctx, vk2::Texture& tex) {
+void VkRender2::generate_mipmaps(CmdEncoder& ctx, vk2::Image& tex) {
   VkCommandBuffer cmd = ctx.cmd();
   u32 array_layers = tex.create_info().array_layers;
   u32 mip_levels = get_mip_levels(tex.extent_2d());
@@ -1194,3 +1195,4 @@ void VkRender2::generate_mipmaps(CmdEncoder& ctx, vk2::Texture& tex) {
 void VkRender2::draw_cube(VkCommandBuffer cmd) const {
   vkCmdDraw(cmd, 36, 1, cube_vertices_gpu_offset_ / sizeof(gfx::Vertex), 0);
 }
+}  // namespace gfx

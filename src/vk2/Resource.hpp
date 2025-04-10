@@ -5,7 +5,7 @@
 
 #include "Common.hpp"
 
-namespace vk2 {
+namespace gfx::vk2 {
 
 enum class ResourceType : u8 {
   StorageImage,
@@ -21,4 +21,4 @@ struct BindlessResourceInfo {
   u32 handle;
 };
 
-}  // namespace vk2
+}  // namespace gfx::vk2

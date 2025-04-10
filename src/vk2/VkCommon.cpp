@@ -4,7 +4,7 @@
 
 #include "Logger.hpp"
 
-namespace vk2 {
+namespace gfx::vk2 {
 
 void print_vk_error(size_t x, bool exit_prog) {
   auto err = static_cast<VkResult>(x);
@@ -16,4 +16,4 @@ void print_vk_error(size_t x, bool exit_prog) {
   }
 }
 
-}  // namespace vk2
+}  // namespace gfx::vk2

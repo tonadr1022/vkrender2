@@ -3,7 +3,7 @@
 #include <deque>
 #include <functional>
 
-namespace vk2 {
+namespace gfx::vk2 {
 
 class DeletionQueue {
  public:
@@ -15,4 +15,4 @@ class DeletionQueue {
   std::deque<std::function<void()>> q_;
 };
 
-}  // namespace vk2
+}  // namespace gfx::vk2

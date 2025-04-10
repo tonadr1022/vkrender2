@@ -2,7 +2,7 @@
 
 #include <tracy/Tracy.hpp>
 
-namespace vk2 {
+namespace gfx::vk2 {
 
 namespace {
 StagingBufferPool* instance{};
@@ -60,4 +60,4 @@ void StagingBufferPool::free(vk2::Buffer* buffer) {
     }
   }
 }
-}  // namespace vk2
+}  // namespace gfx::vk2

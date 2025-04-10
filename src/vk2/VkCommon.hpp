@@ -2,7 +2,7 @@
 
 #include <cstddef>
 
-namespace vk2 {
+namespace gfx::vk2 {
 constexpr int min_api_version_major = 1;
 // TODO: runtime selection
 #ifdef __APPLE__
@@ -13,16 +13,16 @@ constexpr int min_api_version_minor = 3;
 
 void print_vk_error(size_t x, bool exit_prog = false);
 
-}  // namespace vk2
+}  // namespace gfx::vk2
 
 #ifndef NDEBUG
-#define VK_CHECK(x)                 \
-  do {                              \
-    ::vk2::print_vk_error(x, true); \
+#define VK_CHECK(x)                      \
+  do {                                   \
+    ::gfx::vk2::print_vk_error(x, true); \
   } while (0)
 #else
-#define VK_CHECK(x)                  \
-  do {                               \
-    ::vk2::print_vk_error(x, false); \
+#define VK_CHECK(x)                       \
+  do {                                    \
+    ::gfx::vk2::print_vk_error(x, false); \
   } while (0)
 #endif

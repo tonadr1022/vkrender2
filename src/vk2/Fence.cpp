@@ -6,7 +6,7 @@
 
 #include "vk2/VkCommon.hpp"
 
-namespace vk2 {
+namespace gfx::vk2 {
 
 VkFence FencePool::allocate(bool reset) {
   if (!free_fences_.empty()) {
@@ -51,4 +51,4 @@ FencePool::~FencePool() {
     vkDestroyFence(device_, f, nullptr);
   }
 }
-}  // namespace vk2
+}  // namespace gfx::vk2

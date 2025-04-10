@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "vk2/Buffer.hpp"
-namespace vk2 {
+namespace gfx::vk2 {
 
 struct StagingBufferPool {
   static StagingBufferPool& get();
@@ -19,4 +19,4 @@ struct StagingBufferPool {
   std::vector<std::unique_ptr<vk2::Buffer>> free_buffers_;
   std::vector<std::unique_ptr<vk2::Buffer>> allocated_buffers_;
 };
-}  // namespace vk2
+}  // namespace gfx::vk2

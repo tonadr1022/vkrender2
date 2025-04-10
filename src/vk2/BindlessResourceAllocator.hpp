@@ -10,7 +10,7 @@
 #include "vk2/Resource.hpp"
 #include "vk2/Texture.hpp"
 
-namespace vk2 {
+namespace gfx::vk2 {
 
 class BindlessResourceAllocator {
  public:
@@ -74,4 +74,4 @@ class BindlessResourceAllocator {
   VkDescriptorSetLayout main_set_layout_{};
   u64 frame_num_;
 };
-}  // namespace vk2
+}  // namespace gfx::vk2

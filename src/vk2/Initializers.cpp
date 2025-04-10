@@ -6,7 +6,7 @@
 #include "Common.hpp"
 #include "vk2/Texture.hpp"
 
-namespace vk2::init {
+namespace gfx::vk2::init {
 
 VkCommandBufferBeginInfo command_buffer_begin_info(VkCommandBufferUsageFlags flags) {
   return {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = flags};
@@ -81,38 +81,38 @@ void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout currentL
   vkCmdPipelineBarrier2(cmd, &dep_info);
 }
 
-VkImageCreateInfo img_create_info(const ImageCreateInfo& info) {
-  return {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-          .flags = info.img_flags,
-          .imageType = info.img_type,
-          .format = info.format,
-          .extent = VkExtent3D{info.dims.x, info.dims.y, info.dims.z},
-          .mipLevels = info.mip_levels,
-          .arrayLayers = info.array_layers,
-          .samples = info.samples,
-          .tiling = VK_IMAGE_TILING_OPTIMAL,
-          .usage = info.usage,
-          .initialLayout = info.initial_layout};
-}
+// VkImageCreateInfo img_create_info(const ImageCreateInfo& info) {
+//   return {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+//           .flags = info.img_flags,
+//           .imageType = info.img_type,
+//           .format = info.format,
+//           .extent = VkExtent3D{info.dims.x, info.dims.y, info.dims.z},
+//           .mipLevels = info.mip_levels,
+//           .arrayLayers = info.array_layers,
+//           .samples = info.samples,
+//           .tiling = VK_IMAGE_TILING_OPTIMAL,
+//           .usage = info.usage,
+//           .initialLayout = info.initial_layout};
+// }
 namespace {
 
-uint32_t get_mip_levels(VkExtent2D size) {
-  return static_cast<uint32_t>(std::floor(std::log2(glm::max(size.width, size.height)))) + 1;
-}
+// uint32_t get_mip_levels(VkExtent2D size) {
+//   return static_cast<uint32_t>(std::floor(std::log2(glm::max(size.width, size.height)))) + 1;
+// }
 
 }  // namespace
 
-VkImageCreateInfo img_create_info_2d(VkFormat format, uvec2 dims, bool mipmap,
-                                     VkImageUsageFlags usage, bool mapped) {
-  return img_create_info(
-      {.format = format,
-       .dims = {dims, 1},
-       .mip_levels = mipmap ? get_mip_levels({.width = dims.x, .height = dims.y}) : 1,
-       .usage = usage,
-       .mapped = mapped}
-
-  );
-}
+// VkImageCreateInfo img_create_info_2d(VkFormat format, uvec2 dims, bool mipmap,
+//                                      VkImageUsageFlags usage, bool mapped) {
+//   return img_create_info(
+//       {.format = format,
+//        .dims = {dims, 1},
+//        .mip_levels = mipmap ? get_mip_levels({.width = dims.x, .height = dims.y}) : 1,
+//        .usage = usage,
+//        .mapped = mapped}
+//
+//   );
+// }
 
 VkImageSubresourceRange subresource_range_whole(VkImageAspectFlags aspect) {
   return {.aspectMask = aspect,
@@ -131,7 +131,7 @@ VkRenderingAttachmentInfo rendering_attachment_info(VkImageView texture, VkImage
           .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
           .clearValue = clear_value != nullptr ? *clear_value : VkClearValue{}};
 }
-VkRenderingAttachmentInfo rendering_attachment_info(vk2::TextureView& texture, VkImageLayout layout,
+VkRenderingAttachmentInfo rendering_attachment_info(vk2::ImageView& texture, VkImageLayout layout,
                                                     VkClearValue* clear_value) {
   return rendering_attachment_info(texture.view(), layout, clear_value);
 }
@@ -190,4 +190,4 @@ void end_debug_utils_label([[maybe_unused]] VkCommandBuffer cmd) {
 #endif
 }
 
-}  // namespace vk2::init
+}  // namespace gfx::vk2::init

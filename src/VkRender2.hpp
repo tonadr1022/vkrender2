@@ -22,6 +22,8 @@
 #include "vk2/SamplerCache.hpp"
 #include "vk2/Texture.hpp"
 
+namespace gfx {
+
 struct LinearAllocator {
   explicit LinearAllocator(u64 size) : size(size) {}
   u64 size;
@@ -115,7 +117,7 @@ struct VkRender2 final : public BaseRenderer {
     vk2::Buffer draw_indirect_buffer;
     vk2::Buffer material_indices;
     vk2::Buffer instance_buffer;
-    std::vector<vk2::Texture> textures;
+    std::vector<vk2::Image> textures;
     u32 draw_cnt{};
   };
 
@@ -228,20 +230,20 @@ struct VkRender2 final : public BaseRenderer {
   AABB scene_aabb_{};
   std::optional<SlotBuffer<GPUDrawInfo>> static_draw_info_buf_;
   std::optional<SlotBuffer<gfx::ObjectData>> static_object_data_buf_;
-  std::vector<vk2::Texture> static_textures_;
+  std::vector<vk2::Image> static_textures_;
   std::optional<vk2::Buffer> final_draw_cmd_buf_;
   std::optional<vk2::Buffer> draw_cnt_buf_;
 
   StateTracker state_;
   StateTracker transfer_q_state_;
-  std::optional<vk2::Texture> depth_img_;
-  std::optional<vk2::Texture> img_;
-  std::optional<vk2::Texture> post_processed_img_;
+  std::optional<vk2::Image> depth_img_;
+  std::optional<vk2::Image> img_;
+  std::optional<vk2::Image> post_processed_img_;
 
   std::optional<vk2::Sampler> linear_sampler_;
   std::optional<vk2::Sampler> linear_sampler_clamp_to_edge_;
   struct DefaultData {
-    std::optional<vk2::Texture> white_img;
+    std::optional<vk2::Image> white_img;
   } default_data_;
   gfx::DefaultMaterialData default_mat_data_;
   struct InstanceData {
@@ -277,18 +279,19 @@ struct VkRender2 final : public BaseRenderer {
   i32 prefilter_mip_skybox_level_{};
   // TODO: enum loser
   bool render_prefilter_mip_skybox_{};
-  void make_cubemap_views_all_mips(const vk2::Texture& texture,
-                                   std::vector<std::optional<vk2::TextureView>>& views);
-  void generate_mipmaps(StateTracker& state, VkCommandBuffer cmd, vk2::Texture& tex);
+  void make_cubemap_views_all_mips(const vk2::Image& texture,
+                                   std::vector<std::optional<vk2::ImageView>>& views);
+  void generate_mipmaps(StateTracker& state, VkCommandBuffer cmd, vk2::Image& tex);
   u64 cube_vertices_gpu_offset_{};
   // u64 cube_indices_gpu_offset_{};
   // std::optional<vk2::Buffer> cube_vertex_buf_;
   // std::optional<vk2::Buffer> cube_index_buf_;
 
  public:
-  std::optional<vk2::Texture> load_hdr_img(CmdEncoder& ctx, const std::filesystem::path& path,
-                                           bool flip = false);
+  std::optional<vk2::Image> load_hdr_img(CmdEncoder& ctx, const std::filesystem::path& path,
+                                         bool flip = false);
   void draw_cube(VkCommandBuffer cmd) const;
-  void generate_mipmaps(CmdEncoder& ctx, vk2::Texture& tex);
+  void generate_mipmaps(CmdEncoder& ctx, vk2::Image& tex);
   [[nodiscard]] const DefaultData& get_default_data() const { return default_data_; }
 };
+}  // namespace gfx

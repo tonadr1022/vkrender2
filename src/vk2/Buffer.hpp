@@ -8,7 +8,7 @@
 
 #include "Common.hpp"
 #include "vk2/Resource.hpp"
-namespace vk2 {
+namespace gfx::vk2 {
 
 struct BufferCreateInfo {
   u64 size{};
@@ -55,4 +55,4 @@ struct BufferDeleteInfo {
 Buffer create_staging_buffer(u64 size);
 Buffer create_storage_buffer(u64 size);
 
-}  // namespace vk2
+}  // namespace gfx::vk2

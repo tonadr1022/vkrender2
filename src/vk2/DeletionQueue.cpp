@@ -3,7 +3,7 @@
 #include <ranges>
 #include <tracy/Tracy.hpp>
 
-namespace vk2 {
+namespace gfx::vk2 {
 
 DeletionQueue::~DeletionQueue() { flush(); }
 
@@ -16,4 +16,4 @@ void DeletionQueue::flush() {
   }
   q_.clear();
 }
-}  // namespace vk2
+}  // namespace gfx::vk2

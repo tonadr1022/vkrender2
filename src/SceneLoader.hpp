@@ -50,7 +50,7 @@ struct PrimitiveDrawInfo {
 struct LoadedSceneData {
   SceneLoadData scene_graph_data;
   std::vector<Material> materials;
-  std::vector<vk2::Texture> textures;
+  std::vector<vk2::Image> textures;
   std::vector<PrimitiveDrawInfo> mesh_draw_infos;
   std::vector<Vertex> vertices;
   std::vector<u32> indices;
@@ -61,7 +61,7 @@ struct LoadedSceneBaseData {
   std::vector<PrimitiveDrawInfo> mesh_draw_infos;
   std::vector<Vertex> vertices;
   std::vector<u32> indices;
-  std::vector<vk2::Texture> textures;
+  std::vector<vk2::Image> textures;
   std::vector<Material> materials;
 };
 struct DefaultMaterialData {

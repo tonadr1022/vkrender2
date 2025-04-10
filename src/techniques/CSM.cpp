@@ -14,7 +14,7 @@
 #include "vk2/Initializers.hpp"
 #include "vk2/Rendering.hpp"
 
-using namespace vk2;
+using namespace gfx::vk2;
 
 namespace {
 
@@ -146,38 +146,40 @@ void calc_csm_light_space_matrices(std::span<mat4> matrices, std::span<float> le
 
 }  // namespace
 
+namespace gfx {
+
 CSM::CSM(VkPipelineLayout pipeline_layout)
     : shadow_map_res_(uvec2{4096}),
       shadow_data_bufs_(
           {create_storage_buffer(sizeof(ShadowData)), create_storage_buffer(sizeof(ShadowData))}),
       shadow_map_img_(
-          vk2::Texture{TextureCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
-                                         .format = VK_FORMAT_D32_SFLOAT,
-                                         .extent = {shadow_map_res_.x, shadow_map_res_.y, 1},
-                                         .mip_levels = 1,
-                                         .array_layers = cascade_count_,
-                                         .usage = TextureUsage::General}}),
+          vk2::Image{ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+                                     .format = VK_FORMAT_D32_SFLOAT,
+                                     .extent = {shadow_map_res_.x, shadow_map_res_.y, 1},
+                                     .mip_levels = 1,
+                                     .array_layers = cascade_count_,
+                                     .usage = ImageUsage::General}}),
       shadow_map_debug_img_(
-          vk2::Texture{TextureCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
-                                         .format = VK_FORMAT_R16G16B16A16_SFLOAT,
-                                         .extent = {shadow_map_res_.x, shadow_map_res_.y, 1},
-                                         .mip_levels = 1,
-                                         .array_layers = 1,
-                                         .usage = TextureUsage::General}}),
+          vk2::Image{ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
+                                     .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                                     .extent = {shadow_map_res_.x, shadow_map_res_.y, 1},
+                                     .mip_levels = 1,
+                                     .array_layers = 1,
+                                     .usage = ImageUsage::General}}),
       pipeline_layout_(pipeline_layout) {
   ZoneScoped;
   for (u32 i = 0; i < cascade_count_; i++) {
     shadow_map_img_views_[i] =
-        vk2::TextureView{shadow_map_img_, vk2::TextureViewCreateInfo{
-                                              shadow_map_img_.format(),
-                                              VkImageSubresourceRange{
-                                                  .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
-                                                  .baseMipLevel = 0,
-                                                  .levelCount = 1,
-                                                  .baseArrayLayer = i,
-                                                  .layerCount = 1,
-                                              },
-                                          }};
+        vk2::ImageView{shadow_map_img_, vk2::ImageViewCreateInfo{
+                                            shadow_map_img_.format(),
+                                            VkImageSubresourceRange{
+                                                .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+                                                .baseMipLevel = 0,
+                                                .levelCount = 1,
+                                                .baseArrayLayer = i,
+                                                .layerCount = 1,
+                                            },
+                                        }};
   }
   shadow_sampler_ = SamplerCache::get().get_or_create_sampler(SamplerCreateInfo{
       .min_filter = VK_FILTER_LINEAR,
@@ -346,3 +348,5 @@ void CSM::on_imgui(VkSampler sampler) {
     ImGui::TreePop();
   }
 }
+
+}  // namespace gfx

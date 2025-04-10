@@ -9,7 +9,7 @@
 #include "vk2/Resource.hpp"
 #include "vk2/Texture.hpp"
 #include "vk2/VkCommon.hpp"
-namespace vk2 {
+namespace gfx::vk2 {
 
 BindlessResourceAllocator::BindlessResourceAllocator(VkDevice device, VmaAllocator allocator)
     : device_(device), allocator_(allocator) {
@@ -271,4 +271,4 @@ BindlessResourceInfo BindlessResourceAllocator::allocate_storage_buffer_descript
   return {ResourceType::StorageBuffer, handle};
 }
 
-}  // namespace vk2
+}  // namespace gfx::vk2

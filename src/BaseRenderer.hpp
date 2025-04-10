@@ -21,6 +21,8 @@ struct VkCtx;
 #define DEBUG_CALLBACK_ENABLED 1
 #endif
 
+namespace gfx {
+
 struct QueueFamilies {
   VkQueue graphics_queue{};
   VkQueue compute_queue{};
@@ -158,3 +160,5 @@ class BaseRenderer {
   bool initialized_{false};
   u64 curr_frame_num_{};
 };
+
+}  // namespace gfx

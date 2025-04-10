@@ -10,7 +10,7 @@
 #include "Common.hpp"
 #include "vk2/Descriptors.hpp"
 
-namespace vk2 {
+namespace gfx::vk2 {
 
 struct DescriptorSetLayoutData {
   uint32_t set_number;
@@ -74,4 +74,4 @@ class ShaderManager {
   u64 hash(const std::filesystem::path& path, VkShaderStageFlagBits stage);
 };
 
-}  // namespace vk2
+}  // namespace gfx::vk2

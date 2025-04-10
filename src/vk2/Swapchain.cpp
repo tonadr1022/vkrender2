@@ -10,7 +10,7 @@
 #include "vk2/Device.hpp"
 #include "vk2/VkCommon.hpp"
 
-namespace vk2 {
+namespace gfx::vk2 {
 namespace {
 
 VkSwapchainKHR create_swapchain(const UpdateSwapchainInfo& info, VkFormat format,
@@ -124,4 +124,4 @@ void Swapchain::recreate_img_views(VkDevice device) {
 void Swapchain::init(const UpdateSwapchainInfo& info, VkFormat format) {
   init(info, format, nullptr);
 }
-}  // namespace vk2
+}  // namespace gfx::vk2

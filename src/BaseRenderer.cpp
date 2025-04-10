@@ -46,6 +46,8 @@ debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
 
 }  // namespace
 
+namespace gfx {
+
 BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info)
     : window_(info.window),
       resource_dir_(info.resource_dir),
@@ -446,3 +448,4 @@ float BaseRenderer::aspect_ratio() const {
   auto dims = window_dims();
   return (float)dims.x / (float)dims.y;
 }
+}  // namespace gfx

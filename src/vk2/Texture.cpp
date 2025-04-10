@@ -11,12 +11,12 @@
 #include "vk2/Resource.hpp"
 #include "vk2/VkCommon.hpp"
 
-namespace vk2 {
+namespace gfx::vk2 {
 uint32_t get_mip_levels(VkExtent2D size) {
   return static_cast<uint32_t>(std::floor(std::log2(std::max(size.width, size.height)))) + 1;
 }
 
-Texture::~Texture() {
+Image::~Image() {
   if (image_) {
     assert(allocation_);
     BindlessResourceAllocator::get().delete_texture({image_, allocation_});
@@ -24,18 +24,18 @@ Texture::~Texture() {
   }
 }
 
-Texture::Texture(Texture&& other) noexcept
+Image::Image(Image&& other) noexcept
     : create_info_(std::exchange(other.create_info_, {})),
       view_(std::move(other.view_)),
       name_(std::move(other.name_)),
       image_(std::exchange(other.image_, nullptr)),
       allocation_(std::exchange(other.allocation_, nullptr)) {}
 
-Texture& Texture::operator=(Texture&& other) noexcept {
+Image& Image::operator=(Image&& other) noexcept {
   if (&other == this) {
     return *this;
   }
-  this->~Texture();
+  this->~Image();
   name_ = std::move(other.name_);
   create_info_ = std::exchange(other.create_info_, {});
   view_ = std::move(other.view_);
@@ -45,8 +45,7 @@ Texture& Texture::operator=(Texture&& other) noexcept {
 }
 
 // TODO: need move constructor for this
-TextureView::TextureView(const Texture& texture, const TextureViewCreateInfo& info)
-    : create_info_(info) {
+ImageView::ImageView(const Image& texture, const ImageViewCreateInfo& info) : create_info_(info) {
   VkImageViewType view_type = info.view_type != VK_IMAGE_VIEW_TYPE_MAX_ENUM
                                   ? info.view_type
                                   : texture.create_info_.view_type;
@@ -59,7 +58,7 @@ TextureView::TextureView(const Texture& texture, const TextureViewCreateInfo& in
   VK_CHECK(vkCreateImageView(vk2::get_device().device(), &view_info, nullptr, &view_));
 
   // can only be a storage image if color and general usage
-  if (format_is_color(info.format) && texture.create_info_.usage == TextureUsage::General) {
+  if (format_is_color(info.format) && texture.create_info_.usage == ImageUsage::General) {
     storage_image_resource_info_ = BindlessResourceAllocator::get().allocate_storage_img_descriptor(
         view_, VK_IMAGE_LAYOUT_GENERAL);
   }
@@ -67,32 +66,42 @@ TextureView::TextureView(const Texture& texture, const TextureViewCreateInfo& in
       view_, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
 }
 
-Texture::Texture(const TextureCreateInfo& create_info) {
+Image::Image(const ImageCreateInfo& create_info) {
   VmaAllocationCreateFlags alloc_flags{};
   VkImageUsageFlags usage{};
   auto attachment_usage = format_is_color(create_info.format)
                               ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
                               : VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
 
-  if (create_info.usage == TextureUsage::General) {
-    // can't use srgb images for storage. wouldn't want to anyway
-    auto storage_usage =
-        (format_is_color(create_info.format) && !format_is_srgb(create_info.format))
-            ? VK_IMAGE_USAGE_STORAGE_BIT
-            : 0;
-    usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-            VK_IMAGE_USAGE_SAMPLED_BIT | storage_usage | attachment_usage;
+  if (create_info.override_usage_flags) {
+    usage = create_info.override_usage_flags;
+    if (create_info.override_usage_flags & VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT ||
+        create_info.override_usage_flags & VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT ||
+        create_info.override_usage_flags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT ||
+        create_info.override_usage_flags & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+      alloc_flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+    }
+  } else {
+    if (create_info.usage == ImageUsage::General) {
+      // can't use srgb images for storage. wouldn't want to anyway
+      auto storage_usage =
+          (format_is_color(create_info.format) && !format_is_srgb(create_info.format))
+              ? VK_IMAGE_USAGE_STORAGE_BIT
+              : 0;
+      usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+              VK_IMAGE_USAGE_SAMPLED_BIT | storage_usage | attachment_usage;
 
-  } else if (create_info.usage == TextureUsage::AttachmentReadOnly) {
-    // dedicated memory for attachment textures
-    alloc_flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
-    // can't copy to attachment images, 99% want to sample them as well
-    usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | attachment_usage;
+    } else if (create_info.usage == ImageUsage::AttachmentReadOnly) {
+      // dedicated memory for attachment textures
+      alloc_flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+      // can't copy to attachment images, 99% want to sample them as well
+      usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | attachment_usage;
 
-  } else {  // ReadOnly
-    // copy to/from, sample
-    usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-            VK_IMAGE_USAGE_SAMPLED_BIT;
+    } else {  // ReadOnly
+      // copy to/from, sample
+      usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+              VK_IMAGE_USAGE_SAMPLED_BIT;
+    }
   }
 
   VmaAllocationCreateInfo alloc_create_info{
@@ -145,16 +154,18 @@ Texture::Texture(const TextureCreateInfo& create_info) {
     vkSetDebugUtilsObjectNameEXT(get_device().device(), &name_info);
   }
 #endif
-  view_ = TextureView{*this, TextureViewCreateInfo{.format = create_info.format,
-                                                   .range =
-                                                       {
-                                                           .aspectMask = aspect,
-                                                           .baseMipLevel = 0,
-                                                           .levelCount = VK_REMAINING_MIP_LEVELS,
-                                                           .baseArrayLayer = 0,
-                                                           .layerCount = VK_REMAINING_ARRAY_LAYERS,
-                                                       },
-                                                   .components = {}}};
+  if (create_info.make_view) {
+    view_ = ImageView{*this, ImageViewCreateInfo{.format = create_info.format,
+                                                 .range =
+                                                     {
+                                                         .aspectMask = aspect,
+                                                         .baseMipLevel = 0,
+                                                         .levelCount = VK_REMAINING_MIP_LEVELS,
+                                                         .baseArrayLayer = 0,
+                                                         .layerCount = VK_REMAINING_ARRAY_LAYERS,
+                                                     },
+                                                 .components = {}}};
+  }
 }
 
 bool format_is_color(VkFormat format) {
@@ -218,18 +229,18 @@ VkImageType vkviewtype_to_img_type(VkImageViewType view_type) {
       return {};
   }
 }
-TextureView::TextureView(TextureView&& other) noexcept
+ImageView::ImageView(ImageView&& other) noexcept
     : view_(std::exchange(other.view_, nullptr)),
       create_info_(std::exchange(other.create_info_, {})),
       storage_image_resource_info_(std::exchange(other.storage_image_resource_info_, std::nullopt)),
       sampled_image_resource_info_(
           std::exchange(other.sampled_image_resource_info_, std::nullopt)) {}
 
-TextureView& TextureView::operator=(TextureView&& other) noexcept {
+ImageView& ImageView::operator=(ImageView&& other) noexcept {
   if (&other == this) {
     return *this;
   }
-  this->~TextureView();
+  this->~ImageView();
 
   view_ = std::exchange(other.view_, nullptr);
   create_info_ = std::exchange(other.create_info_, {});
@@ -239,7 +250,7 @@ TextureView& TextureView::operator=(TextureView&& other) noexcept {
   return *this;
 }
 
-TextureView::~TextureView() {
+ImageView::~ImageView() {
   if (view_) {
     BindlessResourceAllocator::get().delete_texture_view(
         {storage_image_resource_info_, sampled_image_resource_info_, view_});
@@ -247,19 +258,19 @@ TextureView::~TextureView() {
   }
 }
 
-Texture create_texture_2d(VkFormat format, uvec3 dims, TextureUsage usage, std::string name) {
-  return Texture{TextureCreateInfo{.name = std::move(name),
-                                   .view_type = VK_IMAGE_VIEW_TYPE_2D,
-                                   .format = format,
-                                   .extent = VkExtent3D{dims.x, dims.y, dims.z},
-                                   .usage = usage}};
+Image create_texture_2d(VkFormat format, uvec3 dims, ImageUsage usage, std::string name) {
+  return Image{ImageCreateInfo{.name = std::move(name),
+                               .view_type = VK_IMAGE_VIEW_TYPE_2D,
+                               .format = format,
+                               .extent = VkExtent3D{dims.x, dims.y, dims.z},
+                               .usage = usage}};
 }
-Texture create_texture_2d_mip(VkFormat format, uvec3 dims, TextureUsage usage, u32 levels) {
-  return Texture{TextureCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
-                                   .format = format,
-                                   .extent = VkExtent3D{dims.x, dims.y, dims.z},
-                                   .mip_levels = levels,
-                                   .usage = usage}};
+Image create_texture_2d_mip(VkFormat format, uvec3 dims, ImageUsage usage, u32 levels) {
+  return Image{ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
+                               .format = format,
+                               .extent = VkExtent3D{dims.x, dims.y, dims.z},
+                               .mip_levels = levels,
+                               .usage = usage}};
 }
 
 void blit_img(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent3D extent,
@@ -446,27 +457,26 @@ u64 img_to_buffer_size(VkFormat format, uvec3 extent) {
 
 uint32_t get_mip_levels(uvec2 size) { return get_mip_levels(VkExtent2D{size.x, size.y}); }
 
-TextureCubeAndViews::TextureCubeAndViews(const TextureCreateInfo& info) {
-  texture = Texture{info};
+TextureCubeAndViews::TextureCubeAndViews(const ImageCreateInfo& info) {
+  texture = Image{info};
   if (!texture->image()) {
     texture = {};
     return;
   }
   for (u32 i = 0; i < 6; i++) {
-    img_views[i] =
-        TextureView{*texture, TextureViewCreateInfo{
-                                  .format = texture->format(),
-                                  .range =
-                                      {
-                                          .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                          .baseMipLevel = 0,
-                                          .levelCount = texture->create_info().mip_levels,
-                                          .baseArrayLayer = i,
-                                          .layerCount = 1,
-                                      },
-                                  .view_type = VK_IMAGE_VIEW_TYPE_2D,
-                              }};
+    img_views[i] = ImageView{*texture, ImageViewCreateInfo{
+                                           .format = texture->format(),
+                                           .range =
+                                               {
+                                                   .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                                   .baseMipLevel = 0,
+                                                   .levelCount = texture->create_info().mip_levels,
+                                                   .baseArrayLayer = i,
+                                                   .layerCount = 1,
+                                               },
+                                           .view_type = VK_IMAGE_VIEW_TYPE_2D,
+                                       }};
   }
 }
 
-}  // namespace vk2
+}  // namespace gfx::vk2

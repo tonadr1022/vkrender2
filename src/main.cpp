@@ -5,13 +5,18 @@
 #include "App.hpp"
 #include "Logger.hpp"
 #include "RenderGraph.hpp"
+#include "Timer.hpp"
 #include "Types.hpp"
 #include "VkRender2.hpp"
 
 #define CMP(arg, cmp) strcmp(arg, cmp) == 0
 
+using namespace gfx;
 using vr = std::expected<void, const char*>;
-int main(int argc, char* argv[]) {
+namespace {
+
+void rgtest() {
+  PrintTimerMS timer;
   gfx::RenderGraph rg{};
   rg.set_backbuffer_img("final_out");
   rg.set_swapchain_info(gfx::RenderGraphSwapchainInfo{.width = 1600, .height = 900});
@@ -32,22 +37,31 @@ int main(int argc, char* argv[]) {
   // imgui.add_color_output("final_out", {});
 
   auto res = rg.bake();
+  rg.setup_attachments();
   if (!res) {
     LERROR("bake error {}", res.error());
     exit(1);
   }
-  std::filesystem::path graph_dir{"graphs"};
-  if (!std::filesystem::exists(graph_dir)) {
-    std::filesystem::create_directory(graph_dir);
-  }
-  auto out_dot_path = graph_dir / "graph.dot";
-  auto out_svg_path = graph_dir / "graph.svg";
-  res = rg.output_graphvis(out_dot_path);
-  if (res) {
-    std::system(
-        std::format("dot -Tsvg {} -o {}", out_dot_path.string(), out_svg_path.string()).c_str());
-  }
 
+  bool write_graph = false;
+  if (write_graph) {
+    std::filesystem::path graph_dir{"graphs"};
+    if (!std::filesystem::exists(graph_dir)) {
+      std::filesystem::create_directory(graph_dir);
+    }
+    auto out_dot_path = graph_dir / "graph.dot";
+    auto out_svg_path = graph_dir / "graph.svg";
+    res = rg.output_graphvis(out_dot_path);
+    if (res) {
+      std::system(
+          std::format("dot -Tsvg {} -o {}", out_dot_path.string(), out_svg_path.string()).c_str());
+    }
+  }
+}
+}  // namespace
+int main(int argc, char* argv[]) {
+  (void)rgtest;
+  rgtest();
   exit(0);
 
   u32 w{800}, h{800};

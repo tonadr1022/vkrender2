@@ -15,7 +15,7 @@
 #include "vk2/ShaderCompiler.hpp"
 #include "vk2/VkCommon.hpp"
 
-namespace vk2 {
+namespace gfx::vk2 {
 
 namespace {
 
@@ -509,4 +509,4 @@ void PipelineManager::on_dirty_files(std::span<std::filesystem::path> dirty_file
   }
 }
 
-}  // namespace vk2
+}  // namespace gfx::vk2

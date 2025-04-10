@@ -7,8 +7,10 @@
 #include "vk2/SamplerCache.hpp"
 #include "vk2/Texture.hpp"
 
-class StateTracker;
 struct AABB;
+
+namespace gfx {
+class StateTracker;
 
 class CSM {
  public:
@@ -28,12 +30,12 @@ class CSM {
               const AABB& aabb, vec3 view_pos);
   void on_imgui(VkSampler sampler);
 
-  [[nodiscard]] const vk2::Texture& get_debug_img() const { return shadow_map_debug_img_; }
+  [[nodiscard]] const vk2::Image& get_debug_img() const { return shadow_map_debug_img_; }
   [[nodiscard]] const vk2::Buffer& get_shadow_data_buffer(u32 frame_num) const {
     return shadow_data_bufs_[frame_num % shadow_data_bufs_.size()];
   }
   [[nodiscard]] const vk2::Sampler& get_shadow_sampler() const { return shadow_sampler_; }
-  vk2::Texture& get_shadow_img() { return shadow_map_img_; }
+  vk2::Image& get_shadow_img() { return shadow_map_img_; }
 
  private:
   vk2::PipelineHandle shadow_depth_pipline_;
@@ -42,14 +44,14 @@ class CSM {
   uvec2 shadow_map_res_{};
   u32 cascade_count_{4};
   std::array<vk2::Buffer, 2> shadow_data_bufs_;
-  vk2::Texture shadow_map_img_;
-  vk2::Texture shadow_map_debug_img_;
+  vk2::Image shadow_map_img_;
+  vk2::Image shadow_map_debug_img_;
   VkPipelineLayout pipeline_layout_;
   bool debug_render_enabled_{false};
   VkDescriptorSet imgui_set_{};
   static constexpr u32 max_cascade_levels{5};
   std::array<mat4, max_cascade_levels> light_matrices_;
-  std::array<std::optional<vk2::TextureView>, max_cascade_levels> shadow_map_img_views_;
+  std::array<std::optional<vk2::ImageView>, max_cascade_levels> shadow_map_img_views_;
   vk2::Sampler shadow_sampler_;
   i32 debug_cascade_idx_{0};
   float shadow_z_near_{.1};
@@ -65,3 +67,4 @@ class CSM {
   float cascade_linear_factor_{.6};
   float z_mult_{2.75};
 };
+}  // namespace gfx

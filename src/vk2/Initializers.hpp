@@ -9,34 +9,16 @@
 #define SPAN1(x) std::span(std::addressof(x), 1)
 #define ARR_SPAN(x) std::span(x, COUNTOF(x))
 
-namespace vk2 {
-
-struct ImageCreateInfo {
-  VkImageCreateFlags img_flags{};
-  VkImageType img_type{VK_IMAGE_TYPE_2D};
-  VkFormat format{};
-  uvec3 dims{};
-  u32 mip_levels{1};
-  u32 array_layers{1};
-  VkSampleCountFlagBits samples{VK_SAMPLE_COUNT_1_BIT};
-  VkImageUsageFlags usage{};
-  VkImageLayout initial_layout{VK_IMAGE_LAYOUT_UNDEFINED};
-  bool mapped{false};
-};
-
-}  // namespace vk2
-
-namespace vk2 {
-class Texture;
-class TextureView;
-}  // namespace vk2
-namespace vk2::init {
+namespace gfx::vk2 {
+class ImageView;
+}  // namespace gfx::vk2
+namespace gfx::vk2::init {
 VkDependencyInfo dependency_info(std::span<VkBufferMemoryBarrier2> buffer_barriers,
                                  std::span<VkImageMemoryBarrier2> img_barriers);
 
 VkRenderingAttachmentInfo rendering_attachment_info(VkImageView texture, VkImageLayout layout,
                                                     VkClearValue* clear_value = nullptr);
-VkRenderingAttachmentInfo rendering_attachment_info(vk2::TextureView& texture, VkImageLayout layout,
+VkRenderingAttachmentInfo rendering_attachment_info(vk2::ImageView& texture, VkImageLayout layout,
                                                     VkClearValue* clear_value = nullptr);
 VkBufferCopy2KHR buffer_copy(VkDeviceSize src_offset, VkDeviceSize dst_offset, VkDeviceSize size);
 
@@ -61,10 +43,6 @@ VkSemaphoreSubmitInfo semaphore_submit_info(VkSemaphore semaphore, VkPipelineSta
 
 VkImageSubresourceRange image_subresource_range(VkImageAspectFlags aspectMask);
 
-VkImageCreateInfo img_create_info(const ImageCreateInfo& info);
-VkImageCreateInfo img_create_info_2d(VkFormat format, uvec2 dims, bool mipmap,
-                                     VkImageUsageFlags usage, bool mapped = false);
-
 void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout currentLayout,
                       VkImageLayout newLayout);
 
@@ -72,4 +50,4 @@ void begin_debug_utils_label(VkCommandBuffer cmd, const char* name);
 void end_debug_utils_label(VkCommandBuffer cmd);
 
 VkImageSubresourceRange subresource_range_whole(VkImageAspectFlags aspect);
-}  // namespace vk2::init
+}  // namespace gfx::vk2::init
