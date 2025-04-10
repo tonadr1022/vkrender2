@@ -3,6 +3,7 @@
 #include <vulkan/vulkan_core.h>
 
 #include <expected>
+#include <filesystem>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -41,6 +42,14 @@ struct BufferInfo {
   BufferUsageFlags usage{};
 };
 
+struct ResourceDimensions {
+  Format format{};
+  BufferInfo buffer_info;
+  uint32_t width{}, height{}, depth{}, layers{1}, levels{1}, samples{1};
+  VkImageUsageFlags image_usage_flags{};
+  // TODO: queues, surface transform
+};
+
 struct BufferUsage {
   std::string name;
   size_t size{};
@@ -60,29 +69,37 @@ struct RenderResource {
   static constexpr uint32_t unused = UINT32_MAX;
   RenderResource(ResourceType type, uint32_t idx) : type_(type), idx_(idx) {}
   RenderResource(std::string name, uint32_t phyisical_idx, ResourceType type, uint32_t idx)
-      : name(std::move(name)), phyisical_idx(phyisical_idx), type_(type), idx_(idx) {}
+      : name(std::move(name)), physical_idx(phyisical_idx), type_(type), idx_(idx) {}
 
   [[nodiscard]] ResourceType get_type() const { return type_; }
   [[nodiscard]] uint32_t get_idx() const { return idx_; }
 
   void read_in_pass(uint32_t pass) { read_passes_.emplace_back(pass); }
-  [[nodiscard]] std::span<const uint32_t> get_read_passes() const { return read_passes_; }
+  [[nodiscard]] std::span<const uint16_t> get_read_passes() const { return read_passes_; }
 
   void written_in_pass(uint32_t pass) { written_passes_.emplace_back(pass); }
-  [[nodiscard]] std::span<const uint32_t> get_written_passes() const { return written_passes_; }
+  [[nodiscard]] std::span<const uint16_t> get_written_passes() const { return written_passes_; }
 
   std::string name;
-  uint32_t phyisical_idx{unused};
+  uint32_t physical_idx{unused};
 
  private:
   ResourceType type_;
   uint32_t idx_{unused};
   // TODO: flat set
-  util::fixed_vector<uint32_t, 10> written_passes_;
-  util::fixed_vector<uint32_t, 10> read_passes_;
+  util::fixed_vector<uint16_t, 20> written_passes_;
+  util::fixed_vector<uint16_t, 20> read_passes_;
+};
+struct RenderTextureResource : public RenderResource {
+  explicit RenderTextureResource(uint32_t idx) : RenderResource(ResourceType::Texture, idx) {}
+  AttachmentInfo info;
+  VkImageUsageFlags image_usage{};
+  bool transient = false;
 };
 
 enum class ResourceUsage : uint8_t {
+  None = 0,
+  ColorInput,
   ColorOutput,
   TextureInput,
   DepthStencilOutput,
@@ -92,8 +109,8 @@ bool is_texture_usage(ResourceUsage usage);
 
 using RenderResourceHandle = uint32_t;
 
-struct Pass {
-  explicit Pass(std::string name, ExecuteFn fn, RenderGraph& graph, uint32_t idx);
+struct RenderGraphPass {
+  explicit RenderGraphPass(std::string name, ExecuteFn fn, RenderGraph& graph, uint32_t idx);
   RenderResourceHandle add_color_output(const std::string& name, const AttachmentInfo& info,
                                         const std::string& input = "");
   RenderResourceHandle set_depth_stencil_input(const std::string& name);
@@ -106,16 +123,18 @@ struct Pass {
   [[nodiscard]] uint32_t get_idx() const { return idx_; }
 
   struct UsageAndHandle {
-    uint32_t idx;
-    ResourceUsage usage;
+    uint32_t idx{};
+    ResourceUsage usage{};
   };
 
-  [[nodiscard]] std::vector<UsageAndHandle> get_resource_reads() const { return resource_reads_; }
-  [[nodiscard]] std::vector<UsageAndHandle> get_resource_writes() const { return resource_writes_; }
+  [[nodiscard]] std::vector<UsageAndHandle> get_resource_inputs() const { return resource_inputs_; }
+  [[nodiscard]] std::vector<UsageAndHandle> get_resource_outputs() const {
+    return resource_outputs_;
+  }
 
  private:
-  std::vector<UsageAndHandle> resource_reads_;
-  std::vector<UsageAndHandle> resource_writes_;
+  std::vector<UsageAndHandle> resource_inputs_;
+  std::vector<UsageAndHandle> resource_outputs_;
 
   const std::string name_;
   ExecuteFn execute_;
@@ -125,19 +144,20 @@ struct Pass {
   // [[nodiscard]] bool contains_input(const std::string& name) const;
 };
 
-struct RenderTextureResource : public RenderResource {
-  explicit RenderTextureResource(uint32_t idx) : RenderResource(ResourceType::Texture, idx) {}
-  AttachmentInfo info;
-  VkImageUsageFlags image_usage{};
-  bool transient = false;
+struct RenderGraphSwapchainInfo {
+  uint32_t width, height;
 };
+
+struct RenderPass {};
 
 struct RenderGraph {
   explicit RenderGraph(std::string name = "RenderGraph");
-  Pass& add_pass(const std::string& name, ExecuteFn execute);
+  void set_swapchain_info(const RenderGraphSwapchainInfo& info);
+  RenderGraphPass& add_pass(const std::string& name, ExecuteFn execute);
   void set_backbuffer_img(const std::string& name) { backbuffer_img_ = name; }
 
   VoidResult bake();
+  VoidResult output_graphvis(const std::filesystem::path& path);
   void execute();
   void log();
 
@@ -145,8 +165,10 @@ struct RenderGraph {
   RenderTextureResource* get_texture_resource(uint32_t idx);
 
  private:
+  // TODO: integrate swapchain more closely?
+  RenderGraphSwapchainInfo swapchain_info_{};
   std::string name_;
-  std::vector<Pass> passes_;
+  std::vector<RenderGraphPass> passes_;
   std::string backbuffer_img_;
 
   struct Barrier {
@@ -165,29 +187,36 @@ struct RenderGraph {
   };
   std::vector<Barriers> pass_barriers_;
 
-  static constexpr uint32_t handle_unused = UINT32_MAX;
-
   struct PhysicalPass {
     std::string name;
     std::vector<Barrier> invalidate_barriers;
     std::vector<Barrier> flush_barriers;
     std::vector<uint32_t> physical_color_attachments;
-    uint32_t physical_depth_stencil{handle_unused};
+    uint32_t physical_depth_stencil{RenderResource::unused};
+    void reset();
   };
   std::vector<PhysicalPass> physical_passes_;
+  void clear_physical_passes();
+  PhysicalPass get_physical_pass();
+  std::vector<PhysicalPass> physical_pass_unused_pool_;
 
   void prune_duplicates(std::vector<uint32_t>& data);
 
   // TODO: pool
   std::vector<std::unique_ptr<RenderResource>> resources_;
+  std::vector<ResourceDimensions> physical_resource_dims_;
   std::unordered_map<std::string, uint32_t> resource_to_idx_map_;
 
   // TODO: bitset
   std::vector<std::unordered_set<uint32_t>> pass_dependencies_;
   std::vector<uint32_t> pass_stack_;
+  std::vector<uint32_t> swapchain_writer_passes_;
   VoidResult traverse_dependencies_recursive(uint32_t pass_i, uint32_t stack_size);
 
   std::unordered_set<uint32_t> dup_prune_set_;
+
+  ResourceDimensions get_resource_dims(const RenderTextureResource& resource) const;
+  void build_physical_resource_reqs();
 };
 
 // https://github.com/martty/vuk/blob/master/src/RenderGraphImpl.hpp
