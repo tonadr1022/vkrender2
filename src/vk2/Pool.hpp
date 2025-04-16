@@ -28,6 +28,11 @@ struct Pool {
 
   explicit Pool(IndexT size) : entries_(size) {}
 
+  void clear() {
+    entries_.clear();
+    size_ = 0;
+  }
+
   struct Entry {
     explicit Entry(auto&&... args) : object(std::forward<decltype(args)>(args)...) {}
 

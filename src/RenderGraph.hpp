@@ -187,8 +187,8 @@ struct RenderGraph {
 
   uint32_t get_or_add_texture_resource(const std::string& name);
   RenderTextureResource* get_texture_resource(uint32_t idx);
-  vk2::Image2* get_texture(uint32_t idx);
-  vk2::Image2* get_texture(RenderTextureResource* resource);
+  vk2::Image* get_texture(uint32_t idx);
+  vk2::Image* get_texture(RenderTextureResource* resource);
 
  private:
   // TODO: integrate swapchain more closely?

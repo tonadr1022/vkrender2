@@ -22,8 +22,6 @@
 #include "glm/packing.hpp"
 #include "imgui.h"
 #include "shaders/common.h.glsl"
-#include "shaders/debug/basic_common.h.glsl"
-#include "shaders/shadow_depth_common.h.glsl"
 #include "util/CVar.hpp"
 #include "util/IndexAllocator.hpp"
 #include "vk2/BindlessResourceAllocator.hpp"
@@ -139,13 +137,10 @@ VkRender2::VkRender2(const InitInfo& info)
       auto* tex = rg_.get_texture(final_out_handle);
       assert(resource && tex);
       if (!resource || !tex) return;
-      auto* color_view = vk2::get_device().get_image_view(tex->default_view.handle);
-      assert(color_view);
-      if (!color_view) return;
       VkClearValue clear_value{.color = {{0.2, 0.2, 0.2, 1.0}}};
       VkRenderingAttachmentInfo color_attachment = vk2::init::rendering_attachment_info(
-          color_view->view, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &clear_value);
-      VkExtent2D render_extent{tex->create_info.extent.width, tex->create_info.extent.height};
+          tex->view().view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &clear_value);
+      VkExtent2D render_extent{tex->create_info().extent.width, tex->create_info().extent.height};
       VkRenderingInfo render_info =
           vk2::init::rendering_info(render_extent, &color_attachment, nullptr, nullptr);
       vkCmdBeginRenderingKHR(cmd.cmd(), &render_info);
@@ -391,7 +386,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
   VkCommandBuffer cmd = curr_frame().main_cmd_buffer;
   state_.reset(cmd);
   // TODO: better management lol
-  bool portable = true;
+  // bool portable = true;
 
   auto cmd_begin_info = vk2::init::command_buffer_begin_info();
   VK_CHECK(vkResetCommandBuffer(cmd, 0));

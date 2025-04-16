@@ -50,32 +50,34 @@ struct Holder {
   Device* device_{};
 };
 
-struct ImageView2 {
-  ImageView2() = default;
-  VkImageView view;
-  ImageViewCreateInfo create_info;
-  std::optional<BindlessResourceInfo> storage_image_resource_info;
-  std::optional<BindlessResourceInfo> sampled_image_resource_info;
-};
+// struct ImageView2 {
+//   ImageView2() = default;
+//   ImageView2()
+//   VkImageView view;
+//   ImageViewCreateInfo create_info;
+//   std::optional<BindlessResourceInfo> storage_image_resource_info;
+//   std::optional<BindlessResourceInfo> sampled_image_resource_info;
+// };
 
-using ImageViewHandle = Handle<struct ::gfx::vk2::ImageView2>;
-struct Image2 {
-  explicit Image2(const ImageCreateInfo& info);
-  Image2() = default;
+using ImageViewHandle = Handle<class ::gfx::vk2::ImageView>;
+// struct Image2 {
+//   explicit Image2(const ImageCreateInfo& info);
+//   Image2() = default;
+//
+//   Image2(Image2&&) noexcept;
+//   Image2& operator=(Image2&&) noexcept;
+//
+//   Image2(const Image2&) = delete;
+//   Image2& operator=(const Image2&) = delete;
+//   ~Image2();
+//   ImageCreateInfo create_info;
+//   VkImage image{};
+//   VkImageUsageFlags usage{};
+//   Holder<ImageViewHandle> default_view;
+//   VmaAllocation allocation{};
+// };
 
-  Image2(Image2&&) noexcept;
-  Image2& operator=(Image2&&) noexcept;
-
-  Image2(const Image2&) = delete;
-  Image2& operator=(const Image2&) = delete;
-  ImageCreateInfo create_info;
-  VkImage image{};
-  VkImageUsageFlags usage{};
-  Holder<ImageViewHandle> default_view;
-  VmaAllocation allocation{};
-};
-
-using ImageHandle = Handle<struct ::gfx::vk2::Image2>;
+using ImageHandle = Handle<class ::gfx::vk2::Image>;
 
 class Device {
  public:
@@ -111,20 +113,20 @@ class Device {
 
   [[nodiscard]] VmaAllocator allocator() const { return allocator_; }
 
-  Pool<ImageHandle, Image2> img_pool_;
-  Pool<ImageViewHandle, ImageView2> img_view_pool_;
+  Pool<ImageHandle, Image> img_pool_;
+  Pool<ImageViewHandle, ImageView> img_view_pool_;
 
-  ImageViewHandle create_image_view(const Image2& image, const ImageViewCreateInfo& info);
+  ImageViewHandle create_image_view(const Image& image, const ImageViewCreateInfo& info);
   ImageHandle create_image(const ImageCreateInfo& info);
   Holder<ImageHandle> create_image_holder(const ImageCreateInfo& info);
-  Holder<ImageViewHandle> create_image_view_holder(const Image2& image,
+  Holder<ImageViewHandle> create_image_view_holder(const Image& image,
                                                    const ImageViewCreateInfo& info);
 
-  Image2* get_image(ImageHandle handle);
-  ImageView2* get_image_view(ImageViewHandle handle);
+  Image* get_image(ImageHandle handle);
+  ImageView* get_image_view(ImageViewHandle handle);
 
  private:
-  Image2 make_img_impl(const ImageCreateInfo& info);
+  Image make_img_impl(const ImageCreateInfo& info);
   void init_impl(const CreateInfo& info);
   void destroy_impl();
 

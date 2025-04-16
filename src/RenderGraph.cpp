@@ -347,6 +347,7 @@ VoidResult RenderGraph::bake() {
 }
 
 void RenderGraph::execute(CmdEncoder& cmd) {
+  ZoneScoped;
   if (swapchain_info_.curr_img == nullptr || swapchain_info_.height == 0 ||
       swapchain_info_.width == 0) {
     LERROR("invalid swapchain info");
@@ -355,109 +356,118 @@ void RenderGraph::execute(CmdEncoder& cmd) {
   resource_pipeline_states_.clear();
   resource_pipeline_states_.resize(physical_resource_dims_.size());
 
-  for (u32 pass_i = 0; pass_i < physical_passes_.size(); pass_i++) {
-    physical_pass_setup_barriers(pass_i);
+  {
+    ZoneScopedN("setup barriers");
+    for (u32 pass_i = 0; pass_i < physical_passes_.size(); pass_i++) {
+      physical_pass_setup_barriers(pass_i);
+    }
   }
 
-  for (u32 pass_i : pass_stack_) {
-    auto& pass = passes_[pass_i];
-    auto& submission_state = pass_submission_state_[pass_i];
+  {
+    ZoneScopedN("Record commands");
+    for (u32 pass_i : pass_stack_) {
+      auto& pass = passes_[pass_i];
+      auto& submission_state = pass_submission_state_[pass_i];
 
-    VkDependencyInfo info{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-    info.bufferMemoryBarrierCount = submission_state.buffer_barriers.size();
-    info.pBufferMemoryBarriers = submission_state.buffer_barriers.data();
-    info.imageMemoryBarrierCount = submission_state.image_barriers.size();
-    info.pImageMemoryBarriers = submission_state.image_barriers.data();
-    vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
+      VkDependencyInfo info{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+      info.bufferMemoryBarrierCount = submission_state.buffer_barriers.size();
+      info.pBufferMemoryBarriers = submission_state.buffer_barriers.data();
+      info.imageMemoryBarrierCount = submission_state.image_barriers.size();
+      info.pImageMemoryBarriers = submission_state.image_barriers.data();
+      vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
 
-    pass.execute_(cmd);
+      pass.execute_(cmd);
+    }
   }
   // blit to swapchain
 
   {
-    VkImageMemoryBarrier2 img_barriers[] = {
-        VkImageMemoryBarrier2{
-            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-            .srcStageMask = 0,
-            .srcAccessMask = 0,
-            .dstStageMask = VK_PIPELINE_STAGE_2_BLIT_BIT,
-            .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-            .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            .image = swapchain_info_.curr_img,
-            .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                 .levelCount = 1,
-                                 .layerCount = 1},
-        },
-    };
-    VkDependencyInfo info{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                          .imageMemoryBarrierCount = COUNTOF(img_barriers),
-                          .pImageMemoryBarriers = img_barriers};
-    vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
-  }
+    ZoneScopedN("blit to swapchain");
+    {
+      VkImageMemoryBarrier2 img_barriers[] = {
+          VkImageMemoryBarrier2{
+              .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+              .srcStageMask = 0,
+              .srcAccessMask = 0,
+              .dstStageMask = VK_PIPELINE_STAGE_2_BLIT_BIT,
+              .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+              .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+              .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+              .image = swapchain_info_.curr_img,
+              .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                   .levelCount = 1,
+                                   .layerCount = 1},
+          },
+      };
+      VkDependencyInfo info{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                            .imageMemoryBarrierCount = COUNTOF(img_barriers),
+                            .pImageMemoryBarriers = img_barriers};
+      vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
+    }
 
-  for (u32 pass_i : swapchain_writer_passes_) {
-    auto& pass = passes_[pass_i];
-    for (const auto& output : pass.get_resource_outputs()) {
-      // TODO: support multiple color outputs but only one writing to swapchain? idk why that would
-      // exist, but it would break this
-      if (output.usage == ResourceUsage::ColorOutput) {
-        auto* resource = get_texture_resource(output.idx);
-        auto* tex = get_texture(output.idx);
-        assert(resource && tex && resource->physical_idx < resource_pipeline_states_.size());
-        if (!resource || !tex || resource->physical_idx >= resource_pipeline_states_.size()) {
-          continue;
+    for (u32 pass_i : swapchain_writer_passes_) {
+      auto& pass = passes_[pass_i];
+      for (const auto& output : pass.get_resource_outputs()) {
+        // TODO: support multiple color outputs but only one writing to swapchain? idk why that
+        // would exist, but it would break this
+        if (output.usage == ResourceUsage::ColorOutput) {
+          auto* resource = get_texture_resource(output.idx);
+          auto* tex = get_texture(output.idx);
+          assert(resource && tex && resource->physical_idx < resource_pipeline_states_.size());
+          if (!resource || !tex || resource->physical_idx >= resource_pipeline_states_.size()) {
+            continue;
+          }
+
+          auto& state = resource_pipeline_states_[resource->physical_idx];
+          VkImageMemoryBarrier2 img_barriers[] = {
+              VkImageMemoryBarrier2{
+                  .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                  .srcStageMask = state.pipeline_barrier_src_stages,
+                  .srcAccessMask = state.to_flush_access,
+                  .dstStageMask = VK_PIPELINE_STAGE_2_BLIT_BIT,
+                  .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT,
+                  .oldLayout = state.layout,
+                  .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                  .image = tex->image(),
+                  .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                       .levelCount = 1,
+                                       .layerCount = 1},
+              },
+          };
+          VkDependencyInfo info{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                .imageMemoryBarrierCount = COUNTOF(img_barriers),
+                                .pImageMemoryBarriers = img_barriers};
+          vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
+
+          VkExtent3D dims{glm::min(tex->create_info().extent.width, swapchain_info_.width),
+                          glm::min(tex->create_info().extent.height, swapchain_info_.height), 1};
+          vk2::blit_img(cmd.cmd(), tex->image(), swapchain_info_.curr_img, dims,
+                        VK_IMAGE_ASPECT_COLOR_BIT);
+          // std::terminate();
         }
-
-        auto& state = resource_pipeline_states_[resource->physical_idx];
-        VkImageMemoryBarrier2 img_barriers[] = {
-            VkImageMemoryBarrier2{
-                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                .srcStageMask = state.pipeline_barrier_src_stages,
-                .srcAccessMask = state.to_flush_access,
-                .dstStageMask = VK_PIPELINE_STAGE_2_BLIT_BIT,
-                .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT,
-                .oldLayout = state.layout,
-                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                .image = tex->image,
-                .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                     .levelCount = 1,
-                                     .layerCount = 1},
-            },
-        };
-        VkDependencyInfo info{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                              .imageMemoryBarrierCount = COUNTOF(img_barriers),
-                              .pImageMemoryBarriers = img_barriers};
-        vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
-
-        VkExtent3D dims{glm::min(tex->create_info.extent.width, swapchain_info_.width),
-                        glm::min(tex->create_info.extent.height, swapchain_info_.height), 1};
-        vk2::blit_img(cmd.cmd(), tex->image, swapchain_info_.curr_img, dims,
-                      VK_IMAGE_ASPECT_COLOR_BIT);
-        // std::terminate();
       }
     }
-  }
-  {
-    VkImageMemoryBarrier2 img_barriers[] = {
-        VkImageMemoryBarrier2{
-            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-            .srcStageMask = VK_PIPELINE_STAGE_2_BLIT_BIT,
-            .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT,
-            .dstStageMask = VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,
-            .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT,
-            .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-            .image = swapchain_info_.curr_img,
-            .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                 .levelCount = 1,
-                                 .layerCount = 1},
-        },
-    };
-    VkDependencyInfo info{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                          .imageMemoryBarrierCount = COUNTOF(img_barriers),
-                          .pImageMemoryBarriers = img_barriers};
-    vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
+    {
+      VkImageMemoryBarrier2 img_barriers[] = {
+          VkImageMemoryBarrier2{
+              .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+              .srcStageMask = VK_PIPELINE_STAGE_2_BLIT_BIT,
+              .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT,
+              .dstStageMask = VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,
+              .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT,
+              .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+              .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+              .image = swapchain_info_.curr_img,
+              .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                   .levelCount = 1,
+                                   .layerCount = 1},
+          },
+      };
+      VkDependencyInfo info{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                            .imageMemoryBarrierCount = COUNTOF(img_barriers),
+                            .pImageMemoryBarriers = img_barriers};
+      vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
+    }
   }
 }
 
@@ -711,7 +721,7 @@ void RenderGraph::setup_attachments() {
       bool existing_img = false;
 
       if (img) {
-        const auto& cinfo = img->create_info;
+        const auto& cinfo = img->create_info();
         if (cinfo.extent.width == dims.width && cinfo.extent.height == dims.height &&
             cinfo.extent.depth == dims.depth && cinfo.array_layers == dims.layers &&
             cinfo.mip_levels == dims.levels && cinfo.samples == dims.samples &&
@@ -853,10 +863,10 @@ void RenderGraph::physical_pass_setup_barriers(u32 pass_i) {
       b.srcAccessMask = resource_state.to_flush_access;
       b.dstAccessMask = barrier.access;
       b.dstStageMask = barrier.stages;
-      b.image = image->image;
-      b.subresourceRange.aspectMask = vk2::format_to_aspect_flags(image->create_info.format);
-      b.subresourceRange.layerCount = image->create_info.array_layers;
-      b.subresourceRange.levelCount = image->create_info.mip_levels;
+      b.image = image->image();
+      b.subresourceRange.aspectMask = vk2::format_to_aspect_flags(image->create_info().format);
+      b.subresourceRange.layerCount = image->create_info().array_layers;
+      b.subresourceRange.levelCount = image->create_info().mip_levels;
 
       layout_change = b.oldLayout != b.newLayout;
       bool needs_sync = layout_change || needs_invalidate(barrier, resource_state);
@@ -916,10 +926,10 @@ void RenderGraph::physical_pass_setup_barriers(u32 pass_i) {
   }
 }
 
-vk2::Image2* RenderGraph::get_texture(uint32_t idx) {
+vk2::Image* RenderGraph::get_texture(uint32_t idx) {
   return get_texture(get_texture_resource(idx));
 }
-vk2::Image2* RenderGraph::get_texture(RenderTextureResource* resource) {
+vk2::Image* RenderGraph::get_texture(RenderTextureResource* resource) {
   if (!resource) return nullptr;
   return vk2::get_device().get_image(physical_image_attachments_[resource->physical_idx].handle);
 }

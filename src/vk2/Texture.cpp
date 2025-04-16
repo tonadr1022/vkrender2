@@ -57,24 +57,26 @@ ImageView::ImageView(const Image& texture, const ImageViewCreateInfo& info) : cr
                                          .subresourceRange = info.range};
   VK_CHECK(vkCreateImageView(vk2::get_device().device(), &view_info, nullptr, &view_));
 
-  // can only be a storage image if color and general usage
-  if (format_is_color(info.format) && texture.create_info_.usage == ImageUsage::General) {
+  if ((format_is_color(info.format) && (texture.create_info().override_usage_flags == 0 &&
+                                        texture.create_info().usage == ImageUsage::General)) ||
+      ((texture.create_info().override_usage_flags & VK_IMAGE_USAGE_STORAGE_BIT) != 0)) {
     storage_image_resource_info_ = BindlessResourceAllocator::get().allocate_storage_img_descriptor(
         view_, VK_IMAGE_LAYOUT_GENERAL);
   }
-  sampled_image_resource_info_ = BindlessResourceAllocator::get().allocate_sampled_img_descriptor(
-      view_, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
+  if (texture.usage() & VK_IMAGE_USAGE_SAMPLED_BIT) {
+    sampled_image_resource_info_ = BindlessResourceAllocator::get().allocate_sampled_img_descriptor(
+        view_, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
+  }
 }
 
 Image::Image(const ImageCreateInfo& create_info) {
   VmaAllocationCreateFlags alloc_flags{};
-  VkImageUsageFlags usage{};
   auto attachment_usage = format_is_color(create_info.format)
                               ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
                               : VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
 
   if (create_info.override_usage_flags) {
-    usage = create_info.override_usage_flags;
+    usage_ = create_info.override_usage_flags;
     if (create_info.override_usage_flags & VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT ||
         create_info.override_usage_flags & VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT ||
         create_info.override_usage_flags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT ||
@@ -88,19 +90,19 @@ Image::Image(const ImageCreateInfo& create_info) {
           (format_is_color(create_info.format) && !format_is_srgb(create_info.format))
               ? VK_IMAGE_USAGE_STORAGE_BIT
               : 0;
-      usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-              VK_IMAGE_USAGE_SAMPLED_BIT | storage_usage | attachment_usage;
+      usage_ = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+               VK_IMAGE_USAGE_SAMPLED_BIT | storage_usage | attachment_usage;
 
     } else if (create_info.usage == ImageUsage::AttachmentReadOnly) {
       // dedicated memory for attachment textures
       alloc_flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
       // can't copy to attachment images, 99% want to sample them as well
-      usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | attachment_usage;
+      usage_ = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | attachment_usage;
 
     } else {  // ReadOnly
       // copy to/from, sample
-      usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-              VK_IMAGE_USAGE_SAMPLED_BIT;
+      usage_ = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+               VK_IMAGE_USAGE_SAMPLED_BIT;
     }
   }
 
@@ -123,7 +125,7 @@ Image::Image(const ImageCreateInfo& create_info) {
                          .arrayLayers = create_info.array_layers,
                          .samples = create_info.samples,
                          .tiling = VK_IMAGE_TILING_OPTIMAL,
-                         .usage = usage,
+                         .usage = usage_,
                          .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
   image_ = nullptr;
   VK_CHECK(vmaCreateImage(vk2::get_device().allocator(), &info, &alloc_create_info, &image_,
