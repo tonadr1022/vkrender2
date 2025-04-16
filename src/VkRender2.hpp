@@ -10,9 +10,11 @@
 #include "AABB.hpp"
 #include "BaseRenderer.hpp"
 #include "IBL.hpp"
+#include "RenderGraph.hpp"
 #include "Scene.hpp"
 #include "SceneLoader.hpp"
 #include "StateTracker.hpp"
+#include "Types.hpp"
 #include "shaders/common.h.glsl"
 #include "techniques/CSM.hpp"
 #include "util/IndexAllocator.hpp"
@@ -39,23 +41,6 @@ struct LinearAllocator {
     size = 0;
     curr_offset = 0;
   }
-};
-
-struct CmdEncoder {
-  explicit CmdEncoder(VkCommandBuffer cmd, VkPipelineLayout default_pipeline_layout)
-      : default_pipeline_layout_(default_pipeline_layout), cmd_(cmd) {}
-  void dispatch(u32 work_groups_x, u32 work_groups_y, u32 work_groups_z);
-  void bind_compute_pipeline(VkPipeline pipeline);
-  void bind_descriptor_set(VkPipelineBindPoint bind_point, VkPipelineLayout layout,
-                           VkDescriptorSet* set, u32 idx);
-  void push_constants(VkPipelineLayout layout, u32 size, void* data);
-  void push_constants(u32 size, void* data);
-
-  [[nodiscard]] VkCommandBuffer cmd() const { return cmd_; }
-
- private:
-  VkPipelineLayout default_pipeline_layout_;
-  VkCommandBuffer cmd_;
 };
 
 struct MaterialData {
@@ -217,6 +202,7 @@ struct VkRender2 final : public BaseRenderer {
   std::unordered_map<SceneHandle, ObjectDraw> active_static_draws_;
   std::unordered_map<std::string, StaticSceneGPUResources> static_scenes_;
 
+  gfx::RenderGraph rg_;
   DrawStats static_draw_stats_{};
   // TODO: this is disgusting, but eventually a rewrite will wipe this out anyway
  public:
@@ -260,6 +246,9 @@ struct VkRender2 final : public BaseRenderer {
   vk2::PipelineHandle cull_objs_pipeline_;
   vk2::PipelineHandle skybox_pipeline_;
   vk2::PipelineHandle postprocess_pipeline_;
+  vk2::PipelineHandle basic_draw_pipeline_;
+  Format draw_img_format_{Format::R32G32B32A32Sfloat};
+  Format depth_img_format_{Format::D32Sfloat};
   VkPipelineLayout default_pipeline_layout_{};
   std::queue<InFlightResource<vk2::Buffer*>> pending_buffer_transfers_;
 
@@ -286,6 +275,8 @@ struct VkRender2 final : public BaseRenderer {
   // u64 cube_indices_gpu_offset_{};
   // std::optional<vk2::Buffer> cube_vertex_buf_;
   // std::optional<vk2::Buffer> cube_index_buf_;
+
+  void draw_simple_cube(CmdEncoder& cmd);
 
  public:
   std::optional<vk2::Image> load_hdr_img(CmdEncoder& ctx, const std::filesystem::path& path,

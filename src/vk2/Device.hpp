@@ -3,129 +3,80 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan_core.h>
 
-#include <memory>
 #include <span>
+#include <utility>
 
 #include "Common.hpp"
 #include "VkBootstrap.h"
 #include "vk2/DeletionQueue.hpp"
+#include "vk2/Pool.hpp"
 #include "vk2/Texture.hpp"
-
-namespace gfx {
-
-template <typename T>
-using RefPtr = std::shared_ptr<T>;
-
-}  // namespace gfx
 
 namespace gfx::vk2 {
 
-template <typename HandleT>
-struct Handle {
+class Device;  // forward declaration
+
+template <typename T>
+void destroy(T data);
+
+Device& get_device();  // forward declaration
+
+template <typename T>
+struct Holder {
+  Holder() = default;
+  explicit Holder(Device* device, T&& data) : handle(std::move(data)), device_(device) {}
+
+  Holder(const Holder& other) = delete;
+  Holder& operator=(const Holder& other) = delete;
+
+  Holder(Holder&& other) noexcept
+      : handle(std::exchange(other.handle, T{})), device_(std::exchange(other.device_, nullptr)) {}
+
+  Holder& operator=(Holder&& other) noexcept {
+    if (&other == this) {
+      return *this;
+    }
+    gfx::vk2::destroy(handle);
+    handle = std::move(std::exchange(other.handle, T{}));
+    device_ = std::exchange(other.device_, nullptr);
+    return *this;
+  }
+
+  ~Holder() { gfx::vk2::destroy(handle); }
+
+  T handle{};
+
  private:
-  friend class ObjectPool;
-  uint32_t idx_{};
-  uint32_t gen_{};
+  Device* device_{};
 };
 
 struct ImageView2 {
-  VkImageView view_;
-  ImageViewCreateInfo create_info_;
-  std::optional<BindlessResourceInfo> storage_image_resource_info_;
-  std::optional<BindlessResourceInfo> sampled_image_resource_info_;
+  ImageView2() = default;
+  VkImageView view;
+  ImageViewCreateInfo create_info;
+  std::optional<BindlessResourceInfo> storage_image_resource_info;
+  std::optional<BindlessResourceInfo> sampled_image_resource_info;
 };
 
 using ImageViewHandle = Handle<struct ::gfx::vk2::ImageView2>;
-
 struct Image2 {
   explicit Image2(const ImageCreateInfo& info);
   Image2() = default;
+
+  Image2(Image2&&) noexcept;
+  Image2& operator=(Image2&&) noexcept;
+
+  Image2(const Image2&) = delete;
+  Image2& operator=(const Image2&) = delete;
   ImageCreateInfo create_info;
   VkImage image{};
-  ImageViewHandle default_view{};
-  VkImageLayout curr_layout{VK_IMAGE_LAYOUT_UNDEFINED};
+  VkImageUsageFlags usage{};
+  Holder<ImageViewHandle> default_view;
   VmaAllocation allocation{};
 };
+
 using ImageHandle = Handle<struct ::gfx::vk2::Image2>;
 
-// ObjectT should be default constructible and have sane default constructed state
-template <typename HandleT, typename ObjectT>
-struct Pool {
-  using IndexT = uint32_t;
-  Pool() : entries_(10) {}
-  explicit Pool(IndexT size) : entries_(size) {}
-
-  struct Entry {
-    explicit Entry(ObjectT&& obj) : object(obj) {}
-    ObjectT object{};
-    uint32_t gen_{1};
-  };
-
-  // TODO: support perfect forwarding
-  HandleT alloc(const ObjectT& obj) {
-    IndexT idx;
-    if (free_list_.empty()) {
-      idx = free_list_.back();
-      free_list_.pop_back();
-    } else {
-      free_list_.emplace_back();
-    }
-    entries_[idx] = Entry{std::move(obj)};
-    size_++;
-  }
-  HandleT alloc(ObjectT&& obj) {
-    IndexT idx;
-    if (free_list_.empty()) {
-      idx = free_list_.back();
-      free_list_.pop_back();
-    } else {
-      free_list_.emplace_back();
-    }
-    entries_[idx] = Entry{std::move(obj)};
-    size_++;
-  }
-
-  [[nodiscard]] IndexT size() const { return size_; }
-
-  void destroy(HandleT handle) {
-    assert(handle.idx_ < entries_.size());
-    if (handle.idx_ >= entries_.size()) {
-      return;
-    }
-    assert(handle.gen_ == entries_[handle.idx_].gen_);
-    if (entries_[handle.idx_].gen_ != handle.gen_) {
-      return;
-    }
-    entries_[handle.idx_].gen_++;
-    entries_[handle.idx_].object = {};
-    free_list_.emplace_back(handle.idx_);
-    size_--;
-  }
-
-  ObjectT* get(HandleT handle) {
-    assert(handle.idx_ < entries_.size());
-    if (handle.idx_ >= entries_.size()) {
-      return nullptr;
-    }
-    assert(handle.gen_ == entries_[handle.idx_].gen_);
-    if (entries_[handle.idx_].gen_ != handle.gen_) {
-      return nullptr;
-    }
-    return &entries_[handle.idx].object;
-  }
-
- private:
-  std::vector<IndexT> free_list_;
-  std::vector<Entry> entries_;
-  IndexT size_{};
-};
-
-// template<typename T>
-// struct Holder {
-// private:
-//   T data_;
-// };
-//
 class Device {
  public:
   struct CreateInfo {
@@ -141,6 +92,8 @@ class Device {
   [[nodiscard]] const vkb::Device& vkb_device() const { return vkb_device_; }
 
   VkFormat get_swapchain_format();
+  void destroy(ImageHandle handle);
+  void destroy(ImageViewHandle handle);
 
   [[nodiscard]] VkCommandPool create_command_pool(
       u32 queue_idx,
@@ -160,8 +113,15 @@ class Device {
 
   Pool<ImageHandle, Image2> img_pool_;
   Pool<ImageViewHandle, ImageView2> img_view_pool_;
-  ImageViewHandle create_img_view(ImageHandle texture, const ImageViewCreateInfo& info);
-  ImageHandle create_img(const ImageCreateInfo& info);
+
+  ImageViewHandle create_image_view(const Image2& image, const ImageViewCreateInfo& info);
+  ImageHandle create_image(const ImageCreateInfo& info);
+  Holder<ImageHandle> create_image_holder(const ImageCreateInfo& info);
+  Holder<ImageViewHandle> create_image_view_holder(const Image2& image,
+                                                   const ImageViewCreateInfo& info);
+
+  Image2* get_image(ImageHandle handle);
+  ImageView2* get_image_view(ImageViewHandle handle);
 
  private:
   Image2 make_img_impl(const ImageCreateInfo& info);
@@ -179,6 +139,9 @@ class Device {
   VmaAllocator allocator_;
 };
 
-Device& get_device();
+template <typename T>
+void destroy(T data) {
+  get_device().destroy(data);
+}
 
 }  // namespace gfx::vk2

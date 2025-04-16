@@ -12,11 +12,13 @@
 #include <tracy/Tracy.hpp>
 #include <tracy/TracyVulkan.hpp>
 
+#include "CommandEncoder.hpp"
 #include "GLFW/glfw3.h"
 #include "Logger.hpp"
 #include "RenderGraph.hpp"
 #include "SceneLoader.hpp"
 #include "StateTracker.hpp"
+#include "Timer.hpp"
 #include "glm/packing.hpp"
 #include "imgui.h"
 #include "shaders/common.h.glsl"
@@ -36,6 +38,7 @@
 #include "vk2/StagingBufferPool.hpp"
 #include "vk2/Texture.hpp"
 #include "vk2/VkCommon.hpp"
+#include "vk2/VkTypes.hpp"
 
 namespace gfx {
 
@@ -96,7 +99,6 @@ using namespace vk2;
 
 VkRender2::VkRender2(const InitInfo& info)
     : BaseRenderer(info, BaseRenderer::BaseInitInfo{.frames_in_flight = 2}) {
-  // jank lol
   vkrender2_instance = this;
   allocator_ = vk2::get_device().allocator();
 
@@ -104,6 +106,73 @@ VkRender2::VkRender2(const InitInfo& info)
   vk2::BindlessResourceAllocator::init(device_, vk2::get_device().allocator());
   main_set_ = vk2::BindlessResourceAllocator::get().main_set();
   main_set2_ = vk2::BindlessResourceAllocator::get().main_set2_;
+
+  PrintTimerMS timer;
+  rg_.set_backbuffer_img("final_out");
+  // auto& comp1 = rg_.add_pass("comp1", [this](CmdEncoder& cmd) {
+  //   // cmd.bind_compute_pipeline(PipelineManager::get().get(img_pipeline_)->pipeline);
+  //   // struct {
+  //   //   u32 img_idx;
+  //   //   float time;
+  //   // } pc{
+  //   //
+  //   // };
+  //   // cmd.dispatch((swapchain_.dims.x + 16) / 16, (swapchain_.dims.y + 16) / 16, 1);
+  //   LINFO("executing comp1");
+  // });
+  // comp1.add_color_output("computed1", {.format = Format::R32G32B32A32Sfloat});
+  //
+  // auto& comp2 = rg_.add_pass("comp2", [this](CmdEncoder& cmd) {
+  //   LINFO("executing comp2");
+  //   // cmd.bind_compute_pipeline(PipelineManager::get().get(img_pipeline_)->pipeline);
+  //   // cmd.dispatch((swapchain_.dims.x + 16) / 16, (swapchain_.dims.y + 16) / 16, 1);
+  // });
+  // comp2.add_texture_input("computed1");
+  // comp2.add_color_output("final_out", {.format = Format::R32G32B32A32Sfloat});
+
+  {
+    auto& forward = rg_.add_pass("forward");
+    auto final_out_handle = forward.add_color_output("final_out", {.format = draw_img_format_});
+    forward.set_depth_stencil_output("depth", {.format = depth_img_format_});
+    forward.set_execute_fn([this, final_out_handle](CmdEncoder& cmd) {
+      auto* resource = rg_.get_texture_resource(final_out_handle);
+      auto* tex = rg_.get_texture(final_out_handle);
+      assert(resource && tex);
+      if (!resource || !tex) return;
+      auto* color_view = vk2::get_device().get_image_view(tex->default_view.handle);
+      assert(color_view);
+      if (!color_view) return;
+      VkClearValue clear_value{.color = {{0.2, 0.2, 0.2, 1.0}}};
+      VkRenderingAttachmentInfo color_attachment = vk2::init::rendering_attachment_info(
+          color_view->view, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &clear_value);
+      VkExtent2D render_extent{tex->create_info.extent.width, tex->create_info.extent.height};
+      VkRenderingInfo render_info =
+          vk2::init::rendering_info(render_extent, &color_attachment, nullptr, nullptr);
+      vkCmdBeginRenderingKHR(cmd.cmd(), &render_info);
+      set_viewport_and_scissor(cmd.cmd(), render_extent);
+      draw_simple_cube(cmd);
+      vkCmdEndRenderingKHR(cmd.cmd());
+    });
+  }
+
+  // auto& pp = rg_.add_pass("postprocess", [](CmdEncoder&) { LINFO("executing postprocess"); });
+  // pp.add_color_output("final_out", {.format = gfx::Format::R8G8B8A8Unorm});
+  // pp.add_texture_input("forward_output");
+
+  // auto& pp2 = rg_.add_pass("pp2", [](CmdEncoder&) {});
+  // pp2.add_texture_input("postprocessout");
+  // pp2.add_color_output("final_out", {.format = gfx::Format::R8G8B8A8Unorm});
+
+  // auto& imgui = rg_.add_pass("imgui", [](CmdEncoder&) {});
+  // imgui.add_color_output("final_out", {.format = gfx::Format::R8G8B8A8Unorm});
+
+  rg_.set_swapchain_info(
+      RenderGraphSwapchainInfo{.width = swapchain_.dims.x, .height = swapchain_.dims.y});
+  auto res = rg_.bake();
+  if (!res) {
+    LERROR("bake error {}", res.error());
+    exit(1);
+  }
 
   imm_cmd_pool_ = vk2::get_device().create_command_pool(queues_.graphics_queue_idx);
   imm_cmd_buf_ = vk2::get_device().create_command_buffer(imm_cmd_pool_);
@@ -312,271 +381,287 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
       break;
     }
   }
+
+  auto& swapchain_img = swapchain_.imgs[curr_swapchain_img_idx()];
+  rg_.set_swapchain_info(RenderGraphSwapchainInfo{
+      .curr_img = swapchain_img, .width = swapchain_.dims.x, .height = swapchain_.dims.y});
+  rg_.setup_attachments();
+
   u32 scene_buffer_handle = curr_frame_2().scene_uniform_buf->resource_info_->handle;
   VkCommandBuffer cmd = curr_frame().main_cmd_buffer;
   state_.reset(cmd);
   // TODO: better management lol
   bool portable = true;
-  CmdEncoder ctx{cmd, default_pipeline_layout_};
+
   auto cmd_begin_info = vk2::init::command_buffer_begin_info();
   VK_CHECK(vkResetCommandBuffer(cmd, 0));
   VK_CHECK(vkBeginCommandBuffer(cmd, &cmd_begin_info));
 
+  CmdEncoder ctx{cmd, default_pipeline_layout_};
+
   bind_bindless_descriptors(ctx);
+  vk2::BindlessResourceAllocator::get().set_frame_num(curr_frame_num());
+  vk2::BindlessResourceAllocator::get().flush_deletions();
 
-  {
-    TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "draw objects");
-    state_.flush_transfers(queues_.graphics_queue_idx);
-    vk2::BindlessResourceAllocator::get().set_frame_num(curr_frame_num());
-    vk2::BindlessResourceAllocator::get().flush_deletions();
+  rg_.execute(ctx);
 
-    state_.transition(*img_, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
-                      VK_IMAGE_LAYOUT_GENERAL);
-    state_.flush_barriers();
+  // state_.flush_transfers(queues_.graphics_queue_idx);
 
-    {
-      TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "img comp");
-      struct {
-        uint idx;
-        float t;
-      } pc{img_->view().storage_img_resource().handle, static_cast<f32>(glfwGetTime())};
-      ctx.bind_compute_pipeline(PipelineManager::get().get(img_pipeline_)->pipeline);
-      ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-      ctx.dispatch((img_->extent().width + 16) / 16, (img_->extent().height + 16) / 16, 1);
-    }
+  // {
+  //   TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "draw objects");
+  //
+  //   // {
+  //   //   TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "img comp");
+  //   //   state_.transition(*img_, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+  //   //   VK_ACCESS_2_MEMORY_WRITE_BIT,
+  //   //                     VK_IMAGE_LAYOUT_GENERAL);
+  //   //   state_.flush_barriers();
+  //   //   struct {
+  //   //     uint idx;
+  //   //     float t;
+  //   //   } pc{img_->view().storage_img_resource().handle, static_cast<f32>(glfwGetTime())};
+  //   //   ctx.bind_compute_pipeline(PipelineManager::get().get(img_pipeline_)->pipeline);
+  //   //   ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
+  //   //   ctx.dispatch((img_->extent().width + 16) / 16, (img_->extent().height + 16) / 16, 1);
+  //   // }
+  //
+  //   {
+  //     TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "Cull Objects");
+  //     state_
+  //         .buffer_barrier(draw_cnt_buf_.value(), VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+  //                         VK_ACCESS_2_TRANSFER_WRITE_BIT)
+  //         .flush_barriers();
+  //     vkCmdFillBuffer(cmd, draw_cnt_buf_->buffer(), 0, sizeof(u32), 0);
+  //     // clear final buffer if we can't use drawindirectcount
+  //     if (portable) {
+  //       state_
+  //           .buffer_barrier(final_draw_cmd_buf_.value(), VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+  //                           VK_ACCESS_2_TRANSFER_WRITE_BIT)
+  //           .flush_barriers();
+  //       vkCmdFillBuffer(cmd, final_draw_cmd_buf_->buffer(), 0, final_draw_cmd_buf_->size(), 0);
+  //     }
+  //
+  //     // cull
+  //     state_
+  //         .buffer_barrier(static_draw_info_buf_->buffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+  //                         VK_ACCESS_2_SHADER_READ_BIT)
+  //         .buffer_barrier(static_object_data_buf_->buffer,
+  //         VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+  //                         VK_ACCESS_2_SHADER_READ_BIT)
+  //         .buffer_barrier(final_draw_cmd_buf_.value(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+  //                         VK_ACCESS_2_SHADER_WRITE_BIT)
+  //         .buffer_barrier(draw_cnt_buf_.value(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+  //                         VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT)
+  //         .flush_barriers();
+  //
+  //     PipelineManager::get().bind_compute(cmd, cull_objs_pipeline_);
+  //     struct {
+  //       u32 num_objs;
+  //       u32 in_draw_cmds_buf;
+  //       u32 out_draw_cmds_buf;
+  //       u32 draw_cnt_buf;
+  //       u32 object_bounds_buf;
+  //     } pc{static_cast<u32>(draw_cnt_), static_draw_info_buf_->buffer.resource_info_->handle,
+  //          final_draw_cmd_buf_->resource_info_->handle, draw_cnt_buf_->resource_info_->handle,
+  //          static_object_data_buf_->buffer.resource_info_->handle};
+  //     ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
+  //     vkCmdDispatch(cmd, (draw_cnt_ + 256) / 256, 1, 1);
+  //   }
+  //   state_
+  //       .buffer_barrier(draw_cnt_buf_.value(), VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+  //                       VK_ACCESS_2_MEMORY_READ_BIT)
+  //       .buffer_barrier(final_draw_cmd_buf_.value(), VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
+  //                       VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT)
+  //       .flush_barriers();
+  //
+  //   {
+  //     TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "CascadeShadowPass");
+  //     csm_->render(
+  //         state_, cmd, curr_frame_num(), info.view, info.light_dir, aspect_ratio(),
+  //         info.fov_degrees,
+  //         [&, this](const mat4& vp_matrix) {
+  //           ShadowDepthPushConstants pc{
+  //               vp_matrix,
+  //               static_vertex_buf_->buffer.resource_info_->handle,
+  //               static_instance_data_buf_->buffer.resource_info_->handle,
+  //               static_object_data_buf_->buffer.resource_info_->handle,
+  //               scene_buffer_handle,
+  //               static_materials_buf_->buffer.resource_info_->handle,
+  //               linear_sampler_->resource_info.handle,
+  //           };
+  //           ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
+  //           vkCmdBindIndexBuffer(cmd, static_index_buf_->buffer.buffer(), 0,
+  //           VK_INDEX_TYPE_UINT32); if (portable) {
+  //             vkCmdDrawIndexedIndirect(cmd, final_draw_cmd_buf_->buffer(), 0, draw_cnt_,
+  //                                      sizeof(VkDrawIndexedIndirectCommand));
+  //           } else {
+  //             vkCmdDrawIndexedIndirectCount(cmd, final_draw_cmd_buf_->buffer(), 0,
+  //                                           draw_cnt_buf_->buffer(), 0, max_draws,
+  //                                           sizeof(VkDrawIndexedIndirectCommand));
+  //           }
+  //         },
+  //         scene_aabb_, info.view_pos);
+  //   }
+  //
+  //   csm_->debug_shadow_pass(state_, cmd, linear_sampler_.value());
+  //
+  //   // draw
+  //   {
+  //     init::begin_debug_utils_label(cmd, "draw");
+  //     state_
+  //         .transition(
+  //             *img_, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+  //             VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+  //             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT)
+  //         .buffer_barrier(csm_->get_shadow_data_buffer(curr_frame_num()).buffer(),
+  //                         VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT)
+  //         .transition(csm_->get_shadow_img(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+  //                     VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_MEMORY_READ_BIT,
+  //                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT)
+  //         .transition(*depth_img_, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+  //                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+  //                     VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT)
+  //         .flush_barriers();
+  //     VkClearValue depth_clear{};
+  //     // VkClearValue depth_clear{.depthStencil = {.depth = 1.f}};
+  //     VkRenderingAttachmentInfo color_attachment =
+  //         init::rendering_attachment_info(img_->view(),
+  //         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  //     auto depth_att = init::rendering_attachment_info(
+  //         depth_img_->view(), VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, &depth_clear);
+  //     auto rendering_info = init::rendering_info(img_->extent_2d(), &color_attachment,
+  //     &depth_att); vkCmdBeginRenderingKHR(cmd, &rendering_info); set_viewport_and_scissor(cmd,
+  //     img_->extent_2d());
+  //
+  //     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+  //                       PipelineManager::get().get(draw_pipeline_)->pipeline);
+  //
+  //     // TODO: jank
+  //     auto draw_objects = [&](const Buffer& vertex_buffer, const Buffer& index_buffer,
+  //                             const Buffer& instance_buffer, const Buffer& material_data_buffer,
+  //                             const Buffer& object_data_buffer, const Buffer&, u64) {
+  //       BasicPushConstants pc{
+  //           scene_buffer_handle,
+  //           vertex_buffer.resource_info_->handle,
+  //           instance_buffer.resource_info_->handle,
+  //           object_data_buffer.resource_info_->handle,
+  //           material_data_buffer.resource_info_->handle,
+  //           linear_sampler_->resource_info.handle,
+  //           csm_->get_shadow_data_buffer(curr_frame_num()).resource_info_->handle,
+  //           csm_->get_shadow_sampler().resource_info.handle,
+  //           csm_->get_shadow_img().view().sampled_img_resource().handle,
+  //           ibl_->irradiance_cubemap_tex_->view().sampled_img_resource().handle,
+  //           ibl_->brdf_lut_->view().sampled_img_resource().handle,
+  //           ibl_->prefiltered_env_map_tex_->texture->view().sampled_img_resource().handle,
+  //           linear_sampler_clamp_to_edge_->resource_info.handle};
+  //       ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
+  //
+  //       vkCmdBindIndexBuffer(cmd, index_buffer.buffer(), 0, VK_INDEX_TYPE_UINT32);
+  //       if (portable) {
+  //         vkCmdDrawIndexedIndirect(cmd, final_draw_cmd_buf_->buffer(), 0, draw_cnt_,
+  //                                  sizeof(VkDrawIndexedIndirectCommand));
+  //       } else {
+  //         vkCmdDrawIndexedIndirectCount(cmd, final_draw_cmd_buf_->buffer(), 0,
+  //                                       draw_cnt_buf_->buffer(), 0, max_draws,
+  //                                       sizeof(VkDrawIndexedIndirectCommand));
+  //       }
+  //     };
+  //
+  //     TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "Final Draw Pass");
+  //     if (draw_cnt_) {
+  //       draw_objects(static_vertex_buf_->buffer, static_index_buf_->buffer,
+  //                    static_instance_data_buf_->buffer, static_materials_buf_->buffer,
+  //                    static_object_data_buf_->buffer, static_draw_info_buf_->buffer, draw_cnt_);
+  //     }
+  //
+  //     // skybox
+  //     {
+  //       TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "Draw skybox");
+  //       PipelineManager::get().bind_graphics(cmd, skybox_pipeline_);
+  //       // TODO:  use an enum this is awful
+  //       u32 skybox_handle{};
+  //       if (render_prefilter_mip_skybox_) {
+  //         assert(ibl_->prefiltered_env_tex_views_.size() > (size_t)prefilter_mip_skybox_level_);
+  //         skybox_handle = ibl_->prefiltered_env_tex_views_[prefilter_mip_skybox_level_]
+  //                             ->sampled_img_resource()
+  //                             .handle;
+  //       } else {
+  //         skybox_handle = convoluted_skybox.get()
+  //                             ?
+  //                             ibl_->irradiance_cubemap_tex_->view().sampled_img_resource().handle
+  //                             : ibl_->env_cubemap_tex_->view().sampled_img_resource().handle;
+  //       }
+  //       struct {
+  //         u32 scene_buffer, tex_idx, sampler_idx;
+  //       } pc{scene_buffer_handle, skybox_handle, linear_sampler_->resource_info.handle};
+  //       ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
+  //       vkCmdDraw(cmd, 36, 1, 0, 0);
+  //     }
+  //     vkCmdEndRenderingKHR(cmd);
+  //     // Add after vkCmdEndRenderingKHR(cmd):
+  //     state_
+  //         .transition(*depth_img_, VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+  //                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
+  //                     VK_IMAGE_ASPECT_DEPTH_BIT)
+  //         .flush_barriers();
+  //     init::end_debug_utils_label(cmd);
+  //   }
+  //
+  //   vk2::Image* final_img = &img_.value();
+  //   if (debug_mode_ == DEBUG_MODE_NONE && postprocess_pass.get()) {
+  //     final_img = &post_processed_img_.value();
+  //     u32 postprocess_flags = 0;
+  //     if (gammacorrect_enabled.get()) {
+  //       postprocess_flags |= 0x2;
+  //     }
+  //     if (tonemap_enabled.get()) {
+  //       postprocess_flags |= 0x1;
+  //     }
+  //     state_
+  //         .transition(*img_, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT,
+  //                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+  //         .transition(*post_processed_img_, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+  //                     VK_ACCESS_2_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL)
+  //         .flush_barriers();
+  //     PipelineManager::get().bind_compute(cmd, postprocess_pipeline_);
+  //     struct {
+  //       u32 in_tex_idx, out_tex_idx, flags;
+  //     } pc{img_->view().storage_img_resource().handle,
+  //          post_processed_img_->view().storage_img_resource().handle, postprocess_flags};
+  //     ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
+  //     vkCmdDispatch(cmd, (post_processed_img_->extent_2d().width + 16) / 16,
+  //                   (post_processed_img_->extent_2d().height + 16) / 16, 1);
+  //   }
+  //
+  //   state_.transition(*final_img, VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_MEMORY_READ_BIT,
+  //                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
+  //   auto& swapchain_img = swapchain_.imgs[curr_swapchain_img_idx()];
+  //   state_.transition(swapchain_img, VK_PIPELINE_STAGE_2_BLIT_BIT,
+  //   VK_ACCESS_2_TRANSFER_WRITE_BIT,
+  //                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
+  //
+  //   state_.flush_barriers();
+  //
+  //   VkExtent3D dims{glm::min(final_img->extent().width, swapchain_.dims.x),
+  //                   glm::min(final_img->extent().height, swapchain_.dims.y), 1};
+  //   blit_img(cmd, final_img->image(), swapchain_img, dims, VK_IMAGE_ASPECT_COLOR_BIT);
+  //
+  //   if (draw_imgui) {
+  //     state_.transition(
+  //         swapchain_img, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+  //         VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT,
+  //         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  //     state_.flush_barriers();
+  //     render_imgui(cmd, {swapchain_.dims.x, swapchain_.dims.y},
+  //                  swapchain_.img_views[curr_swapchain_img_idx()]);
+  //   }
+  //
+  //   state_.transition(swapchain_img, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR,
+  //                     VK_ACCESS_2_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+  //   state_.flush_barriers();
+  //   TracyVkCollect(curr_frame().tracy_vk_ctx, cmd);
+  // }
 
-    {
-      TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "Cull Objects");
-      state_
-          .buffer_barrier(draw_cnt_buf_.value(), VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                          VK_ACCESS_2_TRANSFER_WRITE_BIT)
-          .flush_barriers();
-      vkCmdFillBuffer(cmd, draw_cnt_buf_->buffer(), 0, sizeof(u32), 0);
-      // clear final buffer if we can't use drawindirectcount
-      if (portable) {
-        state_
-            .buffer_barrier(final_draw_cmd_buf_.value(), VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                            VK_ACCESS_2_TRANSFER_WRITE_BIT)
-            .flush_barriers();
-        vkCmdFillBuffer(cmd, final_draw_cmd_buf_->buffer(), 0, final_draw_cmd_buf_->size(), 0);
-      }
-
-      // cull
-      state_
-          .buffer_barrier(static_draw_info_buf_->buffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                          VK_ACCESS_2_SHADER_READ_BIT)
-          .buffer_barrier(static_object_data_buf_->buffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                          VK_ACCESS_2_SHADER_READ_BIT)
-          .buffer_barrier(final_draw_cmd_buf_.value(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                          VK_ACCESS_2_SHADER_WRITE_BIT)
-          .buffer_barrier(draw_cnt_buf_.value(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                          VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT)
-          .flush_barriers();
-
-      PipelineManager::get().bind_compute(cmd, cull_objs_pipeline_);
-      struct {
-        u32 num_objs;
-        u32 in_draw_cmds_buf;
-        u32 out_draw_cmds_buf;
-        u32 draw_cnt_buf;
-        u32 object_bounds_buf;
-      } pc{static_cast<u32>(draw_cnt_), static_draw_info_buf_->buffer.resource_info_->handle,
-           final_draw_cmd_buf_->resource_info_->handle, draw_cnt_buf_->resource_info_->handle,
-           static_object_data_buf_->buffer.resource_info_->handle};
-      ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-      vkCmdDispatch(cmd, (draw_cnt_ + 256) / 256, 1, 1);
-    }
-    state_
-        .buffer_barrier(draw_cnt_buf_.value(), VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                        VK_ACCESS_2_MEMORY_READ_BIT)
-        .buffer_barrier(final_draw_cmd_buf_.value(), VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
-                        VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT)
-        .flush_barriers();
-
-    {
-      TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "CascadeShadowPass");
-      csm_->render(
-          state_, cmd, curr_frame_num(), info.view, info.light_dir, aspect_ratio(),
-          info.fov_degrees,
-          [&, this](const mat4& vp_matrix) {
-            ShadowDepthPushConstants pc{
-                vp_matrix,
-                static_vertex_buf_->buffer.resource_info_->handle,
-                static_instance_data_buf_->buffer.resource_info_->handle,
-                static_object_data_buf_->buffer.resource_info_->handle,
-                scene_buffer_handle,
-                static_materials_buf_->buffer.resource_info_->handle,
-                linear_sampler_->resource_info.handle,
-            };
-            ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-            vkCmdBindIndexBuffer(cmd, static_index_buf_->buffer.buffer(), 0, VK_INDEX_TYPE_UINT32);
-            if (portable) {
-              vkCmdDrawIndexedIndirect(cmd, final_draw_cmd_buf_->buffer(), 0, draw_cnt_,
-                                       sizeof(VkDrawIndexedIndirectCommand));
-            } else {
-              vkCmdDrawIndexedIndirectCount(cmd, final_draw_cmd_buf_->buffer(), 0,
-                                            draw_cnt_buf_->buffer(), 0, max_draws,
-                                            sizeof(VkDrawIndexedIndirectCommand));
-            }
-          },
-          scene_aabb_, info.view_pos);
-    }
-
-    csm_->debug_shadow_pass(state_, cmd, linear_sampler_.value());
-
-    // draw
-    {
-      init::begin_debug_utils_label(cmd, "draw");
-      state_
-          .transition(
-              *img_, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-              VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT)
-          .buffer_barrier(csm_->get_shadow_data_buffer(curr_frame_num()).buffer(),
-                          VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT)
-          .transition(csm_->get_shadow_img(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                      VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_MEMORY_READ_BIT,
-                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT)
-          .transition(*depth_img_, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                      VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT)
-          .flush_barriers();
-      VkClearValue depth_clear{};
-      // VkClearValue depth_clear{.depthStencil = {.depth = 1.f}};
-      VkRenderingAttachmentInfo color_attachment =
-          init::rendering_attachment_info(img_->view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-      auto depth_att = init::rendering_attachment_info(
-          depth_img_->view(), VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, &depth_clear);
-      auto rendering_info = init::rendering_info(img_->extent_2d(), &color_attachment, &depth_att);
-      vkCmdBeginRenderingKHR(cmd, &rendering_info);
-      set_viewport_and_scissor(cmd, img_->extent_2d());
-
-      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                        PipelineManager::get().get(draw_pipeline_)->pipeline);
-
-      // TODO: jank
-      auto draw_objects = [&](const Buffer& vertex_buffer, const Buffer& index_buffer,
-                              const Buffer& instance_buffer, const Buffer& material_data_buffer,
-                              const Buffer& object_data_buffer, const Buffer&, u64) {
-        BasicPushConstants pc{
-            scene_buffer_handle,
-            vertex_buffer.resource_info_->handle,
-            instance_buffer.resource_info_->handle,
-            object_data_buffer.resource_info_->handle,
-            material_data_buffer.resource_info_->handle,
-            linear_sampler_->resource_info.handle,
-            csm_->get_shadow_data_buffer(curr_frame_num()).resource_info_->handle,
-            csm_->get_shadow_sampler().resource_info.handle,
-            csm_->get_shadow_img().view().sampled_img_resource().handle,
-            ibl_->irradiance_cubemap_tex_->view().sampled_img_resource().handle,
-            ibl_->brdf_lut_->view().sampled_img_resource().handle,
-            ibl_->prefiltered_env_map_tex_->texture->view().sampled_img_resource().handle,
-            linear_sampler_clamp_to_edge_->resource_info.handle};
-        ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-
-        vkCmdBindIndexBuffer(cmd, index_buffer.buffer(), 0, VK_INDEX_TYPE_UINT32);
-        if (portable) {
-          vkCmdDrawIndexedIndirect(cmd, final_draw_cmd_buf_->buffer(), 0, draw_cnt_,
-                                   sizeof(VkDrawIndexedIndirectCommand));
-        } else {
-          vkCmdDrawIndexedIndirectCount(cmd, final_draw_cmd_buf_->buffer(), 0,
-                                        draw_cnt_buf_->buffer(), 0, max_draws,
-                                        sizeof(VkDrawIndexedIndirectCommand));
-        }
-      };
-
-      TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "Final Draw Pass");
-      if (draw_cnt_) {
-        draw_objects(static_vertex_buf_->buffer, static_index_buf_->buffer,
-                     static_instance_data_buf_->buffer, static_materials_buf_->buffer,
-                     static_object_data_buf_->buffer, static_draw_info_buf_->buffer, draw_cnt_);
-      }
-
-      // skybox
-      {
-        TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "Draw skybox");
-        PipelineManager::get().bind_graphics(cmd, skybox_pipeline_);
-        // TODO:  use an enum this is awful
-        u32 skybox_handle{};
-        if (render_prefilter_mip_skybox_) {
-          assert(ibl_->prefiltered_env_tex_views_.size() > (size_t)prefilter_mip_skybox_level_);
-          skybox_handle = ibl_->prefiltered_env_tex_views_[prefilter_mip_skybox_level_]
-                              ->sampled_img_resource()
-                              .handle;
-        } else {
-          skybox_handle = convoluted_skybox.get()
-                              ? ibl_->irradiance_cubemap_tex_->view().sampled_img_resource().handle
-                              : ibl_->env_cubemap_tex_->view().sampled_img_resource().handle;
-        }
-        struct {
-          u32 scene_buffer, tex_idx, sampler_idx;
-        } pc{scene_buffer_handle, skybox_handle, linear_sampler_->resource_info.handle};
-        ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-        vkCmdDraw(cmd, 36, 1, 0, 0);
-      }
-      vkCmdEndRenderingKHR(cmd);
-      // Add after vkCmdEndRenderingKHR(cmd):
-      state_
-          .transition(*depth_img_, VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                      VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
-                      VK_IMAGE_ASPECT_DEPTH_BIT)
-          .flush_barriers();
-      init::end_debug_utils_label(cmd);
-    }
-
-    vk2::Image* final_img = &img_.value();
-    if (debug_mode_ == DEBUG_MODE_NONE && postprocess_pass.get()) {
-      final_img = &post_processed_img_.value();
-      u32 postprocess_flags = 0;
-      if (gammacorrect_enabled.get()) {
-        postprocess_flags |= 0x2;
-      }
-      if (tonemap_enabled.get()) {
-        postprocess_flags |= 0x1;
-      }
-      state_
-          .transition(*img_, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT,
-                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-          .transition(*post_processed_img_, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                      VK_ACCESS_2_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL)
-          .flush_barriers();
-      PipelineManager::get().bind_compute(cmd, postprocess_pipeline_);
-      struct {
-        u32 in_tex_idx, out_tex_idx, flags;
-      } pc{img_->view().storage_img_resource().handle,
-           post_processed_img_->view().storage_img_resource().handle, postprocess_flags};
-      ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-      vkCmdDispatch(cmd, (post_processed_img_->extent_2d().width + 16) / 16,
-                    (post_processed_img_->extent_2d().height + 16) / 16, 1);
-    }
-
-    state_.transition(*final_img, VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_MEMORY_READ_BIT,
-                      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
-    auto& swapchain_img = swapchain_.imgs[curr_swapchain_img_idx()];
-    state_.transition(swapchain_img, VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
-
-    state_.flush_barriers();
-
-    VkExtent3D dims{glm::min(final_img->extent().width, swapchain_.dims.x),
-                    glm::min(final_img->extent().height, swapchain_.dims.y), 1};
-    blit_img(cmd, final_img->image(), swapchain_img, dims, VK_IMAGE_ASPECT_COLOR_BIT);
-
-    if (draw_imgui) {
-      state_.transition(
-          swapchain_img, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-          VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT,
-          VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-      state_.flush_barriers();
-      render_imgui(cmd, {swapchain_.dims.x, swapchain_.dims.y},
-                   swapchain_.img_views[curr_swapchain_img_idx()]);
-    }
-
-    state_.transition(swapchain_img, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR,
-                      VK_ACCESS_2_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-    state_.flush_barriers();
-    TracyVkCollect(curr_frame().tracy_vk_ctx, cmd);
-  }
   VK_CHECK(vkEndCommandBuffer(cmd));
 
   std::array<VkSemaphoreSubmitInfo, 10> wait_semaphores{};
@@ -652,22 +737,6 @@ void VkRender2::on_gui() {
 }
 
 VkRender2::~VkRender2() { vkDeviceWaitIdle(device_); }
-
-void CmdEncoder::dispatch(u32 work_groups_x, u32 work_groups_y, u32 work_groups_z) {
-  vkCmdDispatch(cmd_, work_groups_x, work_groups_y, work_groups_z);
-}
-
-void CmdEncoder::bind_compute_pipeline(VkPipeline pipeline) {
-  vkCmdBindPipeline(cmd_, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-}
-void CmdEncoder::bind_descriptor_set(VkPipelineBindPoint bind_point, VkPipelineLayout layout,
-                                     VkDescriptorSet* set, u32 idx) {
-  vkCmdBindDescriptorSets(cmd_, bind_point, layout, idx, 1, set, 0, nullptr);
-}
-
-void CmdEncoder::push_constants(VkPipelineLayout layout, u32 size, void* data) {
-  vkCmdPushConstants(cmd_, layout, VK_SHADER_STAGE_ALL, 0, size, data);
-}
 
 void VkRender2::on_resize() { create_attachment_imgs(); }
 
@@ -971,6 +1040,15 @@ void VkRender2::init_pipelines() {
       .rasterization = {.cull_mode = CullMode::None},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
   });
+  basic_draw_pipeline_ = PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
+      .vertex_path = "debug/basic2.vert",
+      .fragment_path = "debug/basic2.frag",
+      .layout = default_pipeline_layout_,
+      .rendering = {.color_formats = {to_vkformat(draw_img_format_)},
+                    .depth_format = to_vkformat(depth_img_format_)},
+      .rasterization = {.cull_mode = CullMode::None},
+      .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
+  });
   skybox_pipeline_ = PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
       .vertex_path = "skybox/skybox.vert",
       .fragment_path = "skybox/skybox.frag",
@@ -1133,10 +1211,6 @@ void VkRender2::immediate_submit(std::function<void(CmdEncoder& ctx)>&& function
   FencePool::get().free(imm_fence);
 }
 
-void CmdEncoder::push_constants(u32 size, void* data) {
-  push_constants(default_pipeline_layout_, size, data);
-}
-
 void VkRender2::generate_mipmaps(CmdEncoder& ctx, vk2::Image& tex) {
   VkCommandBuffer cmd = ctx.cmd();
   u32 array_layers = tex.create_info().array_layers;
@@ -1195,4 +1269,18 @@ void VkRender2::generate_mipmaps(CmdEncoder& ctx, vk2::Image& tex) {
 void VkRender2::draw_cube(VkCommandBuffer cmd) const {
   vkCmdDraw(cmd, 36, 1, cube_vertices_gpu_offset_ / sizeof(gfx::Vertex), 0);
 }
+
+void VkRender2::draw_simple_cube(CmdEncoder& cmd) {
+  PipelineManager::get().bind_graphics(cmd.cmd(), basic_draw_pipeline_);
+  float t = glfwGetTime();
+  mat4 view = glm::lookAt(vec3{glm::sin(t * .1), 2, glm::cos(t * .1)}, {0, 0, 0}, {0, 1, 0});
+  mat4 proj = glm::perspective(glm::radians(90.f), aspect_ratio(), 1000.f, .1f);
+  struct {
+    mat4 vp;
+    u32 vertex_buffer;
+  } pc{.vp = proj * view, .vertex_buffer = static_vertex_buf_->buffer.resource_info_->handle};
+  cmd.push_constants(sizeof(pc), &pc);
+  vkCmdDraw(cmd.cmd(), 36, 1, cube_vertices_gpu_offset_ / sizeof(gfx::Vertex), 0);
+}
+
 }  // namespace gfx

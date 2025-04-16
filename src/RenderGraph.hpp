@@ -11,7 +11,6 @@
 
 #include "FixedVector.hpp"
 #include "Types.hpp"
-#include "VkRender2.hpp"
 #include "vk2/Device.hpp"
 
 namespace gfx {
@@ -23,6 +22,7 @@ struct ResourceProxy {
 };
 using VoidResult = std::expected<void, const char*>;
 
+struct CmdEncoder;
 using ExecuteFn = std::function<void(CmdEncoder& cmd)>;
 
 enum class AttachmentType : uint8_t { Color, Depth, Stencil };
@@ -49,6 +49,8 @@ struct ResourceDimensions {
   uint32_t width{}, height{}, depth{}, layers{1}, levels{1}, samples{1};
   VkImageUsageFlags image_usage_flags{};
   // TODO: queues
+  [[nodiscard]] bool is_storage_image() const;
+  [[nodiscard]] bool is_image() const;
 };
 
 struct BufferUsage {
@@ -100,7 +102,7 @@ struct RenderTextureResource : public RenderResource {
 
 enum class ResourceUsage : uint8_t {
   None = 0,
-  ColorInput,
+  // ColorInput,
   ColorOutput,
   TextureInput,
   StorageImageInput,
@@ -113,8 +115,7 @@ using RenderResourceHandle = uint32_t;
 
 struct RenderGraphPass {
   enum class Type : uint8_t { Compute, Graphics };
-  explicit RenderGraphPass(std::string name, ExecuteFn fn, RenderGraph& graph, uint32_t idx,
-                           Type type);
+  explicit RenderGraphPass(std::string name, RenderGraph& graph, uint32_t idx, Type type);
   RenderResourceHandle add_color_output(const std::string& name, const AttachmentInfo& info,
                                         const std::string& input = "");
   RenderResourceHandle set_depth_stencil_input(const std::string& name);
@@ -122,6 +123,12 @@ struct RenderGraphPass {
   RenderResourceHandle add_storage_image_input(const std::string& name);
   RenderResourceHandle set_depth_stencil_output(const std::string& name,
                                                 const AttachmentInfo& info);
+  template <typename F>
+  void set_execute_fn(F&& fn)
+    requires std::invocable<F&, CmdEncoder&>
+  {
+    execute_ = std::forward<F>(fn);
+  }
 
   // TODO: assign queue to the pass
   [[nodiscard]] const std::string& get_name() const { return name_; }
@@ -142,6 +149,7 @@ struct RenderGraphPass {
   }
 
  private:
+  friend struct RenderGraph;
   std::vector<UsageAndHandle> resource_inputs_;
   std::vector<UsageAndHandle> resource_outputs_;
 
@@ -155,15 +163,14 @@ struct RenderGraphPass {
 };
 
 struct RenderGraphSwapchainInfo {
-  uint32_t width, height;
+  VkImage curr_img{};
+  uint32_t width{}, height{};
 };
-
-struct RenderPass {};
 
 struct RenderGraph {
   explicit RenderGraph(std::string name = "RenderGraph");
   void set_swapchain_info(const RenderGraphSwapchainInfo& info);
-  RenderGraphPass& add_pass(const std::string& name, ExecuteFn execute,
+  RenderGraphPass& add_pass(const std::string& name,
                             RenderGraphPass::Type type = RenderGraphPass::Type::Graphics);
   void set_backbuffer_img(const std::string& name) { backbuffer_img_ = name; }
 
@@ -176,10 +183,12 @@ struct RenderGraph {
   };
   std::vector<RenderGraphResourceHandle> phys_resource_handles_;
 
-  void execute();
+  void execute(CmdEncoder& cmd);
 
   uint32_t get_or_add_texture_resource(const std::string& name);
   RenderTextureResource* get_texture_resource(uint32_t idx);
+  vk2::Image2* get_texture(uint32_t idx);
+  vk2::Image2* get_texture(RenderTextureResource* resource);
 
  private:
   // TODO: integrate swapchain more closely?
@@ -201,8 +210,16 @@ struct RenderGraph {
   // std::vector<Barrier> pass_flush_barriers_;
   // std::vector<Barrier> pass_invalidate_barriers_;
 
+  struct PassSubmissionState {
+    void reset();
+    std::vector<VkImageMemoryBarrier2> image_barriers;
+    std::vector<VkBufferMemoryBarrier2> buffer_barriers;
+  };
+  std::vector<PassSubmissionState> pass_submission_state_;
+
   struct PhysicalPass {
     std::string name;
+    std::vector<u32> discard_resources;
     std::vector<Barrier> flush_barriers;
     std::vector<Barrier> invalidate_barriers;
     std::vector<uint32_t> physical_color_attachments;
@@ -210,16 +227,25 @@ struct RenderGraph {
     void reset();
   };
 
+  struct ResourceState {
+    VkAccessFlags2 invalidated_in_stage[64] = {};
+    VkAccessFlags2 to_flush_access{};
+    VkPipelineStageFlags2 pipeline_barrier_src_stages{};
+    VkImageLayout layout{VK_IMAGE_LAYOUT_UNDEFINED};
+  };
+
   std::vector<PhysicalPass> physical_passes_;
   void clear_physical_passes();
   PhysicalPass get_physical_pass();
   std::vector<PhysicalPass> physical_pass_unused_pool_;
+  bool needs_invalidate(const Barrier& barrier, const ResourceState& state);
 
   void prune_duplicates(std::vector<uint32_t>& data);
 
   // TODO: pool
   std::vector<std::unique_ptr<RenderResource>> resources_;
   std::vector<ResourceDimensions> physical_resource_dims_;
+  std::vector<ResourceState> resource_pipeline_states_;
   std::unordered_map<std::string, uint32_t> resource_to_idx_map_;
 
   // TODO: bitset
@@ -230,21 +256,13 @@ struct RenderGraph {
 
   std::unordered_set<uint32_t> dup_prune_set_;
 
-  std::vector<RefPtr<vk2::Image>> physical_image_attachments_;
+  std::vector<vk2::Holder<vk2::ImageHandle>> physical_image_attachments_;
 
   ResourceDimensions get_resource_dims(const RenderTextureResource& resource) const;
   void build_physical_resource_reqs();
+  void build_barrier_infos();
+  void physical_pass_setup_barriers(u32 pass_i);
+  void print_barrier(const VkImageMemoryBarrier2& barrier) const;
 };
 
-// https://github.com/martty/vuk/blob/master/src/RenderGraphImpl.hpp
-template <typename Iterator, typename Compare>
-void topological_sort(Iterator begin, Iterator end, Compare cmp) {
-  while (begin != end) {
-    auto const new_begin = std::partition(begin, end, [&](auto const& a) {
-      return std::none_of(begin, end, [&](auto const& b) { return cmp(b, a); });
-    });
-    assert(new_begin != begin && "not a partial ordering");
-    begin = new_begin;
-  }
-}
 }  // namespace gfx

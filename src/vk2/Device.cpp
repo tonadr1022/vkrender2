@@ -244,9 +244,14 @@ void Device::create_buffer(const VkBufferCreateInfo* info,
   VK_CHECK(vmaCreateBuffer(allocator_, info, alloc_info, &buffer, &allocation, &out_alloc_info));
 }
 
-ImageHandle Device::create_img(const ImageCreateInfo& create_info) {
+ImageHandle Device::create_image(const ImageCreateInfo& create_info) {
+  LINFO("creating image");
+  return img_pool_.alloc(create_info);
+}
+
+Image2::Image2(const ImageCreateInfo& create_info) {
+  this->create_info = create_info;
   VmaAllocationCreateFlags alloc_flags{};
-  VkImageUsageFlags usage{};
   auto attachment_usage = format_is_color(create_info.format)
                               ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
                               : VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
@@ -303,12 +308,10 @@ ImageHandle Device::create_img(const ImageCreateInfo& create_info) {
                          .tiling = VK_IMAGE_TILING_OPTIMAL,
                          .usage = usage,
                          .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
-  Image2 img{};
-  img.image = nullptr;
-  VK_CHECK(vmaCreateImage(vk2::get_device().allocator(), &info, &alloc_create_info, &img.image,
-                          &img.allocation, nullptr));
-  if (!img.image) {
-    return ImageHandle{};
+  VK_CHECK(vmaCreateImage(vk2::get_device().allocator(), &info, &alloc_create_info, &image,
+                          &allocation, nullptr));
+  if (!image) {
+    return;
   }
 
   VkImageAspectFlags aspect = VK_IMAGE_ASPECT_NONE;
@@ -322,59 +325,90 @@ ImageHandle Device::create_img(const ImageCreateInfo& create_info) {
     aspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
   }
 
-  ImageHandle handle = img_pool_.alloc(std::move(img));
-
-  Image2* image = img_pool_.get(handle);
-  image->create_info = create_info;
 #ifndef NDEBUG
   if (create_info.name.size()) {
     VkDebugUtilsObjectNameInfoEXT name_info = {
         .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
         .objectType = VK_OBJECT_TYPE_IMAGE,
-        .objectHandle = (u64)image->image,
+        .objectHandle = (u64)image,
         .pObjectName = create_info.name.c_str()};
     vkSetDebugUtilsObjectNameEXT(get_device().device(), &name_info);
   }
 #endif
   if (create_info.make_view) {
-    image->default_view =
-        create_img_view(handle, ImageViewCreateInfo{.format = create_info.format,
-                                                    .range =
-                                                        {
-                                                            .aspectMask = aspect,
-                                                            .baseMipLevel = 0,
-                                                            .levelCount = VK_REMAINING_MIP_LEVELS,
-                                                            .baseArrayLayer = 0,
-                                                            .layerCount = VK_REMAINING_ARRAY_LAYERS,
-                                                        },
-                                                    .components = {}});
+    default_view = vk2::get_device().create_image_view_holder(
+        *this, ImageViewCreateInfo{.format = create_info.format,
+                                   .range =
+                                       {
+                                           .aspectMask = aspect,
+                                           .baseMipLevel = 0,
+                                           .levelCount = VK_REMAINING_MIP_LEVELS,
+                                           .baseArrayLayer = 0,
+                                           .layerCount = VK_REMAINING_ARRAY_LAYERS,
+                                       },
+                                   .components = {}});
   }
-  return handle;
 }
 
-ImageViewHandle Device::create_img_view(ImageHandle texture, const ImageViewCreateInfo& info) {
-  Image2* tex = img_pool_.get(texture);
+ImageViewHandle Device::create_image_view(const Image2& image, const ImageViewCreateInfo& info) {
   VkImageViewType view_type =
-      info.view_type != VK_IMAGE_VIEW_TYPE_MAX_ENUM ? info.view_type : tex->create_info.view_type;
+      info.view_type != VK_IMAGE_VIEW_TYPE_MAX_ENUM ? info.view_type : image.create_info.view_type;
   auto view_info = VkImageViewCreateInfo{.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-                                         .image = tex->image,
+                                         .image = image.image,
                                          .viewType = view_type,
                                          .format = info.format,
                                          .components = info.components,
                                          .subresourceRange = info.range};
   ImageView2 view;
-  VK_CHECK(vkCreateImageView(vk2::get_device().device(), &view_info, nullptr, &view.view_));
+  VK_CHECK(vkCreateImageView(vk2::get_device().device(), &view_info, nullptr, &view.view));
 
   // can only be a storage image if color and general usage
-  if (format_is_color(info.format) && tex->create_info.usage == ImageUsage::General) {
-    view.storage_image_resource_info_ =
-        BindlessResourceAllocator::get().allocate_storage_img_descriptor(view.view_,
+  if ((format_is_color(info.format) && (image.create_info.override_usage_flags == 0 &&
+                                        image.create_info.usage == ImageUsage::General)) ||
+      ((image.create_info.override_usage_flags & VK_IMAGE_USAGE_STORAGE_BIT) != 0)) {
+    view.storage_image_resource_info =
+        BindlessResourceAllocator::get().allocate_storage_img_descriptor(view.view,
                                                                          VK_IMAGE_LAYOUT_GENERAL);
   }
-  view.sampled_image_resource_info_ =
-      BindlessResourceAllocator::get().allocate_sampled_img_descriptor(
-          view.view_, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
+  if (image.usage & VK_IMAGE_USAGE_SAMPLED_BIT) {
+    view.sampled_image_resource_info =
+        BindlessResourceAllocator::get().allocate_sampled_img_descriptor(
+            view.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
+  }
   return img_view_pool_.alloc(view);
+}
+
+void Device::destroy(ImageHandle handle) { img_pool_.destroy(handle); }
+
+void Device::destroy(ImageViewHandle handle) { img_view_pool_.destroy(handle); }
+
+Image2* Device::get_image(ImageHandle handle) { return img_pool_.get(handle); }
+ImageView2* Device::get_image_view(ImageViewHandle handle) { return img_view_pool_.get(handle); }
+
+Holder<ImageViewHandle> Device::create_image_view_holder(const Image2& image,
+                                                         const ImageViewCreateInfo& info) {
+  return Holder<ImageViewHandle>{this, create_image_view(image, info)};
+}
+Holder<ImageHandle> Device::create_image_holder(const ImageCreateInfo& info) {
+  return Holder<ImageHandle>{this, create_image(info)};
+}
+
+Image2::Image2(Image2&& other) noexcept
+    : create_info(std::move(other.create_info)),
+      image(std::exchange(other.image, nullptr)),
+      usage(other.usage),
+      default_view(std::exchange(other.default_view, Holder<ImageViewHandle>{})),
+      allocation(std::exchange(other.allocation, nullptr)) {}
+
+Image2& Image2::operator=(Image2&& other) noexcept {
+  if (&other != this) {
+    create_info = std::move(other.create_info);
+    image = std::exchange(other.image, nullptr);
+    usage = other.usage;
+    default_view = std::exchange(other.default_view, Holder<ImageViewHandle>{});
+    allocation = std::exchange(other.allocation, nullptr);
+  }
+  return *this;
 }
 
 }  // namespace gfx::vk2

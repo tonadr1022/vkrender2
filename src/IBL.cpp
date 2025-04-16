@@ -3,6 +3,7 @@
 #include <volk.h>
 #include <vulkan/vulkan_core.h>
 
+#include "CommandEncoder.hpp"
 #include "StateTracker.hpp"
 #include "VkRender2.hpp"
 #include "shaders/ibl/eq_to_cube_comp_common.h.glsl"
