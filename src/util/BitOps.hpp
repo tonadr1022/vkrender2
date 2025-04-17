@@ -6,6 +6,9 @@
 
 namespace util {
 
+inline u32 trailing_zeros(u64 value) { return std::countr_zero(value); }
+inline u32 trailing_zeros(u32 value) { return std::countr_zero(value); }
+
 template <typename F>
 void for_each_bit(u64 value, const F& func) {
   while (value) {

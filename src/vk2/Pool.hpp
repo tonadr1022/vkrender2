@@ -91,9 +91,24 @@ struct Pool {
 
 template <typename HandleT>
 struct Handle {
+  using HandleIdxT = uint32_t;
   Handle() = default;
+  explicit Handle(HandleIdxT idx) : idx_(idx) {}
+  friend bool operator==(const HandleT& a, const HandleT& b) { return a.idx_ == b.idx_; }
 
-  explicit Handle(uint32_t idx, uint32_t gen) : idx_(idx), gen_(gen) {}
+  [[nodiscard]] bool is_valid() const { return idx_ != null_handle; }
+  [[nodiscard]] HandleIdxT idx() const { return idx_; }
+  constexpr static HandleIdxT null_handle{UINT32_MAX};
+
+ private:
+  HandleIdxT idx_{null_handle};
+};
+
+template <typename HandleT>
+struct GenerationalHandle {
+  GenerationalHandle() = default;
+
+  explicit GenerationalHandle(uint32_t idx, uint32_t gen) : idx_(idx), gen_(gen) {}
 
   [[nodiscard]] bool is_valid() const { return gen_ != 0; }
 

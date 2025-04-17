@@ -6,6 +6,9 @@
 
 namespace gfx {
 
+enum class StoreOp : uint8_t { Store, Discard };
+
+struct RenderPassInfo {};
 struct CmdEncoder {
   explicit CmdEncoder(VkCommandBuffer cmd, VkPipelineLayout default_pipeline_layout)
       : default_pipeline_layout_(default_pipeline_layout), cmd_(cmd) {}

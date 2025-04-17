@@ -59,7 +59,7 @@ struct Holder {
 //   std::optional<BindlessResourceInfo> sampled_image_resource_info;
 // };
 
-using ImageViewHandle = Handle<class ::gfx::vk2::ImageView>;
+using ImageViewHandle = GenerationalHandle<class ::gfx::vk2::ImageView>;
 // struct Image2 {
 //   explicit Image2(const ImageCreateInfo& info);
 //   Image2() = default;
@@ -77,7 +77,7 @@ using ImageViewHandle = Handle<class ::gfx::vk2::ImageView>;
 //   VmaAllocation allocation{};
 // };
 
-using ImageHandle = Handle<class ::gfx::vk2::Image>;
+using ImageHandle = GenerationalHandle<class ::gfx::vk2::Image>;
 
 class Device {
  public:

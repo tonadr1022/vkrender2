@@ -85,6 +85,9 @@ struct RenderResource {
 
   std::string name;
   uint32_t physical_idx{unused};
+  AttachmentInfo info;
+  VkImageUsageFlags image_usage{};
+  VkBufferUsageFlags2 buffer_usage{};
 
  private:
   ResourceType type_;
@@ -92,12 +95,6 @@ struct RenderResource {
   // TODO: flat set
   util::fixed_vector<uint16_t, 20> written_passes_;
   util::fixed_vector<uint16_t, 20> read_passes_;
-};
-struct RenderTextureResource : public RenderResource {
-  explicit RenderTextureResource(uint32_t idx) : RenderResource(ResourceType::Texture, idx) {}
-  AttachmentInfo info;
-  VkImageUsageFlags image_usage{};
-  bool transient = false;
 };
 
 enum class ResourceUsage : uint8_t {
@@ -119,6 +116,7 @@ struct RenderGraphPass {
   RenderResourceHandle add_color_output(const std::string& name, const AttachmentInfo& info,
                                         const std::string& input = "");
   RenderResourceHandle set_depth_stencil_input(const std::string& name);
+  RenderResourceHandle add_buffer_input(const std::string& name);
   RenderResourceHandle add_texture_input(const std::string& name);
   RenderResourceHandle add_storage_image_input(const std::string& name);
   RenderResourceHandle set_depth_stencil_output(const std::string& name,
@@ -173,22 +171,16 @@ struct RenderGraph {
   RenderGraphPass& add_pass(const std::string& name,
                             RenderGraphPass::Type type = RenderGraphPass::Type::Graphics);
   void set_backbuffer_img(const std::string& name) { backbuffer_img_ = name; }
-
   VoidResult bake();
   VoidResult output_graphvis(const std::filesystem::path& path);
   void setup_attachments();
-  struct RenderGraphResourceHandle {
-    uint32_t idx;
-    enum class Type : uint8_t { Image, Buffer } type;
-  };
-  std::vector<RenderGraphResourceHandle> phys_resource_handles_;
-
   void execute(CmdEncoder& cmd);
 
+  uint32_t get_or_add_buffer_resource(const std::string& name);
   uint32_t get_or_add_texture_resource(const std::string& name);
-  RenderTextureResource* get_texture_resource(uint32_t idx);
+  RenderResource* get_texture_resource(uint32_t idx);
   vk2::Image* get_texture(uint32_t idx);
-  vk2::Image* get_texture(RenderTextureResource* resource);
+  vk2::Image* get_texture(RenderResource* resource);
 
  private:
   // TODO: integrate swapchain more closely?
@@ -243,7 +235,7 @@ struct RenderGraph {
   void prune_duplicates(std::vector<uint32_t>& data);
 
   // TODO: pool
-  std::vector<std::unique_ptr<RenderResource>> resources_;
+  std::vector<RenderResource> resources_;
   std::vector<ResourceDimensions> physical_resource_dims_;
   std::vector<ResourceState> resource_pipeline_states_;
   std::unordered_map<std::string, uint32_t> resource_to_idx_map_;
@@ -258,7 +250,7 @@ struct RenderGraph {
 
   std::vector<vk2::Holder<vk2::ImageHandle>> physical_image_attachments_;
 
-  ResourceDimensions get_resource_dims(const RenderTextureResource& resource) const;
+  ResourceDimensions get_resource_dims(const RenderResource& resource) const;
   void build_physical_resource_reqs();
   void build_barrier_infos();
   void physical_pass_setup_barriers(u32 pass_i);

@@ -661,8 +661,10 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
 
   std::array<VkSemaphoreSubmitInfo, 10> wait_semaphores{};
   u32 next_wait_sem_idx{0};
+  // TODO: back to VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT if imgui writes to it
   wait_semaphores[next_wait_sem_idx++] = vk2::init::semaphore_submit_info(
-      curr_frame().swapchain_semaphore, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT);
+      curr_frame().swapchain_semaphore,
+      VK_PIPELINE_STAGE_2_TRANSFER_BIT | VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT);
   auto signal_info = vk2::init::semaphore_submit_info(curr_frame().render_semaphore,
                                                       VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT);
   if (transfer_queue_manager_->submit_signaled_) {
