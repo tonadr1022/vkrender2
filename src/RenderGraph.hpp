@@ -15,17 +15,30 @@
 
 namespace gfx {
 
-// TODO: separate types
-struct ResourceProxy {
-  std::string name;
-  Access access;
-};
 using VoidResult = std::expected<void, const char*>;
 
 struct CmdEncoder;
 using ExecuteFn = std::function<void(CmdEncoder& cmd)>;
 
 enum class AttachmentType : uint8_t { Color, Depth, Stencil };
+
+enum Access : uint16_t {
+  None = 1ULL << 0,
+  ColorWrite = 1ULL << 1,
+  ColorRead = 1ULL << 2,
+  ColorRW = ColorRead | ColorWrite,
+  DepthStencilRead = 1ULL << 3,
+  DepthStencilWrite = 1ULL << 4,
+  DepthStencilRW = DepthStencilRead | DepthStencilWrite,
+  VertexRead = 1ULL << 5,
+  IndexRead = 1ULL << 6,
+  IndirectRead = 1ULL << 7,
+  ComputeRead = 1ULL << 8,
+  ComputeWrite = 1ULL << 9,
+  ComputeRW = ComputeRead | ComputeWrite,
+};
+
+using AccessFlags = uint32_t;
 
 enum class SizeClass : uint8_t { Absolute, SwapchainRelative, InputRelative };
 
@@ -39,8 +52,9 @@ struct AttachmentInfo {
 };
 
 struct BufferInfo {
+  vk2::BufferHandle handle;
   size_t size{};
-  BufferUsageFlags usage{};
+  BufferUsageFlags buffer_usage_flags{};
 };
 
 struct ResourceDimensions {
@@ -117,12 +131,13 @@ using RenderResourceHandle = uint32_t;
 struct RenderGraphPass {
   enum class Type : uint8_t { Compute, Graphics };
   explicit RenderGraphPass(std::string name, RenderGraph& graph, uint32_t idx, Type type);
+  void add_buffer(const std::string& name, vk2::BufferHandle buffer, Access access);
   RenderResourceHandle add_color_output(const std::string& name, const AttachmentInfo& info,
                                         const std::string& input = "");
   RenderResourceHandle set_depth_stencil_input(const std::string& name);
-  RenderResourceHandle add_buffer_input(const std::string& name, BufferInfo info);
-  RenderResourceHandle add_buffer_output(const std::string& name, BufferInfo info,
-                                         const std::string& input = "");
+  // RenderResourceHandle add_buffer_input(const std::string& name, BufferInfo info);
+  // RenderResourceHandle add_buffer_output(const std::string& name, BufferInfo info,
+  //                                        const std::string& input = "");
   RenderResourceHandle add_texture_input(const std::string& name);
   RenderResourceHandle add_storage_image_input(const std::string& name);
   RenderResourceHandle set_depth_stencil_output(const std::string& name,
@@ -145,17 +160,22 @@ struct RenderGraphPass {
     ResourceUsage usage{};
   };
 
-  [[nodiscard]] const std::vector<UsageAndHandle>& get_resource_inputs() const {
-    return resource_inputs_;
-  }
-  [[nodiscard]] const std::vector<UsageAndHandle>& get_resource_outputs() const {
-    return resource_outputs_;
-  }
+  // [[nodiscard]] const std::vector<UsageAndHandle>& get_resource_inputs() const {
+  //   return resource_inputs_;
+  // }
+  // [[nodiscard]] const std::vector<UsageAndHandle>& get_resource_outputs() const {
+  //   return resource_outputs_;
+  // }
+
+  [[nodiscard]] const std::vector<UsageAndHandle>& get_resources() const { return resources_; }
 
  private:
   friend struct RenderGraph;
-  std::vector<UsageAndHandle> resource_inputs_;
-  std::vector<UsageAndHandle> resource_outputs_;
+
+  std::vector<UsageAndHandle> resources_;
+  std::vector<u32> resource_read_indices_;
+  // std::vector<UsageAndHandle> resource_inputs_;
+  // std::vector<UsageAndHandle> resource_outputs_;
 
   const std::string name_;
   ExecuteFn execute_;
@@ -255,7 +275,7 @@ struct RenderGraph {
   std::unordered_set<uint32_t> dup_prune_set_;
 
   std::vector<vk2::Holder<vk2::ImageHandle>> physical_image_attachments_;
-  std::vector<vk2::Holder<vk2::BufferHandle>> physical_buffers_;
+  std::vector<vk2::BufferHandle> physical_buffers_;
 
   ResourceDimensions get_resource_dims(const RenderResource& resource) const;
   void build_physical_resource_reqs();

@@ -21,76 +21,120 @@
 #include "vk2/VkTypes.hpp"
 
 namespace gfx {
+namespace {
+bool is_compute_access(Access access) {
+  return access & Access::ComputeRead || access & Access::ComputeWrite;
+}
 
-RenderResourceHandle RenderGraphPass::add_buffer_output(const std::string& name, BufferInfo info,
-                                                        const std::string& input) {
+void get_vk_stage_access(Access access, VkAccessFlags2& out_access,
+                         VkPipelineStageFlags2& out_stages) {
+  out_stages = {};
+  out_access = {};
+  if (is_compute_access(access)) {
+    out_stages |= VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+  }
+  if (access & Access::ComputeRead) {
+    out_access |= VK_ACCESS_2_SHADER_READ_BIT;
+  }
+  if (access & Access::ComputeWrite) {
+    out_access |= VK_ACCESS_2_SHADER_WRITE_BIT;
+  }
+}
+constexpr auto read_flags = Access::ColorRead | Access::ComputeRead | Access::DepthStencilRead |
+                            Access::VertexRead | Access::IndexRead | Access::IndirectRead;
+bool is_read_access(Access access) { return access & read_flags; }
+
+}  // namespace
+
+void RenderGraphPass::add_buffer(const std::string& name, vk2::BufferHandle buffer, Access access) {
   uint32_t handle = graph_.get_or_add_buffer_resource(name);
   RenderResource& res = *graph_.get_resource(handle);
-
-  auto usage = info.usage;
-  assert(info.size > 0);
-  res.buffer_info = info;
   res.written_in_pass(idx_);
-  UsageAndHandle res_usage{.idx = handle, .usage = ResourceUsage::BufferOutput};
-  if (usage & BufferUsageStorageBufferBit) {
-    res_usage.access |= VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT;
+  auto* buf = vk2::get_device().get_buffer(buffer);
+  assert(buf);
+  if (!buf) {
+    return;
   }
-
-  resource_outputs_.emplace_back(res_usage);
-
-  if (!input.empty()) {
-    res.read_in_pass(idx_);
-    uint32_t read_handle = graph_.get_or_add_buffer_resource(input);
-    RenderResource& read_resource = *graph_.get_resource(read_handle);
-    if (read_resource.buffer_info.size != info.size) {
-      LERROR("uh oh read buffer size doesn't match write buffer size! TODO: handle this better");
-      exit(1);
-    }
-    read_resource.buffer_info = info;
-    UsageAndHandle res_usage{.idx = read_handle, .usage = ResourceUsage::BufferInput};
-    if (usage & BufferUsageStorageBufferBit) {
-      res_usage.access |= VK_ACCESS_2_SHADER_READ_BIT;
-    }
-    resource_inputs_.emplace_back(res_usage);
+  // TODO: buffer usage flags
+  res.buffer_info = {buffer, buf->size()};
+  // TODO: usage????????????????????????????????????????????????????
+  UsageAndHandle res_usage{.idx = handle};
+  get_vk_stage_access(access, res_usage.access, res_usage.stages);
+  if (is_read_access(access)) {
+    resource_read_indices_.emplace_back(resources_.size());
   }
-
-  return handle;
+  resources_.emplace_back(res_usage);
 }
 
-RenderResourceHandle RenderGraphPass::add_buffer_input(const std::string& name, BufferInfo info) {
-  uint32_t handle = graph_.get_or_add_buffer_resource(name);
-  RenderResource& res = *graph_.get_resource(handle);
-  auto usage = info.usage;
-  assert(info.size > 0);
-  res.buffer_info = info;
-  res.read_in_pass(idx_);
+// RenderResourceHandle RenderGraphPass::add_buffer_output(const std::string& name, BufferInfo info,
+//                                                         const std::string& input) {
+//   uint32_t handle = graph_.get_or_add_buffer_resource(name);
+//   RenderResource& res = *graph_.get_resource(handle);
+//   auto usage = info.usage;
+//   assert(info.size > 0);
+//   res.buffer_info = info;
+//   res.written_in_pass(idx_);
+//   UsageAndHandle res_usage{.idx = handle, .usage = ResourceUsage::BufferOutput};
+//   if (usage & BufferUsageStorageBufferBit) {
+//     res_usage.access |= VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT;
+//   }
+//
+//   resources_.emplace_back(res_usage);
+//
+//   if (!input.empty()) {
+//     res.read_in_pass(idx_);
+//     uint32_t read_handle = graph_.get_or_add_buffer_resource(input);
+//     RenderResource& read_resource = *graph_.get_resource(read_handle);
+//     if (read_resource.buffer_info.size != info.size) {
+//       LERROR("uh oh read buffer size doesn't match write buffer size! TODO: handle this better");
+//       exit(1);
+//     }
+//     read_resource.buffer_info = info;
+//     UsageAndHandle res_usage{.idx = read_handle, .usage = ResourceUsage::BufferInput};
+//     if (usage & BufferUsageStorageBufferBit) {
+//       res_usage.access |= VK_ACCESS_2_SHADER_READ_BIT;
+//     }
+//     resources_.emplace_back(res_usage);
+//   }
+//
+//   return handle;
+// }
 
-  // TODO: resourceusage
-  UsageAndHandle res_usage{.idx = handle, .usage = ResourceUsage::BufferInput};
-  if (usage & BufferUsageIndexBufferBit) {
-    res_usage.access |= VK_ACCESS_2_INDEX_READ_BIT;
-    res_usage.stages |= VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT;
-  }
-  if (usage & BufferUsageIndirectBufferBit) {
-    res_usage.access |= VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT;
-    res_usage.stages |= VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT;
-  }
-  if (usage & BufferUsageVertexBufferBit) {
-    res_usage.access |= VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT;
-    res_usage.stages |= VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT;
-  }
-  if (usage & BufferUsageUniformBufferBit) {
-    assert(0 && "unhandled");
-    LERROR("uniform buffer not handled right now");
-    exit(1);
-    res_usage.access |= VK_ACCESS_2_UNIFORM_READ_BIT;
-  }
-  if (usage & BufferUsageStorageBufferBit) {
-    res_usage.access |= VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
-  }
-  resource_inputs_.emplace_back(res_usage);
-  return handle;
-}
+// RenderResourceHandle RenderGraphPass::add_buffer_input(const std::string& name, BufferInfo info)
+// {
+//   uint32_t handle = graph_.get_or_add_buffer_resource(name);
+//   RenderResource& res = *graph_.get_resource(handle);
+//   auto usage = info.usage;
+//   assert(info.size > 0);
+//   res.buffer_info = info;
+//   res.read_in_pass(idx_);
+//
+//   // TODO: resourceusage
+//   UsageAndHandle res_usage{.idx = handle, .usage = ResourceUsage::BufferInput};
+//   if (usage & BufferUsageIndexBufferBit) {
+//     res_usage.access |= VK_ACCESS_2_INDEX_READ_BIT;
+//     res_usage.stages |= VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT;
+//   }
+//   if (usage & BufferUsageIndirectBufferBit) {
+//     res_usage.access |= VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT;
+//     res_usage.stages |= VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT;
+//   }
+//   if (usage & BufferUsageVertexBufferBit) {
+//     res_usage.access |= VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT;
+//     res_usage.stages |= VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT;
+//   }
+//   if (usage & BufferUsageUniformBufferBit) {
+//     assert(0 && "unhandled");
+//     LERROR("uniform buffer not handled right now");
+//     exit(1);
+//     res_usage.access |= VK_ACCESS_2_UNIFORM_READ_BIT;
+//   }
+//   if (usage & BufferUsageStorageBufferBit) {
+//     res_usage.access |= VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
+//   }
+//   resources_.emplace_back(res_usage);
+//   return handle;
+// }
 
 RenderResourceHandle RenderGraphPass::add_color_output(const std::string& name,
                                                        const AttachmentInfo& info,
@@ -106,8 +150,12 @@ RenderResourceHandle RenderGraphPass::add_color_output(const std::string& name,
   if (input.size()) {
     assert(0 && "unimplemented");
   }
-  UsageAndHandle usage{.idx = handle, .usage = ResourceUsage::ColorOutput};
-  resource_outputs_.emplace_back(usage);
+  UsageAndHandle usage{
+      .idx = handle,
+      .access = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+      .usage = ResourceUsage::ColorOutput,
+  };
+  resources_.emplace_back(usage);
   return handle;
 }
 
@@ -120,7 +168,9 @@ RenderResourceHandle RenderGraphPass::add_storage_image_input(const std::string&
   usage.access = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
   usage.stages = type_ == Type::Graphics ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT
                                          : VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
-  resource_inputs_.emplace_back(usage);
+
+  resource_read_indices_.emplace_back(resources_.size());
+  resources_.emplace_back(usage);
 
   return handle;
 }
@@ -134,7 +184,8 @@ RenderResourceHandle RenderGraphPass::add_texture_input(const std::string& name)
   usage.stages = type_ == Type::Graphics ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT
                                          : VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
 
-  resource_inputs_.emplace_back(usage);
+  resource_read_indices_.emplace_back(resources_.size());
+  resources_.emplace_back(usage);
 
   return handle;
 }
@@ -145,7 +196,8 @@ RenderResourceHandle RenderGraphPass::set_depth_stencil_input(const std::string&
   res->read_in_pass(idx_);
   res->image_usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
   UsageAndHandle usage{.idx = handle, .usage = ResourceUsage::DepthStencilInput};
-  resource_inputs_.emplace_back(usage);
+  resource_read_indices_.emplace_back(resources_.size());
+  resources_.emplace_back(usage);
   return handle;
 }
 
@@ -158,7 +210,7 @@ RenderResourceHandle RenderGraphPass::set_depth_stencil_output(const std::string
   res->info = info;
   assert(info.format != Format::Undefined);
   UsageAndHandle usage{.idx = handle, .usage = ResourceUsage::DepthStencilOutput};
-  resource_outputs_.emplace_back(usage);
+  resources_.emplace_back(usage);
   return handle;
 }
 
@@ -217,10 +269,10 @@ VoidResult RenderGraph::bake() {
     pass_dependencies_.resize(passes_.size());
     for (uint32_t pass_i = 0; pass_i < passes_.size(); pass_i++) {
       auto& pass = passes_[pass_i];
-      for (const auto& usage : pass.get_resource_outputs()) {
+      for (const auto& usage : pass.get_resources()) {
         if (resources_[usage.idx].name == backbuffer_img_) {
           // TODO: move this to validation phase
-          if (usage.usage != ResourceUsage::ColorOutput) {
+          if (!(usage.access & VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT)) {
             return std::unexpected("backbuffer output is not of usage ColorOutput");
           }
           pass_stack_.emplace_back(pass_i);
@@ -280,12 +332,12 @@ VoidResult RenderGraph::bake() {
       // TODO: don't allocate string here
       phys_pass.name = pass.get_name();
 
-      for (const auto& output : pass.get_resource_outputs()) {
+      for (const auto& output : pass.get_resources()) {
         if (is_texture_usage(output.usage)) {
           auto* tex = get_resource(output.idx);
-          if (output.usage == ResourceUsage::ColorOutput) {
+          if (output.access & VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT) {
             phys_pass.physical_color_attachments.emplace_back(tex->physical_idx);
-          } else if (output.usage == ResourceUsage::DepthStencilOutput) {
+          } else if (output.access & VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT) {
             phys_pass.physical_depth_stencil = tex->physical_idx;
           }
         }
@@ -518,12 +570,12 @@ void RenderGraph::execute(CmdEncoder& cmd) {
     for (u32 pass_i : swapchain_writer_passes_) {
       auto& pass = passes_[pass_i];
       bool pass_done = false;
-      for (const auto& output : pass.get_resource_outputs()) {
+      for (const auto& output : pass.get_resources()) {
         if (pass_done) {
           break;
         }
         // NOTE: assumes swapchain writers only have one color output
-        if (output.usage == ResourceUsage::ColorOutput) {
+        if (output.access & VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT) {
           auto* resource = get_resource(output.idx);
           auto* tex = get_texture(output.idx);
           assert(resource && tex && resource->physical_idx < resource_pipeline_states_.size());
@@ -598,7 +650,8 @@ VoidResult RenderGraph::traverse_dependencies_recursive(uint32_t pass_i, uint32_
   }
 
   auto& pass = passes_[pass_i];
-  for (const auto& resource_read : pass.get_resource_inputs()) {
+  for (const uint32_t& read_i : pass.resource_read_indices_) {
+    auto& resource_read = pass.resources_[read_i];
     std::span<const uint16_t> passes_writing_to_resource{};
     auto* input = get_resource(resource_read.idx);
     assert(input);
@@ -648,8 +701,6 @@ uint32_t RenderGraph::get_or_add_buffer_resource(const std::string& name) {
   auto it = resource_to_idx_map_.find(name);
   if (it != resource_to_idx_map_.end()) {
     uint32_t idx = it->second;
-    assert(resources_[idx].name == name);
-    assert(idx < resources_.size());
     if (resources_[idx].get_type() != ResourceType::Buffer) {
       LERROR("resource already exists and is not a buffer: {}", name);
       exit(1);
@@ -744,24 +795,8 @@ void RenderGraph::build_physical_resource_reqs() {
   // build physical resources
   for (uint32_t pass_i : pass_stack_) {
     auto& pass = passes_[pass_i];
-    for (const auto& resource_usage : pass.get_resource_inputs()) {
-      auto* res = get_resource(resource_usage.idx);
-      if (res->physical_idx == RenderResource::unused) {
-        assert(res);
-        res->physical_idx = physical_resource_dims_.size();
-        physical_resource_dims_.emplace_back(get_resource_dims(*res));
-      } else {
-        if (is_texture_usage(resource_usage.usage)) {
-          physical_resource_dims_[res->physical_idx].image_usage_flags |= res->image_usage;
-        } else {
-          assert(physical_resource_dims_[res->physical_idx].buffer_info.size ==
-                 res->buffer_info.size);
-          physical_resource_dims_[res->physical_idx].buffer_info.usage |= res->buffer_info.usage;
-        }
-      }
-    }
 
-    for (const auto& resource_usage : pass.get_resource_outputs()) {
+    for (const auto& resource_usage : pass.get_resources()) {
       auto* res = get_resource(resource_usage.idx);
       if (res->physical_idx == RenderResource::unused) {
         assert(res);
@@ -776,7 +811,8 @@ void RenderGraph::build_physical_resource_reqs() {
         } else {
           assert(physical_resource_dims_[res->physical_idx].buffer_info.size ==
                  res->buffer_info.size);
-          physical_resource_dims_[res->physical_idx].buffer_info.usage |= res->buffer_info.usage;
+          physical_resource_dims_[res->physical_idx].buffer_info.buffer_usage_flags |=
+              res->buffer_info.buffer_usage_flags;
         }
       }
     }
@@ -828,23 +864,23 @@ VoidResult RenderGraph::output_graphvis(const std::filesystem::path& path) {
     }
   };
   std::ranges::reverse(s);
-  for (auto p : s) {
-    auto& pass = passes_[p];
-    for (const auto& writer : pass_dependencies_[p]) {
-      for (const auto& output : passes_[writer].get_resource_outputs()) {
-        assert(output.idx < resources_.size());
-        auto& output_res = resources_[output.idx];
-        for (const auto& input : pass.get_resource_inputs()) {
-          if (output_res.name == resources_[input.idx].name) {
-            print_link(passes_[writer].get_name(), pass.get_name(), output_res.name);
-          }
-        }
-      }
-    }
-  }
+  // for (auto p : s) {
+  //   auto& pass = passes_[p];
+  //   for (const auto& writer : pass_dependencies_[p]) {
+  //     for (const auto& resource : passes_[writer].get_resources()) {
+  //       assert(resource.idx < resources_.size());
+  //       auto& output_res = resources_[resource.idx];
+  //       for (const auto& input : pass.get_resources()) {
+  //         if (output_res.name == resources_[input.idx].name) {
+  //           print_link(passes_[writer].get_name(), pass.get_name(), output_res.name);
+  //         }
+  //       }
+  //     }
+  //   }
+  // }
 
   for (uint32_t writer : swapchain_writer_passes_) {
-    for (const auto& output : passes_[writer].get_resource_outputs()) {
+    for (const auto& output : passes_[writer].get_resources()) {
       auto& res = resources_[output.idx];
       if (res.name == backbuffer_img_) {
         print_link(passes_[writer].get_name(), "swapchain", res.name);
@@ -869,7 +905,9 @@ void RenderGraph::setup_attachments() {
       auto* img = vk2::get_device().get_image(physical_image_attachments_[i].handle);
       bool is_reusable_img = false;
 
-      if (img) {
+      if (!img) {
+        physical_buffers_[i] = dims.buffer_info.handle;
+      } else {
         const auto& cinfo = img->create_info();
         bool valid_extent = false;
         if (dims.size_class == SizeClass::SwapchainRelative) {
@@ -905,15 +943,6 @@ void RenderGraph::setup_attachments() {
         physical_image_attachments_[i] = vk2::get_device().create_image_holder(info);
         img = vk2::get_device().get_image(physical_image_attachments_[i].handle);
       }
-    } else {
-      auto* buffer = vk2::get_device().get_buffer(physical_buffers_[i].handle);
-      bool is_reusable_buffer = buffer && (dims.buffer_info.size == buffer->size() &&
-                                           dims.buffer_info.usage == buffer->create_info().usage);
-      if (!is_reusable_buffer) {
-        physical_buffers_[i] = vk2::get_device().create_buffer_holder(
-            vk2::BufferCreateInfo{.size = dims.buffer_info.size, .usage = dims.buffer_info.usage});
-        assert(physical_buffers_[i].handle.get_idx() < 10);
-      }
     }
   }
 }
@@ -940,43 +969,38 @@ void RenderGraph::build_barrier_infos() {
       return get_access(phys_pass.flush_barriers, idx);
     };
 
-    auto process_resources = [&](const std::vector<RenderGraphPass::UsageAndHandle>& resources) {
-      for (const auto& resource : resources) {
-        auto& res = resources_[resource.idx];
-        if (resource.usage == ResourceUsage::BufferInput) {
-          auto& barrier = get_invalidate_access(res.physical_idx);
-          barrier.access |= resource.access;
-          barrier.stages |= resource.stages | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
-        } else if (resource.usage == ResourceUsage::BufferOutput) {
-          auto& barrier = get_flush_access(res.physical_idx);
-          // TODO: better stage
-          barrier.access |= resource.access;
-          barrier.stages |= resource.stages | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
-        } else if (resource.usage == ResourceUsage::DepthStencilOutput) {
-          auto& barrier = get_flush_access(res.physical_idx);
-          barrier.stages |= VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
-                            VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
-          barrier.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-          barrier.access |= VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        } else if (resource.usage == ResourceUsage::ColorOutput) {
-          auto& barrier = get_flush_access(res.physical_idx);
-          barrier.stages |= VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-          barrier.access |= VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
-          barrier.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        } else if (resource.usage == ResourceUsage::TextureInput ||
-                   resource.usage == ResourceUsage::StorageImageInput) {
-          auto& barrier = get_invalidate_access(res.physical_idx);
-          barrier.stages |= resource.stages;
-          barrier.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-          barrier.access = resource.access;
-        } else {
-          assert(0);
-        }
+    for (const auto& resource : pass.get_resources()) {
+      auto& res = resources_[resource.idx];
+      if (resource.usage == ResourceUsage::BufferInput) {
+        auto& barrier = get_invalidate_access(res.physical_idx);
+        barrier.access |= resource.access;
+        barrier.stages |= resource.stages | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+      } else if (resource.usage == ResourceUsage::BufferOutput) {
+        auto& barrier = get_flush_access(res.physical_idx);
+        // TODO: better stage
+        barrier.access |= resource.access;
+        barrier.stages |= resource.stages | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+      } else if (resource.usage == ResourceUsage::DepthStencilOutput) {
+        auto& barrier = get_flush_access(res.physical_idx);
+        barrier.stages |= VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                          VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        barrier.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        barrier.access |= VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+      } else if (resource.usage == ResourceUsage::ColorOutput) {
+        auto& barrier = get_flush_access(res.physical_idx);
+        barrier.stages |= VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        barrier.access |= VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+        barrier.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+      } else if (resource.usage == ResourceUsage::TextureInput ||
+                 resource.usage == ResourceUsage::StorageImageInput) {
+        auto& barrier = get_invalidate_access(res.physical_idx);
+        barrier.stages |= resource.stages;
+        barrier.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.access = resource.access;
+      } else {
+        assert(0);
       }
-    };
-
-    process_resources(pass.get_resource_inputs());
-    process_resources(pass.get_resource_outputs());
+    }
   }
 
   // for (const auto& pass_i : pass_stack_) {
@@ -1022,7 +1046,6 @@ void RenderGraph::physical_pass_setup_barriers(u32 pass_i) {
   for (const auto& barrier : pass.invalidate_barriers) {
     bool layout_change = false;
     bool need_pipeline_barrier = false;
-
     const auto& phys_dims = physical_resource_dims_[barrier.resource_idx];
     auto& resource_state = resource_pipeline_states_[barrier.resource_idx];
     if (phys_dims.is_image()) {
@@ -1065,8 +1088,7 @@ void RenderGraph::physical_pass_setup_barriers(u32 pass_i) {
     } else {
       VkBufferMemoryBarrier2 b{.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2};
       auto& resource_state = resource_pipeline_states_[barrier.resource_idx];
-      const auto* buffer =
-          vk2::get_device().get_buffer(physical_buffers_[barrier.resource_idx].handle);
+      const auto* buffer = vk2::get_device().get_buffer(physical_buffers_[barrier.resource_idx]);
       assert(buffer);
       if (!buffer) continue;
       b.buffer = buffer->buffer();

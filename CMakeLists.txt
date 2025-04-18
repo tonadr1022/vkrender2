@@ -19,7 +19,6 @@ src/util/IndexAllocator.cpp
 src/util/CVar.cpp
 src/util/FileWatcher.cpp
 src/RenderGraph.cpp
-src/RenderGraphUtil.cpp
 src/IBL.cpp
 src/techniques/CSM.cpp
 

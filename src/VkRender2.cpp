@@ -19,7 +19,6 @@
 #include "SceneLoader.hpp"
 #include "StateTracker.hpp"
 #include "Timer.hpp"
-#include "Types.hpp"
 #include "glm/packing.hpp"
 #include "imgui.h"
 #include "shaders/common.h.glsl"
@@ -302,7 +301,7 @@ VkRender2::VkRender2(const InitInfo& info)
     });
   }
   default_env_map_path_ = info.resource_dir / "hdr" / "newport_loft.hdr";
-  add_basic_forward_pass3(rg_);
+  add_basic_forward_pass(rg_);
   rg_.set_swapchain_info(
       RenderGraphSwapchainInfo{.width = swapchain_.dims.x, .height = swapchain_.dims.y});
   auto res = rg_.bake();
@@ -1298,7 +1297,8 @@ void VkRender2::add_basic_forward_pass2(RenderGraph& rg) {
   ZoneScoped;
 
   auto& clear_buff = rg.add_pass("clear_draw_cnt_buf");
-  clear_buff.add_buffer_output("draw_cnt_buf", {sizeof(u32), BufferUsageStorageBufferBit});
+  // clear_buff.add_buffer("");
+  // clear_buff.add_buffer_output("draw_cnt_buf", {sizeof(u32), BufferUsageStorageBufferBit});
   // clear_buff.add_buffer_output("final_draw_cmd_buf",
   //                              {this->draw_cnt_buf_->size(), BufferUsageStorageBufferBit});
   clear_buff.set_execute_fn([this](CmdEncoder& cmd) {
@@ -1330,10 +1330,10 @@ void VkRender2::add_basic_forward_pass2(RenderGraph& rg) {
   });
 
   auto& cull = rg.add_pass("cull");
-  cull.add_buffer_output("final_draw_cmd_buf",
-                         {this->draw_cnt_buf_->size(), BufferUsageStorageBufferBit});
-  cull.add_buffer_output("draw_cnt_buf", {sizeof(u32), BufferUsageStorageBufferBit},
-                         "draw_cnt_buf");
+  // cull.add_buffer_output("final_draw_cmd_buf",
+  // {this->draw_cnt_buf_->size(), BufferUsageStorageBufferBit});
+  // cull.add_buffer_output("draw_cnt_buf", {sizeof(u32), BufferUsageStorageBufferBit},
+  //                        "draw_cnt_buf");
   cull.set_execute_fn([this](CmdEncoder& cmd) {
     PipelineManager::get().bind_compute(cmd.cmd(), cull_objs_pipeline_);
     struct {
@@ -1351,10 +1351,10 @@ void VkRender2::add_basic_forward_pass2(RenderGraph& rg) {
 
   auto& forward = rg.add_pass("forward");
   auto final_out_handle = forward.add_color_output("final_out", {.format = draw_img_format_});
-  forward.add_buffer_input("final_draw_cmd_buf",
-                           {this->final_draw_cmd_buf_->size(), BufferUsageIndirectBufferBit});
-  forward.add_buffer_input("draw_cnt_buf",
-                           {this->draw_cnt_buf_->size(), BufferUsageIndirectBufferBit});
+  // forward.add_buffer_input("final_draw_cmd_buf",
+  //                          {this->final_draw_cmd_buf_->size(), BufferUsageIndirectBufferBit});
+  // forward.add_buffer_input("draw_cnt_buf",
+  //                          {this->draw_cnt_buf_->size(), BufferUsageIndirectBufferBit});
   forward.set_depth_stencil_output("depth", {.format = depth_img_format_});
   forward.set_execute_fn([&rg, final_out_handle, this](CmdEncoder& cmd) {
     auto* resource = rg.get_resource(final_out_handle);
@@ -1389,7 +1389,7 @@ void VkRender2::add_basic_forward_pass2(RenderGraph& rg) {
 void VkRender2::add_basic_forward_pass3(RenderGraph& rg) {
   ZoneScoped;
   auto& clear_buff = rg.add_pass("clear_draw_cnt_buf");
-  clear_buff.add_buffer_output("draw_cnt_buf", {sizeof(u32), BufferUsageStorageBufferBit});
+  // clear_buff.add_buffer("draw_cnt_buf", {sizeof(u32), BufferUsageStorageBufferBit});
   clear_buff.set_execute_fn([this](CmdEncoder& cmd) {
     cmd.barrier(VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                 VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT);
@@ -1419,10 +1419,10 @@ void VkRender2::add_basic_forward_pass3(RenderGraph& rg) {
   });
 
   auto& cull = rg.add_pass("cull");
-  cull.add_buffer_output("final_draw_cmd_buf",
-                         {this->draw_cnt_buf_->size(), BufferUsageStorageBufferBit});
-  cull.add_buffer_output("draw_cnt_buf", {sizeof(u32), BufferUsageStorageBufferBit},
-                         "draw_cnt_buf");
+  // cull.add_buffer_output("final_draw_cmd_buf",
+  //                        {this->draw_cnt_buf_->size(), BufferUsageStorageBufferBit});
+  // cull.add_buffer_output("draw_cnt_buf", {sizeof(u32), BufferUsageStorageBufferBit},
+  //                        "draw_cnt_buf");
   cull.set_execute_fn([this](CmdEncoder& cmd) {
     PipelineManager::get().bind_compute(cmd.cmd(), cull_objs_pipeline_);
     struct {
@@ -1440,10 +1440,10 @@ void VkRender2::add_basic_forward_pass3(RenderGraph& rg) {
 
   auto& forward = rg.add_pass("forward");
   auto final_out_handle = forward.add_color_output("final_out", {.format = draw_img_format_});
-  forward.add_buffer_input("final_draw_cmd_buf",
-                           {this->final_draw_cmd_buf_->size(), BufferUsageIndirectBufferBit});
-  forward.add_buffer_input("draw_cnt_buf",
-                           {this->draw_cnt_buf_->size(), BufferUsageIndirectBufferBit});
+  // forward.add_buffer_input("final_draw_cmd_buf",
+  //                          {this->final_draw_cmd_buf_->size(), BufferUsageIndirectBufferBit});
+  // forward.add_buffer_input("draw_cnt_buf",
+  //                          {this->draw_cnt_buf_->size(), BufferUsageIndirectBufferBit});
   forward.set_depth_stencil_output("depth", {.format = depth_img_format_});
   forward.set_execute_fn([&rg, final_out_handle, this](CmdEncoder& cmd) {
     auto* resource = rg.get_resource(final_out_handle);

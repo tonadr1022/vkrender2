@@ -6,8 +6,6 @@
 
 namespace gfx {
 
-enum class Access : uint8_t { ColorRead, ColorWrite, DepthStencilRead, DepthStencilWrite };
-
 enum class Format {
   Undefined = VK_FORMAT_UNDEFINED,
   R4G4UnormPack8 = VK_FORMAT_R4G4_UNORM_PACK8,
