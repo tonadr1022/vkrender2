@@ -284,7 +284,7 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info)
 
 BaseRenderer::~BaseRenderer() {
   vkDeviceWaitIdle(device_);
-  // delete all
+  vk2::get_device().destroy_resources();
   vk2::BindlessResourceAllocator::get().set_frame_num(curr_frame_num() + 100);
   vk2::BindlessResourceAllocator::get().flush_deletions();
   vk2::BindlessResourceAllocator::shutdown();

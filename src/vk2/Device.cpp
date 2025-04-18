@@ -117,12 +117,6 @@ void Device::init_impl(const CreateInfo& info) {
   vkb_device_ = std::move(dev_ret.value());
   device_ = vkb_device_.device;
 
-  main_del_queue_.push([this]() { vkb::destroy_device(vkb_device_); });
-  main_del_queue_.push([this]() {
-    img_pool_.clear();
-    img_view_pool_.clear();
-  });
-
   {
     ZoneScopedN("init volk device");
     volkLoadDevice(device());
@@ -156,6 +150,7 @@ void Device::init_impl(const CreateInfo& info) {
       .pVulkanFunctions = &vma_vulkan_func,
       .instance = info.instance,
   };
+  main_del_queue_.push([this]() { vkb::destroy_device(vkb_device_); });
   {
     ZoneScopedN("init vma");
     VK_CHECK(vmaCreateAllocator(&allocator_info, &allocator_));
@@ -248,23 +243,33 @@ void Device::create_buffer(const VkBufferCreateInfo* info,
 }
 
 ImageHandle Device::create_image(const ImageCreateInfo& create_info) {
-  LINFO("creating image");
   return img_pool_.alloc(create_info);
 }
 
 void Device::destroy(ImageHandle handle) { img_pool_.destroy(handle); }
-
 void Device::destroy(ImageViewHandle handle) { img_view_pool_.destroy(handle); }
+void Device::destroy(BufferHandle handle) { buffer_pool_.destroy(handle); }
 
 Image* Device::get_image(ImageHandle handle) { return img_pool_.get(handle); }
 ImageView* Device::get_image_view(ImageViewHandle handle) { return img_view_pool_.get(handle); }
+Buffer* Device::get_buffer(BufferHandle handle) { return buffer_pool_.get(handle); }
 
-// Holder<ImageViewHandle> Device::create_image_view_holder(const Image& image,
-//                                                          const ImageViewCreateInfo& info) {
-//   return Holder<ImageViewHandle>{this, create_image_view(image, info)};
-// }
 Holder<ImageHandle> Device::create_image_holder(const ImageCreateInfo& info) {
   return Holder<ImageHandle>{this, create_image(info)};
+}
+
+void Device::destroy_resources() {
+  img_pool_.clear();
+  img_view_pool_.clear();
+  buffer_pool_.clear();
+}
+
+BufferHandle Device::create_buffer(const BufferCreateInfo& info) {
+  return buffer_pool_.alloc(info);
+}
+
+Holder<BufferHandle> Device::create_buffer_holder(const BufferCreateInfo& info) {
+  return Holder<BufferHandle>{this, buffer_pool_.alloc(info)};
 }
 
 }  // namespace gfx::vk2

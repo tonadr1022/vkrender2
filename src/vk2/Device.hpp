@@ -8,6 +8,7 @@
 
 #include "Common.hpp"
 #include "VkBootstrap.h"
+#include "vk2/Buffer.hpp"
 #include "vk2/DeletionQueue.hpp"
 #include "vk2/Pool.hpp"
 #include "vk2/Texture.hpp"
@@ -78,6 +79,7 @@ using ImageViewHandle = GenerationalHandle<class ::gfx::vk2::ImageView>;
 // };
 
 using ImageHandle = GenerationalHandle<class ::gfx::vk2::Image>;
+using BufferHandle = GenerationalHandle<class ::gfx::vk2::Buffer>;
 
 class Device {
  public:
@@ -94,8 +96,6 @@ class Device {
   [[nodiscard]] const vkb::Device& vkb_device() const { return vkb_device_; }
 
   VkFormat get_swapchain_format();
-  void destroy(ImageHandle handle);
-  void destroy(ImageViewHandle handle);
 
   [[nodiscard]] VkCommandPool create_command_pool(
       u32 queue_idx,
@@ -110,20 +110,28 @@ class Device {
   void create_buffer(const VkBufferCreateInfo* info, const VmaAllocationCreateInfo* alloc_info,
                      VkBuffer& buffer, VmaAllocation& allocation,
                      VmaAllocationInfo& out_alloc_info);
+  void destroy_resources();
 
   [[nodiscard]] VmaAllocator allocator() const { return allocator_; }
 
   Pool<ImageHandle, Image> img_pool_;
   Pool<ImageViewHandle, ImageView> img_view_pool_;
+  Pool<BufferHandle, Buffer> buffer_pool_;
 
+  BufferHandle create_buffer(const BufferCreateInfo& info);
+  Holder<BufferHandle> create_buffer_holder(const BufferCreateInfo& info);
   ImageViewHandle create_image_view(const Image& image, const ImageViewCreateInfo& info);
   ImageHandle create_image(const ImageCreateInfo& info);
   Holder<ImageHandle> create_image_holder(const ImageCreateInfo& info);
   Holder<ImageViewHandle> create_image_view_holder(const Image& image,
                                                    const ImageViewCreateInfo& info);
+  void destroy(ImageHandle handle);
+  void destroy(ImageViewHandle handle);
+  void destroy(BufferHandle handle);
 
   Image* get_image(ImageHandle handle);
   ImageView* get_image_view(ImageViewHandle handle);
+  Buffer* get_buffer(BufferHandle handle);
 
  private:
   Image make_img_impl(const ImageCreateInfo& info);

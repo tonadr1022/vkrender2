@@ -46,6 +46,7 @@ struct BufferInfo {
 struct ResourceDimensions {
   Format format{};
   BufferInfo buffer_info;
+  SizeClass size_class{SizeClass::SwapchainRelative};
   uint32_t width{}, height{}, depth{}, layers{1}, levels{1}, samples{1};
   VkImageUsageFlags image_usage_flags{};
   // TODO: queues
@@ -87,7 +88,7 @@ struct RenderResource {
   uint32_t physical_idx{unused};
   AttachmentInfo info;
   VkImageUsageFlags image_usage{};
-  VkBufferUsageFlags2 buffer_usage{};
+  BufferInfo buffer_info{};
 
  private:
   ResourceType type_;
@@ -104,8 +105,11 @@ enum class ResourceUsage : uint8_t {
   TextureInput,
   StorageImageInput,
   DepthStencilOutput,
-  DepthStencilInput
+  DepthStencilInput,
+  BufferInput,
+  BufferOutput,
 };
+
 bool is_texture_usage(ResourceUsage usage);
 
 using RenderResourceHandle = uint32_t;
@@ -116,7 +120,9 @@ struct RenderGraphPass {
   RenderResourceHandle add_color_output(const std::string& name, const AttachmentInfo& info,
                                         const std::string& input = "");
   RenderResourceHandle set_depth_stencil_input(const std::string& name);
-  RenderResourceHandle add_buffer_input(const std::string& name);
+  RenderResourceHandle add_buffer_input(const std::string& name, BufferInfo info);
+  RenderResourceHandle add_buffer_output(const std::string& name, BufferInfo info,
+                                         const std::string& input = "");
   RenderResourceHandle add_texture_input(const std::string& name);
   RenderResourceHandle add_storage_image_input(const std::string& name);
   RenderResourceHandle set_depth_stencil_output(const std::string& name,
@@ -178,7 +184,7 @@ struct RenderGraph {
 
   uint32_t get_or_add_buffer_resource(const std::string& name);
   uint32_t get_or_add_texture_resource(const std::string& name);
-  RenderResource* get_texture_resource(uint32_t idx);
+  RenderResource* get_resource(uint32_t idx);
   vk2::Image* get_texture(uint32_t idx);
   vk2::Image* get_texture(RenderResource* resource);
 
@@ -249,12 +255,15 @@ struct RenderGraph {
   std::unordered_set<uint32_t> dup_prune_set_;
 
   std::vector<vk2::Holder<vk2::ImageHandle>> physical_image_attachments_;
+  std::vector<vk2::Holder<vk2::BufferHandle>> physical_buffers_;
 
   ResourceDimensions get_resource_dims(const RenderResource& resource) const;
   void build_physical_resource_reqs();
   void build_barrier_infos();
   void physical_pass_setup_barriers(u32 pass_i);
   void print_barrier(const VkImageMemoryBarrier2& barrier) const;
+  void print_barrier(const VkBufferMemoryBarrier2& barrier) const;
+  VoidResult validate();
 };
 
 }  // namespace gfx

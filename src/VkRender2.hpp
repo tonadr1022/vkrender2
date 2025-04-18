@@ -9,6 +9,7 @@
 
 #include "AABB.hpp"
 #include "BaseRenderer.hpp"
+#include "CommandEncoder.hpp"
 #include "IBL.hpp"
 #include "RenderGraph.hpp"
 #include "Scene.hpp"
@@ -247,6 +248,7 @@ struct VkRender2 final : public BaseRenderer {
   vk2::PipelineHandle skybox_pipeline_;
   vk2::PipelineHandle postprocess_pipeline_;
   vk2::PipelineHandle basic_draw_pipeline_;
+  vk2::PipelineHandle basic_draw3_pipeline_;
   Format draw_img_format_{Format::R32G32B32A32Sfloat};
   Format depth_img_format_{Format::D32Sfloat};
   VkPipelineLayout default_pipeline_layout_{};
@@ -276,7 +278,9 @@ struct VkRender2 final : public BaseRenderer {
   // std::optional<vk2::Buffer> cube_vertex_buf_;
   // std::optional<vk2::Buffer> cube_index_buf_;
 
-  void draw_simple_cube(CmdEncoder& cmd);
+  void add_basic_forward_pass(RenderGraph& rg);
+  void add_basic_forward_pass2(RenderGraph& rg);
+  void add_basic_forward_pass3(RenderGraph& rg);
 
  public:
   std::optional<vk2::Image> load_hdr_img(CmdEncoder& ctx, const std::filesystem::path& path,

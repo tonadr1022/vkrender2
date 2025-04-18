@@ -64,6 +64,7 @@ struct Pool {
   }
 
   ObjectT* get(HandleT handle) {
+    if (!handle.gen_) return nullptr;
     if (handle.idx_ >= entries_.size()) {
       return nullptr;
     }
@@ -112,6 +113,8 @@ struct GenerationalHandle {
 
   [[nodiscard]] bool is_valid() const { return gen_ != 0; }
 
+  [[nodiscard]] uint32_t get_gen() const { return gen_; }
+  [[nodiscard]] uint32_t get_idx() const { return idx_; }
   friend bool operator==(const HandleT& a, const HandleT& b) {
     return a.idx_ == b.idx_ && a.gen_ == b.gen_;
   }

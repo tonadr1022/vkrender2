@@ -20,6 +20,7 @@ struct BufferCreateInfo {
 
 class Buffer {
  public:
+  Buffer() = default;
   Buffer(const Buffer &) = delete;
   Buffer &operator=(const Buffer &) = delete;
   Buffer(Buffer &&) noexcept;
@@ -32,6 +33,7 @@ class Buffer {
   [[nodiscard]] VkDeviceAddress device_addr() const { return buffer_address_; }
   [[nodiscard]] u64 size() const { return cinfo_.size; }
   [[nodiscard]] const std::string &name() const { return name_; }
+  [[nodiscard]] const BufferCreateInfo &create_info() const { return cinfo_; }
 
  private:
   BufferCreateInfo cinfo_;
