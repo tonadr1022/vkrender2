@@ -34,7 +34,7 @@ cmake --build build/Release
 ## Dependencies
 
 - [GLM](https://github.com/g-truc/glm)
-- [SDL2](https://github.com/libsdl-org/SDL)
+- [GLFW](https://github.com/glfw/glfw)
 - [ImGui](https://github.com/ocornut/imgui)
 - [Vulkan](https://www.lunarg.com/vulkan-sdk/)
 - [Volk](https://github.com/zeux/volk.git)

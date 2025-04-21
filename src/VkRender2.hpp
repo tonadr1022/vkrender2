@@ -120,6 +120,8 @@ struct VkRender2 final : public BaseRenderer {
  private:
   struct FrameData {
     std::optional<vk2::Buffer> scene_uniform_buf;
+    vk2::Holder<vk2::BufferHandle> draw_cnt_buf;
+    vk2::Holder<vk2::BufferHandle> final_draw_cmd_buf;
   };
   std::vector<FrameData> per_frame_data_2_;
   FrameData& curr_frame_2() { return per_frame_data_2_[curr_frame_num() % 2]; }
@@ -220,8 +222,6 @@ struct VkRender2 final : public BaseRenderer {
   std::vector<vk2::Image> static_textures_;
   // std::optional<vk2::Buffer> final_draw_cmd_buf_;
   // std::optional<vk2::Buffer> draw_cnt_buf_;
-  vk2::Holder<vk2::BufferHandle> draw_cnt_buf_;
-  vk2::Holder<vk2::BufferHandle> final_draw_cmd_buf_;
 
   StateTracker state_;
   StateTracker transfer_q_state_;
@@ -275,11 +275,8 @@ struct VkRender2 final : public BaseRenderer {
   void generate_mipmaps(StateTracker& state, VkCommandBuffer cmd, vk2::Image& tex);
   u64 cube_vertices_gpu_offset_{};
   // u64 cube_indices_gpu_offset_{};
-  // std::optional<vk2::Buffer> cube_vertex_buf_;
-  // std::optional<vk2::Buffer> cube_index_buf_;
 
   void add_basic_forward_pass(RenderGraph& rg);
-  void add_basic_forward_pass2(RenderGraph& rg);
   void add_basic_forward_pass3(RenderGraph& rg);
 
  public:
@@ -288,5 +285,17 @@ struct VkRender2 final : public BaseRenderer {
   void draw_cube(VkCommandBuffer cmd) const;
   void generate_mipmaps(CmdEncoder& ctx, vk2::Image& tex);
   [[nodiscard]] const DefaultData& get_default_data() const { return default_data_; }
+};
+
+template <typename T>
+struct DoubleBufferedResource {
+  DoubleBufferedResource(T a, T b) : data_{a, b} {}
+
+  const T& current() {
+    data_[VkRender2::get().curr_frame_num() % VkRender2::get().get_num_frames_in_flight()];
+  }
+
+ private:
+  std::array<T, 3> data_;
 };
 }  // namespace gfx

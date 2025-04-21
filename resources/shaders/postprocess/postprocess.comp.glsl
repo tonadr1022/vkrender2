@@ -15,6 +15,7 @@ layout(push_constant) uniform PC {
 
 #define TONEMAP_BIT 0x1
 #define GAMMA_CORRECT_BIT 0x2
+#define DISABLED_BIT 0x4
 
 VK2_DECLARE_STORAGE_IMAGES(image2D);
 
@@ -27,10 +28,11 @@ void main() {
         return;
     }
     vec4 color = imageLoad(vk2_get_storage_img(image2D, in_tex_idx), ivec2(gl_GlobalInvocationID.xy));
-    if ((flags & TONEMAP_BIT) != 0) {
+    bool disabled = (flags & DISABLED_BIT) != 0;
+    if (!disabled && (flags & TONEMAP_BIT) != 0) {
         color.rgb = tonemap(color.rgb);
     }
-    if ((flags & GAMMA_CORRECT_BIT) != 0) {
+    if (!disabled && (flags & GAMMA_CORRECT_BIT) != 0) {
         color.rgb = gamma_correct(color.rgb);
     }
     imageStore(vk2_get_storage_img(image2D, out_tex_idx), ivec2(gl_GlobalInvocationID.xy), vec4(color.rgb, color.a));

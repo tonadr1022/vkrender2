@@ -115,6 +115,9 @@ class BaseRenderer {
 
   bool draw_imgui{true};
 
+  [[nodiscard]] u64 get_num_frames_in_flight() const { return frames_in_flight_; }
+  [[nodiscard]] u64 curr_frame_num() const { return curr_frame_num_; }
+
  protected:
   struct BaseInitInfo {
     u32 frames_in_flight{2};
@@ -146,7 +149,6 @@ class BaseRenderer {
   void submit_single_command_buf_to_graphics(VkCommandBuffer cmd);
 
   [[nodiscard]] u32 curr_swapchain_img_idx() const { return curr_swapchain_img_idx_; }
-  [[nodiscard]] u64 curr_frame_num() const { return curr_frame_num_; }
 
   [[nodiscard]] uvec2 window_dims() const;
   [[nodiscard]] float aspect_ratio() const;

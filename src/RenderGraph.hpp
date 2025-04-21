@@ -56,7 +56,7 @@ struct AttachmentInfo {
 struct BufferInfo {
   vk2::BufferHandle handle;
   size_t size{};
-  BufferUsageFlags buffer_usage_flags{};
+  u64 proxy_hash{};
 };
 
 struct ResourceDimensions {
@@ -133,16 +133,11 @@ using RenderResourceHandle = uint32_t;
 struct RenderGraphPass {
   enum class Type : uint8_t { Compute, Graphics };
   explicit RenderGraphPass(std::string name, RenderGraph& graph, uint32_t idx, Type type);
-  void add_buffer(const std::string& name, vk2::BufferHandle buffer, Access access);
-  void add_buffer(const std::string& name, const vk2::Holder<vk2::BufferHandle>& buffer,
-                  Access access);
-  RenderResourceHandle add_texture(const std::string& name, const AttachmentInfo& info,
-                                   Access access);
-  // RenderResourceHandle add_buffer_input(const std::string& name, BufferInfo info);
-  // RenderResourceHandle add_buffer_output(const std::string& name, BufferInfo info,
-  //                                        const std::string& input = "");
-  RenderResourceHandle add_texture_input(const std::string& name);
-  RenderResourceHandle add_storage_image_input(const std::string& name);
+  void add(const std::string& name, vk2::BufferHandle buffer, Access access);
+  void add(const std::string& name, const vk2::Holder<vk2::BufferHandle>& buffer, Access access);
+  void add_proxy(const std::string& name, Access access);
+  RenderResourceHandle add(const std::string& name, const AttachmentInfo& info, Access access);
+
   template <typename F>
   void set_execute_fn(F&& fn)
     requires std::invocable<F&, CmdEncoder&>
@@ -167,12 +162,13 @@ struct RenderGraphPass {
   // [[nodiscard]] const std::vector<UsageAndHandle>& get_resource_outputs() const {
   //   return resource_outputs_;
   // }
-
+  [[nodiscard]] const UsageAndHandle* get_swapchain_write_usage() const;
   [[nodiscard]] const std::vector<UsageAndHandle>& get_resources() const { return resources_; }
 
  private:
   friend struct RenderGraph;
 
+  u32 swapchain_write_idx_{RenderResource::unused};
   std::vector<UsageAndHandle> resources_;
   std::vector<u32> resource_read_indices_;
   // std::vector<UsageAndHandle> resource_inputs_;
@@ -198,6 +194,8 @@ struct RenderGraph {
   RenderGraphPass& add_pass(const std::string& name,
                             RenderGraphPass::Type type = RenderGraphPass::Type::Graphics);
   void set_backbuffer_img(const std::string& name) { backbuffer_img_ = name; }
+  const std::string& get_backbuffer_img_name() const { return backbuffer_img_; }
+  void reset();
   VoidResult bake();
   VoidResult output_graphvis(const std::filesystem::path& path);
   void setup_attachments();
@@ -208,6 +206,7 @@ struct RenderGraph {
   RenderResource* get_resource(uint32_t idx);
   vk2::Image* get_texture(uint32_t idx);
   vk2::Image* get_texture(RenderResource* resource);
+  void set_resource(const std::string& name, vk2::BufferHandle handle);
 
  private:
   // TODO: integrate swapchain more closely?
@@ -285,6 +284,18 @@ struct RenderGraph {
   void print_barrier(const VkImageMemoryBarrier2& barrier) const;
   void print_barrier(const VkBufferMemoryBarrier2& barrier) const;
   VoidResult validate();
+
+  std::unordered_map<u64, vk2::BufferHandle> buffer_bindings_;
+
+  struct ResourceState2 {
+    VkImageLayout initial_layout{};
+    VkImageLayout final_layout{};
+    VkAccessFlags2 invalidated_accesses{};
+    VkAccessFlags2 flushed_accesses{};
+    VkPipelineStageFlags2 invalidated_stages{};
+    VkPipelineStageFlags2 flushed_stages{};
+  };
+  std::vector<ResourceState2> resource_states_;
 };
 
 }  // namespace gfx
