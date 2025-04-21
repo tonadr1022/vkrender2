@@ -129,9 +129,10 @@ class Device {
   void destroy(ImageViewHandle handle);
   void destroy(BufferHandle handle);
 
-  Image* get_image(ImageHandle handle);
-  ImageView* get_image_view(ImageViewHandle handle);
-  Buffer* get_buffer(BufferHandle handle);
+  Image* get_image(ImageHandle handle) { return img_pool_.get(handle); }
+  ImageView* get_image_view(ImageViewHandle handle) { return img_view_pool_.get(handle); }
+  Buffer* get_buffer(BufferHandle handle) { return buffer_pool_.get(handle); }
+  Buffer* get_buffer(const Holder<BufferHandle>& handle) { return get_buffer(handle.handle); }
 
  private:
   Image make_img_impl(const ImageCreateInfo& info);

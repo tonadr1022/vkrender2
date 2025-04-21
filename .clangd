@@ -1,5 +1,5 @@
 CompileFlags:
-  CompilationDatabase: build/Debug
+  CompilationDatabase: build/Release
 Diagnostics:
   Disabled:
     - bugprone-pointer-arithmetic-on-polymorphic-object

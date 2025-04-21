@@ -250,10 +250,6 @@ void Device::destroy(ImageHandle handle) { img_pool_.destroy(handle); }
 void Device::destroy(ImageViewHandle handle) { img_view_pool_.destroy(handle); }
 void Device::destroy(BufferHandle handle) { buffer_pool_.destroy(handle); }
 
-Image* Device::get_image(ImageHandle handle) { return img_pool_.get(handle); }
-ImageView* Device::get_image_view(ImageViewHandle handle) { return img_view_pool_.get(handle); }
-Buffer* Device::get_buffer(BufferHandle handle) { return buffer_pool_.get(handle); }
-
 Holder<ImageHandle> Device::create_image_holder(const ImageCreateInfo& info) {
   return Holder<ImageHandle>{this, create_image(info)};
 }

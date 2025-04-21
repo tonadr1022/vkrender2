@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <functional>
 #include <future>
+#include <span>
 
 namespace util {
 class FileWatcher {

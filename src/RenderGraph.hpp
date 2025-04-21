@@ -36,6 +36,8 @@ enum Access : uint16_t {
   ComputeRead = 1ULL << 8,
   ComputeWrite = 1ULL << 9,
   ComputeRW = ComputeRead | ComputeWrite,
+  TransferRead = 1ULL << 10,
+  TransferWrite = 1ULL << 11,
 };
 
 using AccessFlags = uint32_t;
@@ -102,6 +104,7 @@ struct RenderResource {
   uint32_t physical_idx{unused};
   AttachmentInfo info;
   VkImageUsageFlags image_usage{};
+  Access access{};
   BufferInfo buffer_info{};
 
  private:
@@ -112,36 +115,34 @@ struct RenderResource {
   util::fixed_vector<uint16_t, 20> read_passes_;
 };
 
-enum class ResourceUsage : uint8_t {
-  None = 0,
-  // ColorInput,
-  ColorOutput,
-  TextureInput,
-  StorageImageInput,
-  DepthStencilOutput,
-  DepthStencilInput,
-  BufferInput,
-  BufferOutput,
-};
+// enum class ResourceUsage : uint8_t {
+//   None = 0,
+//   // ColorInput,
+//   ColorOutput,
+//   TextureInput,
+//   StorageImageInput,
+//   DepthStencilOutput,
+//   DepthStencilInput,
+//   BufferInput,
+//   BufferOutput,
+// };
 
-bool is_texture_usage(ResourceUsage usage);
-
+// TODO: better handle type
 using RenderResourceHandle = uint32_t;
 
 struct RenderGraphPass {
   enum class Type : uint8_t { Compute, Graphics };
   explicit RenderGraphPass(std::string name, RenderGraph& graph, uint32_t idx, Type type);
   void add_buffer(const std::string& name, vk2::BufferHandle buffer, Access access);
-  RenderResourceHandle add_color_output(const std::string& name, const AttachmentInfo& info,
-                                        const std::string& input = "");
-  RenderResourceHandle set_depth_stencil_input(const std::string& name);
+  void add_buffer(const std::string& name, const vk2::Holder<vk2::BufferHandle>& buffer,
+                  Access access);
+  RenderResourceHandle add_texture(const std::string& name, const AttachmentInfo& info,
+                                   Access access);
   // RenderResourceHandle add_buffer_input(const std::string& name, BufferInfo info);
   // RenderResourceHandle add_buffer_output(const std::string& name, BufferInfo info,
   //                                        const std::string& input = "");
   RenderResourceHandle add_texture_input(const std::string& name);
   RenderResourceHandle add_storage_image_input(const std::string& name);
-  RenderResourceHandle set_depth_stencil_output(const std::string& name,
-                                                const AttachmentInfo& info);
   template <typename F>
   void set_execute_fn(F&& fn)
     requires std::invocable<F&, CmdEncoder&>
@@ -155,9 +156,9 @@ struct RenderGraphPass {
 
   struct UsageAndHandle {
     uint32_t idx{};
-    VkAccessFlags2 access{};
+    VkAccessFlags2 access_flags{};
     VkPipelineStageFlags2 stages{};
-    ResourceUsage usage{};
+    Access access{};
   };
 
   // [[nodiscard]] const std::vector<UsageAndHandle>& get_resource_inputs() const {
@@ -277,7 +278,7 @@ struct RenderGraph {
   std::vector<vk2::Holder<vk2::ImageHandle>> physical_image_attachments_;
   std::vector<vk2::BufferHandle> physical_buffers_;
 
-  ResourceDimensions get_resource_dims(const RenderResource& resource) const;
+  [[nodiscard]] ResourceDimensions get_resource_dims(const RenderResource& resource) const;
   void build_physical_resource_reqs();
   void build_barrier_infos();
   void physical_pass_setup_barriers(u32 pass_i);

@@ -21,6 +21,7 @@
 #include "util/IndexAllocator.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/DeletionQueue.hpp"
+#include "vk2/Device.hpp"
 #include "vk2/PipelineManager.hpp"
 #include "vk2/SamplerCache.hpp"
 #include "vk2/Texture.hpp"
@@ -93,7 +94,6 @@ struct VkRender2 final : public BaseRenderer {
   void on_draw(const SceneDrawInfo& info) override;
   void on_gui() override;
   void on_resize() override;
-  void create_attachment_imgs();
 
   // TODO: refactor
   struct SceneGPUResources {
@@ -218,14 +218,14 @@ struct VkRender2 final : public BaseRenderer {
   std::optional<SlotBuffer<GPUDrawInfo>> static_draw_info_buf_;
   std::optional<SlotBuffer<gfx::ObjectData>> static_object_data_buf_;
   std::vector<vk2::Image> static_textures_;
-  std::optional<vk2::Buffer> final_draw_cmd_buf_;
-  std::optional<vk2::Buffer> draw_cnt_buf_;
+  // std::optional<vk2::Buffer> final_draw_cmd_buf_;
+  // std::optional<vk2::Buffer> draw_cnt_buf_;
+  vk2::Holder<vk2::BufferHandle> draw_cnt_buf_;
+  vk2::Holder<vk2::BufferHandle> final_draw_cmd_buf_;
 
   StateTracker state_;
   StateTracker transfer_q_state_;
-  std::optional<vk2::Image> depth_img_;
-  std::optional<vk2::Image> img_;
-  std::optional<vk2::Image> post_processed_img_;
+  // std::optional<vk2::Image> post_processed_img_;
 
   std::optional<vk2::Sampler> linear_sampler_;
   std::optional<vk2::Sampler> linear_sampler_clamp_to_edge_;

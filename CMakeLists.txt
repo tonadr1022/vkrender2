@@ -62,13 +62,25 @@ target_compile_options(vkrender2
 )
 
 option(VKRENDER2_FORCE_COLORED_OUTPUT "Always produce ANSI-colored output (GNU/Clang only)." TRUE)
-if (${FORCE_COLORED_OUTPUT})
+if (${VKRENDER2_FORCE_COLORED_OUTPUT})
     if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
         add_compile_options(-fdiagnostics-color=always)
     elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
         add_compile_options(-fcolor-diagnostics)
     endif()
 endif()
+
+set(VKRENDER2_VALIDATION_LAYERS_ENABLED_DEFAULT ON)
+if (CMAKE_BUILD_TYPE STREQUAL "Release")
+    set(VKRENDER2_VALIDATION_LAYERS_ENABLED_DEFAULT OFF)
+endif()
+
+option(VKRENDER2_VALIDATION_LAYERS_ENABLED "Enable validation layers" ${VKRENDER2_VALIDATION_LAYERS_ENABLED_DEFAULT})
+message(${VKRENDER2_VALIDATION_LAYERS_ENABLED_DEFAULT} ", enabled: " ${VKRENDER2_VALIDATION_LAYERS_ENABLED})
+if (${VKRENDER2_VALIDATION_LAYERS_ENABLED})
+    target_compile_definitions(vkrender2 PRIVATE VALIDATION_LAYERS_ENABLED)
+endif()
+
 
 target_include_directories(vkrender2 PRIVATE
 third_party
