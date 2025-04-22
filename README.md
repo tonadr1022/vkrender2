@@ -1,13 +1,14 @@
 # VkRender2
 
-This is a Vulkan renderer. (it may or may not die if/when I make a render graph and start over). If it dies, the two screenshots below will live on.
+This is a Vulkan renderer.
 
 ![Bistro](screenshots/bistro.png)
 ![Sponza](screenshots/sponza.png)
 
 ## Features
 
-- Bindless/Indirect rendering
+- Render graph for auto barrier placement (TODO multiple queues)
+- Fully Bindless/Indirect rendering (1 descriptor set)
 - PBR
 - Image Based Lighting
 - Cascaded Shadow Maps

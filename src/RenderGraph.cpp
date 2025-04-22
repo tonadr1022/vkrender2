@@ -80,7 +80,7 @@ void get_vk_stage_access(Access access, VkAccessFlags2& out_access,
 }
 constexpr auto read_flags = Access::ColorRead | Access::ComputeRead | Access::DepthStencilRead |
                             Access::VertexRead | Access::IndexRead | Access::IndirectRead |
-                            Access::TransferRead;
+                            Access::TransferRead | Access::FragmentRead;
 constexpr auto write_flags =
     Access::ColorWrite | Access::ComputeWrite | Access::DepthStencilWrite | Access::TransferWrite;
 bool is_read_access(Access access) { return access & read_flags; }
@@ -90,6 +90,9 @@ VkImageUsageFlags get_image_usage(Access access) {
   VkImageUsageFlags usage{};
   if (access & (Access::ColorWrite | Access::ColorRead)) {
     usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+  }
+  if (access & (Access::FragmentRead)) {
+    usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
   }
   if (access & (Access::DepthStencilRead | Access::DepthStencilWrite)) {
     usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
@@ -573,7 +576,8 @@ void RenderGraph::execute(CmdEncoder& cmd) {
 
 // TODO: not recursive
 VoidResult RenderGraph::traverse_dependencies_recursive(uint32_t pass_i, uint32_t stack_size) {
-  if (stack_size > passes_.size()) {
+  if (stack_size > passes_.size() * 100) {
+    LERROR("cycle");
     return std::unexpected("cycle detected");
   }
 
@@ -590,7 +594,8 @@ VoidResult RenderGraph::traverse_dependencies_recursive(uint32_t pass_i, uint32_
       return std::unexpected("no pass exists which writes to resource");
     }
 
-    if (stack_size > passes_.size()) {
+    if (stack_size > passes_.size() * 2) {
+      LERROR("cycle");
       return std::unexpected("cycle detected");
     }
     stack_size++;
@@ -817,6 +822,12 @@ void RenderGraph::setup_attachments() {
         LINFO("making image {}", i);
         resource_pipeline_states_[i] = {};
         vk2::ImageCreateInfo info{};
+        info.extent = VkExtent3D{dims.width, dims.height, dims.depth};
+        info.array_layers = dims.layers;
+        info.mip_levels = dims.levels;
+        info.samples = (VkSampleCountFlagBits)(1 << (dims.samples - 1));
+        info.format = vk2::to_vkformat(dims.format);
+        info.override_usage_flags |= dims.image_usage_flags;
         if (dims.depth == 1) {
           info.view_type = VK_IMAGE_VIEW_TYPE_2D;
           if (info.array_layers > 1) {
@@ -825,12 +836,6 @@ void RenderGraph::setup_attachments() {
         } else {
           info.view_type = VK_IMAGE_VIEW_TYPE_3D;
         }
-        info.extent = VkExtent3D{dims.width, dims.height, dims.depth};
-        info.array_layers = dims.layers;
-        info.mip_levels = dims.levels;
-        info.samples = (VkSampleCountFlagBits)(1 << (dims.samples - 1));
-        info.format = vk2::to_vkformat(dims.format);
-        info.override_usage_flags |= dims.image_usage_flags;
         assert(i < physical_image_attachments_.size());
         physical_image_attachments_[i] = vk2::get_device().create_image_holder(info);
         img = vk2::get_device().get_image(physical_image_attachments_[i].handle);
@@ -854,6 +859,9 @@ namespace {
 VkImageLayout get_image_layout(Access access) {
   if (access & Access::ColorRW) {
     return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+  }
+  if (access & Access::FragmentRead) {
+    return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   }
   if (access & Access::DepthStencilRW) {
     return VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL_KHR;

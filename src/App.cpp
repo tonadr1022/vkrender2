@@ -115,8 +115,8 @@ void App::run() {
   //                             glm::scale(mat4{1}, vec3{10}));
   // VkRender2::get().load_scene(
   //     "/home/tony/models/Models/MetalRoughSpheres/glTF-Binary/MetalRoughSpheres.glb");
-  VkRender2::get().load_scene(local_models_dir / "Cube/glTF/Cube.gltf", false);
-  // VkRender2::get().load_scene(local_models_dir / "sponza.glb", false);
+  // VkRender2::get().load_scene(local_models_dir / "Cube/glTF/Cube.gltf", false);
+  VkRender2::get().load_scene(local_models_dir / "sponza.glb", false);
   std::filesystem::path env_tex = local_models_dir / "quarry_04_puresky_4k.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/quarry_04_puresky_4k.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/newport_loft.hdr";
