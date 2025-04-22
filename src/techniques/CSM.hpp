@@ -19,7 +19,8 @@ class BaseRenderer;
 class CSM {
  public:
   using DrawFunc = std::function<void(CmdEncoder&, const mat4& vp)>;
-  explicit CSM(RenderGraph& rg, BaseRenderer* renderer, DrawFunc draw_fn);
+  explicit CSM(BaseRenderer* renderer, DrawFunc draw_fn);
+  void add_pass(RenderGraph& rg);
 
   struct ShadowData {
     std::array<mat4, 5> light_space_matrices;
@@ -33,7 +34,6 @@ class CSM {
   void prepare_frame(RenderGraph& rg, u32 frame_num, const mat4& cam_view, vec3 light_dir,
                      float aspect_ratio, float fov_deg, const AABB& aabb, vec3 view_pos);
   void on_imgui(VkSampler sampler);
-  void init(RenderGraph& rg);
 
   [[nodiscard]] const vk2::Image& get_debug_img() const { return shadow_map_debug_img_; }
   [[nodiscard]] vk2::BufferHandle get_shadow_data_buffer(u32 frame_num) const {

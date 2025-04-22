@@ -154,7 +154,7 @@ void calc_csm_light_space_matrices(std::span<mat4> matrices, std::span<float> le
 
 namespace gfx {
 
-CSM::CSM(RenderGraph& rg, BaseRenderer* renderer, DrawFunc draw_fn)
+CSM::CSM(BaseRenderer* renderer, DrawFunc draw_fn)
     : draw_fn_(std::move(draw_fn)),
       shadow_map_res_(uvec2{4096}),
       shadow_map_debug_img_(
@@ -192,8 +192,6 @@ CSM::CSM(RenderGraph& rg, BaseRenderer* renderer, DrawFunc draw_fn)
                               .dims = {shadow_map_res_, 1},
                               .format = Format::D32Sfloat,
                               .layers = cascade_count_};
-
-  init(rg);
 }
 
 void CSM::debug_shadow_pass(StateTracker& state, VkCommandBuffer cmd,
@@ -309,7 +307,7 @@ void CSM::prepare_frame(RenderGraph& rg, u32 frame_num, const mat4& cam_view, ve
   rg.set_resource("shadow_data_buf", buf.handle);
 }
 
-void CSM::init(RenderGraph& rg) {
+void CSM::add_pass(RenderGraph& rg) {
   auto& csm_prepare_pass = rg.add_pass("csm_prepare");
   csm_prepare_pass.add_proxy("shadow_data_buf", Access::TransferWrite);
   csm_prepare_pass.set_execute_fn([this](CmdEncoder& cmd) {
@@ -367,5 +365,4 @@ void CSM::init(RenderGraph& rg) {
     init::end_debug_utils_label(cmd.cmd());
   });
 }
-
 }  // namespace gfx

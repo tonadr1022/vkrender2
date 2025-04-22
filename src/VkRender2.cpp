@@ -252,7 +252,7 @@ VkRender2::VkRender2(const InitInfo& info)
 
   init_indirect_drawing();
 
-  csm_ = std::make_unique<CSM>(rg_, this, [this](CmdEncoder& cmd, const mat4& vp) {
+  csm_ = std::make_unique<CSM>(this, [this](CmdEncoder& cmd, const mat4& vp) {
     ShadowDepthPushConstants pc{
         vp,
         static_vertex_buf_->buffer.resource_info_->handle,
@@ -334,12 +334,6 @@ VkRender2::VkRender2(const InitInfo& info)
   rg_.set_swapchain_info(
       RenderGraphSwapchainInfo{.width = swapchain_.dims.x, .height = swapchain_.dims.y});
   rg_.set_backbuffer_img("final_out");
-  add_basic_forward_pass3(rg_);
-  auto res = rg_.bake();
-  if (!res) {
-    LERROR("bake error {}", res.error());
-    exit(1);
-  }
 }
 
 void VkRender2::on_draw(const SceneDrawInfo& info) {
@@ -399,273 +393,25 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
   vk2::BindlessResourceAllocator::get().flush_deletions();
 
   auto& swapchain_img = swapchain_.imgs[curr_swapchain_img_idx()];
+
+  rg_.reset();
   rg_.set_swapchain_info(RenderGraphSwapchainInfo{
       .curr_img = swapchain_img, .width = swapchain_.dims.x, .height = swapchain_.dims.y});
   auto& curr_frame_data = curr_frame_2();
-  rg_.set_resource("draw_cnt_buf", curr_frame_data.draw_cnt_buf.handle);
-  rg_.set_resource("final_draw_cmd_buf", curr_frame_data.final_draw_cmd_buf.handle);
+  rg_.set_backbuffer_img("final_out");
+
   csm_->prepare_frame(rg_, curr_frame_num(), info.view, info.light_dir, aspect_ratio(),
                       info.fov_degrees, scene_aabb_, info.view_pos);
+  add_basic_forward_pass3(rg_);
+  auto res = rg_.bake();
+  if (!res) {
+    LERROR("bake error {}", res.error());
+    exit(1);
+  }
+  rg_.set_resource("draw_cnt_buf", curr_frame_data.draw_cnt_buf.handle);
+  rg_.set_resource("final_draw_cmd_buf", curr_frame_data.final_draw_cmd_buf.handle);
   rg_.setup_attachments();
   rg_.execute(ctx);
-  // debug_mode_ = DEBUG_MODE_NORMALS;
-
-  // state_.flush_transfers(queues_.graphics_queue_idx);
-
-  // {
-  //   TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "draw objects");
-  //
-  //   // {
-  //   //   TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "img comp");
-  //   //   state_.transition(*img_, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-  //   //   VK_ACCESS_2_MEMORY_WRITE_BIT,
-  //   //                     VK_IMAGE_LAYOUT_GENERAL);
-  //   //   state_.flush_barriers();
-  //   //   struct {
-  //   //     uint idx;
-  //   //     float t;
-  //   //   } pc{img_->view().storage_img_resource().handle, static_cast<f32>(glfwGetTime())};
-  //   //   ctx.bind_compute_pipeline(PipelineManager::get().get(img_pipeline_)->pipeline);
-  //   //   ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-  //   //   ctx.dispatch((img_->extent().width + 16) / 16, (img_->extent().height + 16) / 16, 1);
-  //   // }
-  //
-  //   {
-  //     TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "Cull Objects");
-  //     state_
-  //         .buffer_barrier(draw_cnt_buf_.value(), VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-  //                         VK_ACCESS_2_TRANSFER_WRITE_BIT)
-  //         .flush_barriers();
-  //     vkCmdFillBuffer(cmd, draw_cnt_buf_->buffer(), 0, sizeof(u32), 0);
-  //     // clear final buffer if we can't use drawindirectcount
-  //     if (portable) {
-  //       state_
-  //           .buffer_barrier(final_draw_cmd_buf_.value(), VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-  //                           VK_ACCESS_2_TRANSFER_WRITE_BIT)
-  //           .flush_barriers();
-  //       vkCmdFillBuffer(cmd, final_draw_cmd_buf_->buffer(), 0, final_draw_cmd_buf_->size(), 0);
-  //     }
-  //
-  //     // cull
-  //     state_
-  //         .buffer_barrier(static_draw_info_buf_->buffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-  //                         VK_ACCESS_2_SHADER_READ_BIT)
-  //         .buffer_barrier(static_object_data_buf_->buffer,
-  //         VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-  //                         VK_ACCESS_2_SHADER_READ_BIT)
-  //         .buffer_barrier(final_draw_cmd_buf_.value(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-  //                         VK_ACCESS_2_SHADER_WRITE_BIT)
-  //         .buffer_barrier(draw_cnt_buf_.value(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-  //                         VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT)
-  //         .flush_barriers();
-  //
-  //     PipelineManager::get().bind_compute(cmd, cull_objs_pipeline_);
-  //     struct {
-  //       u32 num_objs;
-  //       u32 in_draw_cmds_buf;
-  //       u32 out_draw_cmds_buf;
-  //       u32 draw_cnt_buf;
-  //       u32 object_bounds_buf;
-  //     } pc{static_cast<u32>(draw_cnt_), static_draw_info_buf_->buffer.resource_info_->handle,
-  //          final_draw_cmd_buf_->resource_info_->handle, draw_cnt_buf_->resource_info_->handle,
-  //          static_object_data_buf_->buffer.resource_info_->handle};
-  //     ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-  //     vkCmdDispatch(cmd, (draw_cnt_ + 256) / 256, 1, 1);
-  //   }
-  //   state_
-  //       .buffer_barrier(draw_cnt_buf_.value(), VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-  //                       VK_ACCESS_2_MEMORY_READ_BIT)
-  //       .buffer_barrier(final_draw_cmd_buf_.value(), VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
-  //                       VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT)
-  //       .flush_barriers();
-  //
-  //   {
-  //     TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "CascadeShadowPass");
-  //     csm_->render(
-  //         state_, cmd, curr_frame_num(), info.view, info.light_dir, aspect_ratio(),
-  //         info.fov_degrees,
-  //         [&, this](const mat4& vp_matrix) {
-  //           ShadowDepthPushConstants pc{
-  //               vp_matrix,
-  //               static_vertex_buf_->buffer.resource_info_->handle,
-  //               static_instance_data_buf_->buffer.resource_info_->handle,
-  //               static_object_data_buf_->buffer.resource_info_->handle,
-  //               scene_buffer_handle,
-  //               static_materials_buf_->buffer.resource_info_->handle,
-  //               linear_sampler_->resource_info.handle,
-  //           };
-  //           ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-  //           vkCmdBindIndexBuffer(cmd, static_index_buf_->buffer.buffer(), 0,
-  //           VK_INDEX_TYPE_UINT32); if (portable) {
-  //             vkCmdDrawIndexedIndirect(cmd, final_draw_cmd_buf_->buffer(), 0, draw_cnt_,
-  //                                      sizeof(VkDrawIndexedIndirectCommand));
-  //           } else {
-  //             vkCmdDrawIndexedIndirectCount(cmd, final_draw_cmd_buf_->buffer(), 0,
-  //                                           draw_cnt_buf_->buffer(), 0, max_draws,
-  //                                           sizeof(VkDrawIndexedIndirectCommand));
-  //           }
-  //         },
-  //         scene_aabb_, info.view_pos);
-  //   }
-  //
-  //   csm_->debug_shadow_pass(state_, cmd, linear_sampler_.value());
-  //
-  //   // draw
-  //   {
-  //     init::begin_debug_utils_label(cmd, "draw");
-  //     state_
-  //         .transition(
-  //             *img_, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-  //             VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-  //             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT)
-  //         .buffer_barrier(csm_->get_shadow_data_buffer(curr_frame_num()).buffer(),
-  //                         VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT)
-  //         .transition(csm_->get_shadow_img(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-  //                     VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_MEMORY_READ_BIT,
-  //                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT)
-  //         .transition(*depth_img_, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-  //                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-  //                     VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT)
-  //         .flush_barriers();
-  //     VkClearValue depth_clear{};
-  //     // VkClearValue depth_clear{.depthStencil = {.depth = 1.f}};
-  //     VkRenderingAttachmentInfo color_attachment =
-  //         init::rendering_attachment_info(img_->view(),
-  //         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-  //     auto depth_att = init::rendering_attachment_info(
-  //         depth_img_->view(), VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, &depth_clear);
-  //     auto rendering_info = init::rendering_info(img_->extent_2d(), &color_attachment,
-  //     &depth_att); vkCmdBeginRenderingKHR(cmd, &rendering_info); set_viewport_and_scissor(cmd,
-  //     img_->extent_2d());
-  //
-  //     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-  //                       PipelineManager::get().get(draw_pipeline_)->pipeline);
-  //
-  //     // TODO: jank
-  //     auto draw_objects = [&](const Buffer& vertex_buffer, const Buffer& index_buffer,
-  //                             const Buffer& instance_buffer, const Buffer& material_data_buffer,
-  //                             const Buffer& object_data_buffer, const Buffer&, u64) {
-  //       BasicPushConstants pc{
-  //           scene_buffer_handle,
-  //           vertex_buffer.resource_info_->handle,
-  //           instance_buffer.resource_info_->handle,
-  //           object_data_buffer.resource_info_->handle,
-  //           material_data_buffer.resource_info_->handle,
-  //           linear_sampler_->resource_info.handle,
-  //           csm_->get_shadow_data_buffer(curr_frame_num()).resource_info_->handle,
-  //           csm_->get_shadow_sampler().resource_info.handle,
-  //           csm_->get_shadow_img().view().sampled_img_resource().handle,
-  //           ibl_->irradiance_cubemap_tex_->view().sampled_img_resource().handle,
-  //           ibl_->brdf_lut_->view().sampled_img_resource().handle,
-  //           ibl_->prefiltered_env_map_tex_->texture->view().sampled_img_resource().handle,
-  //           linear_sampler_clamp_to_edge_->resource_info.handle};
-  //       ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-  //
-  //       vkCmdBindIndexBuffer(cmd, index_buffer.buffer(), 0, VK_INDEX_TYPE_UINT32);
-  //       if (portable) {
-  //         vkCmdDrawIndexedIndirect(cmd, final_draw_cmd_buf_->buffer(), 0, draw_cnt_,
-  //                                  sizeof(VkDrawIndexedIndirectCommand));
-  //       } else {
-  //         vkCmdDrawIndexedIndirectCount(cmd, final_draw_cmd_buf_->buffer(), 0,
-  //                                       draw_cnt_buf_->buffer(), 0, max_draws,
-  //                                       sizeof(VkDrawIndexedIndirectCommand));
-  //       }
-  //     };
-  //
-  //     TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "Final Draw Pass");
-  //     if (draw_cnt_) {
-  //       draw_objects(static_vertex_buf_->buffer, static_index_buf_->buffer,
-  //                    static_instance_data_buf_->buffer, static_materials_buf_->buffer,
-  //                    static_object_data_buf_->buffer, static_draw_info_buf_->buffer, draw_cnt_);
-  //     }
-  //
-  //     // skybox
-  //     {
-  //       TracyVkZone(curr_frame().tracy_vk_ctx, cmd, "Draw skybox");
-  //       PipelineManager::get().bind_graphics(cmd, skybox_pipeline_);
-  //       // TODO:  use an enum this is awful
-  //       u32 skybox_handle{};
-  //       if (render_prefilter_mip_skybox_) {
-  //         assert(ibl_->prefiltered_env_tex_views_.size() > (size_t)prefilter_mip_skybox_level_);
-  //         skybox_handle = ibl_->prefiltered_env_tex_views_[prefilter_mip_skybox_level_]
-  //                             ->sampled_img_resource()
-  //                             .handle;
-  //       } else {
-  //         skybox_handle = convoluted_skybox.get()
-  //                             ?
-  //                             ibl_->irradiance_cubemap_tex_->view().sampled_img_resource().handle
-  //                             : ibl_->env_cubemap_tex_->view().sampled_img_resource().handle;
-  //       }
-  //       struct {
-  //         u32 scene_buffer, tex_idx, sampler_idx;
-  //       } pc{scene_buffer_handle, skybox_handle, linear_sampler_->resource_info.handle};
-  //       ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-  //       vkCmdDraw(cmd, 36, 1, 0, 0);
-  //     }
-  //     vkCmdEndRenderingKHR(cmd);
-  //     // Add after vkCmdEndRenderingKHR(cmd):
-  //     state_
-  //         .transition(*depth_img_, VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-  //                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
-  //                     VK_IMAGE_ASPECT_DEPTH_BIT)
-  //         .flush_barriers();
-  //     init::end_debug_utils_label(cmd);
-  //   }
-  //
-  //   vk2::Image* final_img = &img_.value();
-  //   if (debug_mode_ == DEBUG_MODE_NONE && postprocess_pass.get()) {
-  //     final_img = &post_processed_img_.value();
-  //     u32 postprocess_flags = 0;
-  //     if (gammacorrect_enabled.get()) {
-  //       postprocess_flags |= 0x2;
-  //     }
-  //     if (tonemap_enabled.get()) {
-  //       postprocess_flags |= 0x1;
-  //     }
-  //     state_
-  //         .transition(*img_, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT,
-  //                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-  //         .transition(*post_processed_img_, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-  //                     VK_ACCESS_2_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL)
-  //         .flush_barriers();
-  //     PipelineManager::get().bind_compute(cmd, postprocess_pipeline_);
-  //     struct {
-  //       u32 in_tex_idx, out_tex_idx, flags;
-  //     } pc{img_->view().storage_img_resource().handle,
-  //          post_processed_img_->view().storage_img_resource().handle, postprocess_flags};
-  //     ctx.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-  //     vkCmdDispatch(cmd, (post_processed_img_->extent_2d().width + 16) / 16,
-  //                   (post_processed_img_->extent_2d().height + 16) / 16, 1);
-  //   }
-  //
-  //   state_.transition(*final_img, VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_MEMORY_READ_BIT,
-  //                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
-  //   auto& swapchain_img = swapchain_.imgs[curr_swapchain_img_idx()];
-  //   state_.transition(swapchain_img, VK_PIPELINE_STAGE_2_BLIT_BIT,
-  //   VK_ACCESS_2_TRANSFER_WRITE_BIT,
-  //                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
-  //
-  //   state_.flush_barriers();
-  //
-  //   VkExtent3D dims{glm::min(final_img->extent().width, swapchain_.dims.x),
-  //                   glm::min(final_img->extent().height, swapchain_.dims.y), 1};
-  //   blit_img(cmd, final_img->image(), swapchain_img, dims, VK_IMAGE_ASPECT_COLOR_BIT);
-  //
-  //   if (draw_imgui) {
-  //     state_.transition(
-  //         swapchain_img, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-  //         VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT,
-  //         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-  //     state_.flush_barriers();
-  //     render_imgui(cmd, {swapchain_.dims.x, swapchain_.dims.y},
-  //                  swapchain_.img_views[curr_swapchain_img_idx()]);
-  //   }
-  //
-  //   state_.transition(swapchain_img, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR,
-  //                     VK_ACCESS_2_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-  //   state_.flush_barriers();
-  //   TracyVkCollect(curr_frame().tracy_vk_ctx, cmd);
-  // }
 
   VK_CHECK(vkEndCommandBuffer(cmd));
 
@@ -1321,7 +1067,6 @@ bool portable = false;
 }
 void VkRender2::add_basic_forward_pass3(RenderGraph& rg) {
   ZoneScoped;
-  u32 scene_buffer_handle = curr_frame_2().scene_uniform_buf->resource_info_->handle;
   auto& clear_buff = rg.add_pass("clear_draw_cnt_buf");
   clear_buff.add_proxy("draw_cnt_buf", Access::TransferWrite);
   clear_buff.add_proxy("final_draw_cmd_buf", Access::TransferWrite);
@@ -1358,6 +1103,8 @@ void VkRender2::add_basic_forward_pass3(RenderGraph& rg) {
     cmd.dispatch((draw_cnt_ + 256) / 256, 1, 1);
   });
 
+  csm_->add_pass(rg);
+
   {
     auto& forward = rg.add_pass("forward");
     auto final_out_handle =
@@ -1368,8 +1115,7 @@ void VkRender2::add_basic_forward_pass3(RenderGraph& rg) {
     forward.add("shadow_map_img", csm_->get_shadow_map_att_info(), Access::FragmentRead);
     auto depth_out_handle =
         forward.add("depth", {.format = depth_img_format_}, Access::DepthStencilWrite);
-    forward.set_execute_fn([&rg, final_out_handle, this, depth_out_handle,
-                            scene_buffer_handle](CmdEncoder& cmd) {
+    forward.set_execute_fn([&rg, final_out_handle, this, depth_out_handle](CmdEncoder& cmd) {
       auto& curr_frame_data = curr_frame_2();
       auto& draw_cnt_buf = curr_frame_data.draw_cnt_buf;
       auto& final_draw_cmd_buf = curr_frame_data.final_draw_cmd_buf;
@@ -1391,7 +1137,7 @@ void VkRender2::add_basic_forward_pass3(RenderGraph& rg) {
       bool draw_fancy{true};
       if (draw_fancy) {
         BasicPushConstants pc{
-            scene_buffer_handle,
+            curr_frame_2().scene_uniform_buf->resource_info_->handle,
             static_vertex_buf_->buffer.resource_info_->handle,
             static_instance_data_buf_->buffer.resource_info_->handle,
             static_object_data_buf_->buffer.resource_info_->handle,
@@ -1418,7 +1164,8 @@ void VkRender2::add_basic_forward_pass3(RenderGraph& rg) {
           u32 vertex_buffer_idx;
           u32 instance_buffer;
           u32 object_data_buffer;
-        } pc{scene_buffer_handle, static_vertex_buf_->buffer.resource_info_->handle,
+        } pc{curr_frame_2().scene_uniform_buf->resource_info_->handle,
+             static_vertex_buf_->buffer.resource_info_->handle,
              static_instance_data_buf_->buffer.resource_info_->handle,
              static_object_data_buf_->buffer.resource_info_->handle};
         cmd.push_constants(sizeof(pc), &pc);
@@ -1450,7 +1197,8 @@ void VkRender2::add_basic_forward_pass3(RenderGraph& rg) {
         }
         struct {
           u32 scene_buffer, tex_idx, sampler_idx;
-        } pc{scene_buffer_handle, skybox_handle, linear_sampler_->resource_info.handle};
+        } pc{curr_frame_2().scene_uniform_buf->resource_info_->handle, skybox_handle,
+             linear_sampler_->resource_info.handle};
         cmd.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
         vkCmdDraw(cmd.cmd(), 36, 1, 0, 0);
       }
@@ -1486,7 +1234,7 @@ void VkRender2::add_basic_forward_pass3(RenderGraph& rg) {
       }
     });
   }
-  {
+  if (draw_imgui) {
     auto& imgui_p = rg.add_pass("imgui");
     auto handle = imgui_p.add("final_out", swapchain_att_info_, Access::ColorRW);
     imgui_p.set_execute_fn([this, handle, &rg](CmdEncoder& cmd) {

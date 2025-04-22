@@ -35,6 +35,21 @@ struct ResourceDimensions {
   // TODO: queues
   [[nodiscard]] bool is_storage_image() const;
   [[nodiscard]] bool is_image() const;
+  friend bool operator==(const ResourceDimensions& a, const ResourceDimensions& b) {
+    // TODO: buffer info?
+    bool valid_extent = false;
+    if (a.size_class == SizeClass::SwapchainRelative && a.size_class == b.size_class) {
+      valid_extent = true;
+    } else {
+      valid_extent = a.size_class == b.size_class && a.width == b.width && a.height == b.height &&
+                     a.depth == b.depth;
+    }
+    return valid_extent && a.format == b.format && a.layers == b.layers && a.levels == b.levels &&
+           a.image_usage_flags == b.image_usage_flags;
+  }
+};
+struct ResourceDimensionsHasher {
+  std::size_t operator()(const ResourceDimensions& dims) const;
 };
 
 struct BufferUsage {
@@ -233,7 +248,10 @@ struct RenderGraph {
   // TODO: pool
   std::vector<RenderResource> resources_;
   std::vector<ResourceDimensions> physical_resource_dims_;
-  std::vector<ResourceState> resource_pipeline_states_;
+  std::unordered_map<vk2::ImageHandle, ResourceState> image_pipeline_states_;
+  std::unordered_map<vk2::BufferHandle, ResourceState> buffer_pipeline_states_;
+  ResourceState* get_resource_pipeline_state(u32 physical_idx);
+  // std::vector<ResourceState> resource_pipeline_states_;
   std::unordered_map<std::string, uint32_t> resource_to_idx_map_;
 
   // TODO: bitset
@@ -244,7 +262,11 @@ struct RenderGraph {
 
   std::unordered_set<uint32_t> dup_prune_set_;
 
-  std::vector<vk2::Holder<vk2::ImageHandle>> physical_image_attachments_;
+  // owns images
+  std::unordered_map<ResourceDimensions, vk2::Holder<vk2::ImageHandle>, ResourceDimensionsHasher>
+      img_cache_;
+
+  std::vector<vk2::ImageHandle> physical_image_attachments_;
   std::vector<vk2::BufferHandle> physical_buffers_;
 
   [[nodiscard]] ResourceDimensions get_resource_dims(const RenderResource& resource) const;

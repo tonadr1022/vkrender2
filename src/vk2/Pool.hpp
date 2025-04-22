@@ -4,7 +4,7 @@
 #include <vector>
 
 #include "Common.hpp"
-#include "Logger.hpp"
+#include "vk2/Hash.hpp"
 template <typename, typename>
 struct Pool;
 
@@ -129,3 +129,14 @@ struct GenerationalHandle {
   uint32_t idx_{};
   uint32_t gen_{};
 };
+
+namespace std {
+template <typename HandleT>
+struct hash<GenerationalHandle<HandleT>> {
+  std::size_t operator()(const GenerationalHandle<HandleT>& handle) const noexcept {
+    auto h = std::make_tuple(handle.get_idx(), handle.get_gen());
+    return gfx::vk2::detail::hashing::hash<decltype(h)>{}(h);
+  }
+};
+
+}  // namespace std
