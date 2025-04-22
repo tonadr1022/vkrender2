@@ -68,6 +68,10 @@ void get_vk_stage_access(Access access, VkAccessFlags2& out_access,
                   VK_PIPELINE_STAGE_2_CLEAR_BIT;
     out_access |= VK_ACCESS_2_TRANSFER_WRITE_BIT;
   }
+  if (access & Access::FragmentRead) {
+    out_stages |= VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+    out_access |= VK_ACCESS_2_SHADER_READ_BIT;
+  }
   if (access & Access::TransferRead) {
     out_stages |= VK_PIPELINE_STAGE_2_TRANSFER_BIT | VK_PIPELINE_STAGE_2_COPY_BIT |
                   VK_PIPELINE_STAGE_2_CLEAR_BIT;
@@ -82,6 +86,21 @@ constexpr auto write_flags =
 bool is_read_access(Access access) { return access & read_flags; }
 bool is_write_access(Access access) { return access & write_flags; }
 
+VkImageUsageFlags get_image_usage(Access access) {
+  VkImageUsageFlags usage{};
+  if (access & (Access::ColorWrite | Access::ColorRead)) {
+    usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+  }
+  if (access & (Access::DepthStencilRead | Access::DepthStencilWrite)) {
+    usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+  }
+  // TODO: maybe SHADER_READ_ONLY_OPTIMAL?
+  if (access & Access::ComputeRW) {
+    usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+  }
+  return usage;
+}
+
 }  // namespace
 
 void RenderGraphPass::add(const std::string& name, const vk2::Holder<vk2::BufferHandle>& buffer,
@@ -89,11 +108,9 @@ void RenderGraphPass::add(const std::string& name, const vk2::Holder<vk2::Buffer
   add(name, buffer.handle, access);
 }
 
-void RenderGraphPass::add_proxy(const std::string& name, Access access) {
-  uint32_t handle = graph_.get_or_add_buffer_resource(name);
-  RenderResource& res = *graph_.get_resource(handle);
-  res.access = static_cast<Access>(res.access | access);
-  res.buffer_info.proxy_hash = std::hash<std::string>{}(name);
+RenderGraphPass::UsageAndHandle RenderGraphPass::init_usage_and_handle(Access access,
+                                                                       RenderResourceHandle handle,
+                                                                       RenderResource& res) {
   UsageAndHandle res_usage{.idx = handle, .access = access};
   get_vk_stage_access(access, res_usage.access_flags, res_usage.stages);
   if (is_read_access(access)) {
@@ -104,42 +121,41 @@ void RenderGraphPass::add_proxy(const std::string& name, Access access) {
     res.written_in_pass(idx_);
   }
   resources_.emplace_back(res_usage);
+  return res_usage;
+}
+
+// void RenderGraphPass::add(const std::string& name, vk2::ImageHandle image, Access access) {
+//   uint32_t handle = graph_.get_or_add_texture_resource(name);
+//   RenderResource& res = *graph_.get_resource(handle);
+//   res.access = static_cast<Access>(res.access | access);
+//   res.image_usage |= get_image_usage(access);
+//   // TODO: this lmao!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+//   res.img_handle = image;
+//   init_usage_and_handle(access, handle, res);
+// }
+
+void RenderGraphPass::add_proxy(const std::string& name, Access access) {
+  uint32_t handle = graph_.get_or_add_buffer_resource(name);
+  RenderResource& res = *graph_.get_resource(handle);
+  res.access = static_cast<Access>(res.access | access);
+  res.buffer_info.proxy_hash = std::hash<std::string>{}(name);
+  init_usage_and_handle(access, handle, res);
 }
 
 RenderResourceHandle RenderGraphPass::add(const std::string& name, const AttachmentInfo& info,
                                           Access access) {
   uint32_t handle = graph_.get_or_add_texture_resource(name);
-  RenderResource* res = graph_.get_resource(handle);
-  assert(res);
-  if (!res) {
-    return UINT32_MAX;
-  }
-  res->access = static_cast<Access>(res->access | access);
-  if (access & (Access::ColorWrite | Access::ColorRead)) {
-    res->image_usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-  }
-  if (access & (Access::DepthStencilRead | Access::DepthStencilWrite)) {
-    res->image_usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-  }
-  // TODO: maybe SHADER_READ_ONLY_OPTIMAL?
-  if (access & Access::ComputeRW) {
-    res->image_usage |= VK_IMAGE_USAGE_STORAGE_BIT;
-  }
-  res->info = info;
+  RenderResource& res = *graph_.get_resource(handle);
+  res.access = static_cast<Access>(res.access | access);
+  res.image_usage |= get_image_usage(access);
+  res.info = info;
 
-  UsageAndHandle usage{.idx = handle, .access = access};
-  get_vk_stage_access(access, usage.access_flags, usage.stages);
-  if (is_read_access(access)) {
-    resource_read_indices_.emplace_back(resources_.size());
-    res->read_in_pass(idx_);
-  }
-  if (is_write_access(access)) {
-    res->written_in_pass(idx_);
-  }
   if (name == graph_.get_backbuffer_img_name()) {
     swapchain_write_idx_ = resources_.size();
   }
-  resources_.emplace_back(usage);
+  init_usage_and_handle(access, handle, res);
+  LINFO("{}: written in: {}, read in: {}", name, res.get_written_passes().size(),
+        res.get_read_passes().size());
   return handle;
 }
 
@@ -153,16 +169,7 @@ void RenderGraphPass::add(const std::string& name, vk2::BufferHandle buffer, Acc
   }
   res.access = static_cast<Access>(res.access | access);
   res.buffer_info = {buffer, buf->size()};
-  UsageAndHandle res_usage{.idx = handle, .access = access};
-  get_vk_stage_access(access, res_usage.access_flags, res_usage.stages);
-  if (is_read_access(access)) {
-    resource_read_indices_.emplace_back(resources_.size());
-    res.read_in_pass(idx_);
-  }
-  if (is_write_access(access)) {
-    res.written_in_pass(idx_);
-  }
-  resources_.emplace_back(res_usage);
+  init_usage_and_handle(access, handle, res);
 }
 
 RenderGraphPass::RenderGraphPass(std::string name, RenderGraph& graph, uint32_t idx, Type type)
@@ -188,7 +195,7 @@ VoidResult RenderGraph::validate() {
 
 VoidResult RenderGraph::bake() {
   ZoneScoped;
-  bool log = false;
+  bool log = true;
   // validate
   // go through each input and make sure it's an output of a previous pass if it needs to read from
   // it for (auto& pass : passes_) {
@@ -265,33 +272,36 @@ VoidResult RenderGraph::bake() {
   if (log) {
     for (auto& res : resources_) {
       if (res.get_type() == ResourceType::Texture) {
-        assert(res.physical_idx != RenderResource::unused);
         LINFO("{} {}", res.name, res.physical_idx);
-        assert(res.physical_idx < physical_resource_dims_.size());
-        auto& dims = physical_resource_dims_[res.physical_idx];
-        LINFO("{} {}", res.physical_idx, string_VkImageUsageFlags(dims.image_usage_flags));
+        if (res.physical_idx < physical_resource_dims_.size()) {
+          auto& dims = physical_resource_dims_[res.physical_idx];
+          LINFO("{} {}", res.physical_idx, string_VkImageUsageFlags(dims.image_usage_flags));
+        }
       }
     }
   }
 
   {
     ZoneScopedN("build physical passes");
-    clear_physical_passes();
-    physical_passes_.reserve(passes_.size());
+    physical_passes_.resize(passes_.size());
+    for (auto& p : physical_passes_) {
+      p.reset();
+    }
     for (const auto& pass_i : pass_stack_) {
       const auto& pass = passes_[pass_i];
-      PhysicalPass phys_pass = get_physical_pass();
+      PhysicalPass& phys_pass = physical_passes_[pass_i];
       phys_pass.name = pass.get_name();
 
       for (const auto& output : pass.get_resources()) {
         auto* res = get_resource(output.idx);
-        if (output.access & Access::ColorWrite) {
-          phys_pass.physical_color_attachments.emplace_back(res->physical_idx);
-        } else if (output.access & Access::DepthStencilWrite) {
-          phys_pass.physical_depth_stencil = res->physical_idx;
+        if (res->physical_idx != RenderResource::unused) {
+          if (output.access & Access::ColorWrite) {
+            phys_pass.physical_color_attachments.emplace_back(res->physical_idx);
+          } else if (output.access & Access::DepthStencilWrite) {
+            phys_pass.physical_depth_stencil = res->physical_idx;
+          }
         }
       }
-      physical_passes_.emplace_back(std::move(phys_pass));
     }
   }
 
@@ -663,16 +673,16 @@ ResourceDimensions RenderGraph::get_resource_dims(const RenderResource& resource
     dims = {.format = resource.info.format,
             .size_class = resource.info.size_class,
             .depth = 1,
-            .layers = 1,
-            .levels = 1,
+            .layers = resource.info.layers,
+            .levels = resource.info.levels,
             .samples = 1,
             .image_usage_flags = resource.image_usage};
     if (resource.info.size_class == SizeClass::SwapchainRelative) {
       dims.width = swapchain_info_.width;
       dims.height = swapchain_info_.height;
     } else if (resource.info.size_class == SizeClass::Absolute) {
-      dims.width = (uint32_t)resource.info.size_x;
-      dims.height = (uint32_t)resource.info.size_y;
+      dims.width = (uint32_t)resource.info.dims.x;
+      dims.height = (uint32_t)resource.info.dims.y;
     } else {  // InputRelative
       assert(0 && "nope");
     }
@@ -715,23 +725,6 @@ void RenderGraph::build_physical_resource_reqs() {
       }
     }
   }
-}
-
-void RenderGraph::clear_physical_passes() {
-  while (physical_passes_.size()) {
-    physical_pass_unused_pool_.emplace_back(std::move(physical_passes_.back()));
-    physical_pass_unused_pool_.back().reset();
-    physical_passes_.pop_back();
-  }
-}
-
-RenderGraph::PhysicalPass RenderGraph::get_physical_pass() {
-  if (physical_pass_unused_pool_.empty()) {
-    return PhysicalPass{};
-  }
-  auto pass = std::move(physical_pass_unused_pool_.back());
-  physical_pass_unused_pool_.pop_back();
-  return pass;
 }
 
 void RenderGraph::PhysicalPass::reset() {
@@ -826,6 +819,9 @@ void RenderGraph::setup_attachments() {
         vk2::ImageCreateInfo info{};
         if (dims.depth == 1) {
           info.view_type = VK_IMAGE_VIEW_TYPE_2D;
+          if (info.array_layers > 1) {
+            info.view_type = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+          }
         } else {
           info.view_type = VK_IMAGE_VIEW_TYPE_3D;
         }
@@ -835,6 +831,7 @@ void RenderGraph::setup_attachments() {
         info.samples = (VkSampleCountFlagBits)(1 << (dims.samples - 1));
         info.format = vk2::to_vkformat(dims.format);
         info.override_usage_flags |= dims.image_usage_flags;
+        assert(i < physical_image_attachments_.size());
         physical_image_attachments_[i] = vk2::get_device().create_image_holder(info);
         img = vk2::get_device().get_image(physical_image_attachments_[i].handle);
       }
@@ -845,6 +842,7 @@ void RenderGraph::setup_attachments() {
           LERROR("buffer not found for proxy");
           exit(1);
         }
+        assert(i < physical_buffers_.size());
         physical_buffers_[i] = it->second;
       } else {
         physical_buffers_[i] = dims.buffer_info.handle;
@@ -892,6 +890,7 @@ void RenderGraph::build_barrier_infos() {
 
     for (const auto& pass_resource_usage : pass.get_resources()) {
       auto resource_physical_idx = resources_[pass_resource_usage.idx].physical_idx;
+      if (resource_physical_idx == RenderResource::unused) continue;
       if (is_read_access(pass_resource_usage.access)) {
         auto& barrier = get_invalidate_access(resource_physical_idx);
         barrier.layout = get_image_layout(pass_resource_usage.access);
@@ -953,6 +952,9 @@ void RenderGraph::physical_pass_setup_barriers(u32 pass_i) {
   // place barriers
   for (const auto& barrier : pass.invalidate_barriers) {
     bool layout_change = false;
+    assert(barrier.resource_idx < physical_resource_dims_.size());
+    assert(barrier.resource_idx < physical_image_attachments_.size());
+    assert(barrier.resource_idx < physical_buffers_.size());
     const auto& phys_dims = physical_resource_dims_[barrier.resource_idx];
     auto& resource_state = resource_pipeline_states_[barrier.resource_idx];
     if (phys_dims.is_image()) {
@@ -1038,6 +1040,14 @@ void RenderGraph::physical_pass_setup_barriers(u32 pass_i) {
   }
 }
 
+vk2::ImageHandle RenderGraph::get_texture_handle(RenderResource* resource) {
+  if (!resource) return {};
+  return physical_image_attachments_[resource->physical_idx].handle;
+}
+
+vk2::ImageHandle RenderGraph::get_texture_handle(RenderResourceHandle resource) {
+  return get_texture_handle(get_resource(resource));
+}
 vk2::Image* RenderGraph::get_texture(uint32_t idx) { return get_texture(get_resource(idx)); }
 vk2::Image* RenderGraph::get_texture(RenderResource* resource) {
   if (!resource) return nullptr;

@@ -38,6 +38,7 @@ enum Access : uint16_t {
   ComputeRW = ComputeRead | ComputeWrite,
   TransferRead = 1ULL << 10,
   TransferWrite = 1ULL << 11,
+  FragmentRead = 1ULL << 12,
 };
 
 using AccessFlags = uint32_t;
@@ -48,9 +49,11 @@ using AttachmentInfoFlags = uint8_t;
 
 struct AttachmentInfo {
   SizeClass size_class{SizeClass::SwapchainRelative};
-  float size_x = 1.f, size_y = 1.f, size_z = 1.f;
+  uvec3 dims{1};
   ImageUsageFlags aux_flags{};
   Format format{};
+  u32 layers{1};
+  u32 levels{1};
 };
 
 struct BufferInfo {
@@ -106,6 +109,7 @@ struct RenderResource {
   VkImageUsageFlags image_usage{};
   Access access{};
   BufferInfo buffer_info{};
+  vk2::ImageHandle img_handle;
 
  private:
   ResourceType type_;
@@ -135,6 +139,7 @@ struct RenderGraphPass {
   explicit RenderGraphPass(std::string name, RenderGraph& graph, uint32_t idx, Type type);
   void add(const std::string& name, vk2::BufferHandle buffer, Access access);
   void add(const std::string& name, const vk2::Holder<vk2::BufferHandle>& buffer, Access access);
+  // void add(const std::string& name, vk2::ImageHandle image, Access access);
   void add_proxy(const std::string& name, Access access);
   RenderResourceHandle add(const std::string& name, const AttachmentInfo& info, Access access);
 
@@ -171,6 +176,8 @@ struct RenderGraphPass {
   u32 swapchain_write_idx_{RenderResource::unused};
   std::vector<UsageAndHandle> resources_;
   std::vector<u32> resource_read_indices_;
+  UsageAndHandle init_usage_and_handle(Access access, RenderResourceHandle handle,
+                                       RenderResource& res);
   // std::vector<UsageAndHandle> resource_inputs_;
   // std::vector<UsageAndHandle> resource_outputs_;
 
@@ -203,9 +210,11 @@ struct RenderGraph {
 
   uint32_t get_or_add_buffer_resource(const std::string& name);
   uint32_t get_or_add_texture_resource(const std::string& name);
-  RenderResource* get_resource(uint32_t idx);
-  vk2::Image* get_texture(uint32_t idx);
+  RenderResource* get_resource(RenderResourceHandle idx);
+  vk2::Image* get_texture(RenderResourceHandle idx);
   vk2::Image* get_texture(RenderResource* resource);
+  vk2::ImageHandle get_texture_handle(RenderResource* resource);
+  vk2::ImageHandle get_texture_handle(RenderResourceHandle resource);
   void set_resource(const std::string& name, vk2::BufferHandle handle);
 
  private:
@@ -253,9 +262,6 @@ struct RenderGraph {
   };
 
   std::vector<PhysicalPass> physical_passes_;
-  void clear_physical_passes();
-  PhysicalPass get_physical_pass();
-  std::vector<PhysicalPass> physical_pass_unused_pool_;
   bool needs_invalidate(const Barrier& barrier, const ResourceState& state);
 
   void prune_duplicates(std::vector<uint32_t>& data);

@@ -115,7 +115,10 @@ struct GenerationalHandle {
 
   [[nodiscard]] uint32_t get_gen() const { return gen_; }
   [[nodiscard]] uint32_t get_idx() const { return idx_; }
-  friend bool operator==(const HandleT& a, const HandleT& b) {
+  friend bool operator!=(const GenerationalHandle& a, const GenerationalHandle& b) {
+    return a.idx_ != b.idx_ || a.gen_ != b.gen_;
+  }
+  friend bool operator==(const GenerationalHandle& a, const GenerationalHandle& b) {
     return a.idx_ == b.idx_ && a.gen_ == b.gen_;
   }
 

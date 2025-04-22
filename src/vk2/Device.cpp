@@ -242,6 +242,9 @@ void Device::create_buffer(const VkBufferCreateInfo* info,
 ImageHandle Device::create_image(const ImageCreateInfo& create_info) {
   return img_pool_.alloc(create_info);
 }
+ImageViewHandle Device::create_image_view(const Image& image, const ImageViewCreateInfo& info) {
+  return img_view_pool_.alloc(image, info);
+}
 
 void Device::destroy(ImageHandle handle) { img_pool_.destroy(handle); }
 void Device::destroy(ImageViewHandle handle) { img_view_pool_.destroy(handle); }
@@ -249,6 +252,10 @@ void Device::destroy(BufferHandle handle) { buffer_pool_.destroy(handle); }
 
 Holder<ImageHandle> Device::create_image_holder(const ImageCreateInfo& info) {
   return Holder<ImageHandle>{this, create_image(info)};
+}
+Holder<ImageViewHandle> Device::create_image_view_holder(const Image& image,
+                                                         const ImageViewCreateInfo& info) {
+  return Holder<ImageViewHandle>{this, create_image_view(image, info)};
 }
 
 void Device::destroy_resources() {

@@ -131,6 +131,9 @@ class Device {
 
   Image* get_image(ImageHandle handle) { return img_pool_.get(handle); }
   ImageView* get_image_view(ImageViewHandle handle) { return img_view_pool_.get(handle); }
+  ImageView* get_image_view(const Holder<ImageViewHandle>& handle) {
+    return img_view_pool_.get(handle.handle);
+  }
   Buffer* get_buffer(BufferHandle handle) { return buffer_pool_.get(handle); }
   Buffer* get_buffer(const Holder<BufferHandle>& handle) { return get_buffer(handle.handle); }
 
