@@ -239,7 +239,8 @@ struct VkRender2 final : public BaseRenderer {
   };
 
   std::filesystem::path default_env_map_path_;
-  std::optional<CSM> csm_;
+  std::unique_ptr<CSM> csm_;
+  vk2::Sampler shadow_sampler_;
   std::optional<IBL> ibl_;
   vk2::DeletionQueue main_del_q_;
   vk2::PipelineHandle img_pipeline_;
@@ -278,6 +279,9 @@ struct VkRender2 final : public BaseRenderer {
 
   void add_basic_forward_pass(RenderGraph& rg);
   void add_basic_forward_pass3(RenderGraph& rg);
+  AttachmentInfo swapchain_att_info_;
+  // TODO: fix
+  bool portable_{false};
 
  public:
   std::optional<vk2::Image> load_hdr_img(CmdEncoder& ctx, const std::filesystem::path& path,
@@ -287,15 +291,4 @@ struct VkRender2 final : public BaseRenderer {
   [[nodiscard]] const DefaultData& get_default_data() const { return default_data_; }
 };
 
-template <typename T>
-struct DoubleBufferedResource {
-  DoubleBufferedResource(T a, T b) : data_{a, b} {}
-
-  const T& current() {
-    data_[VkRender2::get().curr_frame_num() % VkRender2::get().get_num_frames_in_flight()];
-  }
-
- private:
-  std::array<T, 3> data_;
-};
 }  // namespace gfx

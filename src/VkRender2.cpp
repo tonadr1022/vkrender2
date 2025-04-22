@@ -101,6 +101,7 @@ VkRender2::VkRender2(const InitInfo& info)
     : BaseRenderer(info, BaseRenderer::BaseInitInfo{.frames_in_flight = 2}) {
   vkrender2_instance = this;
   allocator_ = vk2::get_device().allocator();
+  swapchain_att_info_ = {.format = vkformat_to_format(swapchain_.format)};
 
   vk2::StagingBufferPool::init();
   vk2::BindlessResourceAllocator::init(device_, vk2::get_device().allocator());
@@ -250,7 +251,37 @@ VkRender2::VkRender2(const InitInfo& info)
   init_pipelines();
 
   init_indirect_drawing();
-  csm_ = CSM(default_pipeline_layout_);
+
+  csm_ = std::make_unique<CSM>(rg_, this, [this](CmdEncoder& cmd, const mat4& vp) {
+    ShadowDepthPushConstants pc{
+        vp,
+        static_vertex_buf_->buffer.resource_info_->handle,
+        static_instance_data_buf_->buffer.resource_info_->handle,
+        static_object_data_buf_->buffer.resource_info_->handle,
+        curr_frame_2().scene_uniform_buf->resource_info_->handle,
+        static_materials_buf_->buffer.resource_info_->handle,
+        linear_sampler_->resource_info.handle,
+    };
+    cmd.push_constants(sizeof(pc), &pc);
+    vkCmdBindIndexBuffer(cmd.cmd(), static_index_buf_->buffer.buffer(), 0, VK_INDEX_TYPE_UINT32);
+    auto& curr_frame_data = curr_frame_2();
+    auto* draw_cnt_buf = get_device().get_buffer(curr_frame_data.draw_cnt_buf);
+    auto* final_draw_cmd_buf = get_device().get_buffer(curr_frame_data.final_draw_cmd_buf);
+    if (portable_) {
+      vkCmdDrawIndexedIndirect(cmd.cmd(), final_draw_cmd_buf->buffer(), 0, draw_cnt_,
+                               sizeof(VkDrawIndexedIndirectCommand));
+    } else {
+      vkCmdDrawIndexedIndirectCount(cmd.cmd(), final_draw_cmd_buf->buffer(), 0,
+                                    draw_cnt_buf->buffer(), 0, max_draws,
+                                    sizeof(VkDrawIndexedIndirectCommand));
+    }
+  });
+  shadow_sampler_ = SamplerCache::get().get_or_create_sampler(
+      SamplerCreateInfo{.min_filter = VK_FILTER_LINEAR,
+                        .mag_filter = VK_FILTER_LINEAR,
+                        .address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                        .border_color = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE});
+
   ibl_ = IBL{};
 
   // TODO: make a function for this lmao, so cringe
@@ -1327,54 +1358,6 @@ void VkRender2::add_basic_forward_pass3(RenderGraph& rg) {
     cmd.dispatch((draw_cnt_ + 256) / 256, 1, 1);
   });
 
-  AttachmentInfo shadow_map_att_info{.size_class = SizeClass::Absolute,
-                                     .dims = {4096, 4096, 1},
-                                     .format = Format::D32Sfloat,
-                                     .layers = csm_->get_cascade_count()};
-  {
-    auto& csm_prepare_pass = rg.add_pass("csm_prepare");
-    csm_prepare_pass.add_proxy("shadow_data_buf", Access::TransferWrite);
-    csm_prepare_pass.set_execute_fn([this](CmdEncoder& cmd) {
-      auto* buf = get_device().get_buffer(csm_->get_shadow_data_buffer(curr_frame_num()));
-      if (!buf) return;
-      vkCmdUpdateBuffer(cmd.cmd(), buf->buffer(), 0, sizeof(CSM::ShadowData), &csm_->data);
-    });
-
-    auto& csm = rg.add_pass("csm");
-    auto rg_shadow_map_img =
-        csm.add("shadow_map_img", shadow_map_att_info, Access::DepthStencilWrite);
-    csm.add_proxy("draw_cnt_buf", Access::IndirectRead);
-    csm.add_proxy("final_draw_cmd_buf", Access::IndirectRead);
-    csm.set_execute_fn([this, scene_buffer_handle, rg_shadow_map_img](CmdEncoder& cmd) {
-      csm_->shadow_map_img = rg_.get_texture_handle(rg_shadow_map_img);
-      csm_->render2(cmd.cmd(), [this, scene_buffer_handle, &cmd](const mat4& vp_matrix) {
-        ShadowDepthPushConstants pc{
-            vp_matrix,
-            static_vertex_buf_->buffer.resource_info_->handle,
-            static_instance_data_buf_->buffer.resource_info_->handle,
-            static_object_data_buf_->buffer.resource_info_->handle,
-            scene_buffer_handle,
-            static_materials_buf_->buffer.resource_info_->handle,
-            linear_sampler_->resource_info.handle,
-        };
-        cmd.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-        vkCmdBindIndexBuffer(cmd.cmd(), static_index_buf_->buffer.buffer(), 0,
-                             VK_INDEX_TYPE_UINT32);
-        auto& curr_frame_data = curr_frame_2();
-        auto* draw_cnt_buf = get_device().get_buffer(curr_frame_data.draw_cnt_buf);
-        auto* final_draw_cmd_buf = get_device().get_buffer(curr_frame_data.final_draw_cmd_buf);
-        if (portable) {
-          vkCmdDrawIndexedIndirect(cmd.cmd(), final_draw_cmd_buf->buffer(), 0, draw_cnt_,
-                                   sizeof(VkDrawIndexedIndirectCommand));
-        } else {
-          vkCmdDrawIndexedIndirectCount(cmd.cmd(), final_draw_cmd_buf->buffer(), 0,
-                                        draw_cnt_buf->buffer(), 0, max_draws,
-                                        sizeof(VkDrawIndexedIndirectCommand));
-        }
-      });
-    });
-  }
-
   {
     auto& forward = rg.add_pass("forward");
     auto final_out_handle =
@@ -1382,7 +1365,7 @@ void VkRender2::add_basic_forward_pass3(RenderGraph& rg) {
     forward.add_proxy("draw_cnt_buf", Access::IndirectRead);
     forward.add_proxy("final_draw_cmd_buf", Access::IndirectRead);
     forward.add_proxy("shadow_data_buf", Access::FragmentRead);
-    forward.add("shadow_map_img", shadow_map_att_info, Access::FragmentRead);
+    forward.add("shadow_map_img", csm_->get_shadow_map_att_info(), Access::FragmentRead);
     auto depth_out_handle =
         forward.add("depth", {.format = depth_img_format_}, Access::DepthStencilWrite);
     forward.set_execute_fn([&rg, final_out_handle, this, depth_out_handle,
@@ -1417,8 +1400,12 @@ void VkRender2::add_basic_forward_pass3(RenderGraph& rg) {
             get_device()
                 .get_buffer(csm_->get_shadow_data_buffer(curr_frame_num()))
                 ->resource_info_->handle,
-            csm_->get_shadow_sampler().resource_info.handle,
-            get_device().get_image(csm_->shadow_map_img)->view().sampled_img_resource().handle,
+            shadow_sampler_.resource_info.handle,
+            get_device()
+                .get_image(csm_->get_shadow_map_img())
+                ->view()
+                .sampled_img_resource()
+                .handle,
             ibl_->irradiance_cubemap_tex_->view().sampled_img_resource().handle,
             ibl_->brdf_lut_->view().sampled_img_resource().handle,
             ibl_->prefiltered_env_map_tex_->texture->view().sampled_img_resource().handle,
@@ -1474,8 +1461,7 @@ void VkRender2::add_basic_forward_pass3(RenderGraph& rg) {
   {
     auto& pp = rg.add_pass("post_process");
     auto draw_out_handle = pp.add("draw_out", {.format = draw_img_format_}, Access::ComputeRead);
-    auto final_out_handle =
-        pp.add("final_out", {.format = Format::R8G8B8A8Unorm}, Access::ComputeWrite);
+    auto final_out_handle = pp.add("final_out", swapchain_att_info_, Access::ComputeWrite);
     pp.set_execute_fn([this, &rg, draw_out_handle, final_out_handle](CmdEncoder& cmd) {
       if (postprocess_pass_enabled.get()) {
         u32 postprocess_flags = 0;
@@ -1498,6 +1484,15 @@ void VkRender2::add_basic_forward_pass3(RenderGraph& rg) {
         vkCmdDispatch(cmd.cmd(), (post_processed_img->extent_2d().width + 16) / 16,
                       (post_processed_img->extent_2d().height + 16) / 16, 1);
       }
+    });
+  }
+  {
+    auto& imgui_p = rg.add_pass("imgui");
+    auto handle = imgui_p.add("final_out", swapchain_att_info_, Access::ColorRW);
+    imgui_p.set_execute_fn([this, handle, &rg](CmdEncoder& cmd) {
+      auto* tex = rg.get_texture(handle);
+      render_imgui(cmd.cmd(), {tex->extent_2d().width, tex->extent_2d().height},
+                   tex->view().view());
     });
   }
 }

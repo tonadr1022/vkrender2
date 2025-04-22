@@ -16,6 +16,7 @@
 #include "util/BitOps.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/Device.hpp"
+#include "vk2/Hash.hpp"
 #include "vk2/Texture.hpp"
 #include "vk2/VkTypes.hpp"
 
@@ -204,6 +205,15 @@ VoidResult RenderGraph::bake() {
   // it for (auto& pass : passes_) {
   //   // for (auto& tex_resource : pass.)
   // }
+
+  u64 all_pass_hash{};
+  for (auto& pass : passes_) {
+    vk2::detail::hashing::hash_combine(all_pass_hash, pass.get_name());
+  }
+  if (all_pass_hash == all_submitted_pass_name_hash_) {
+    return {};
+  }
+  all_submitted_pass_name_hash_ = all_pass_hash;
 
   if (auto ok = validate(); !ok) {
     return ok;
@@ -456,6 +466,7 @@ void RenderGraph::execute(CmdEncoder& cmd) {
   {
     ZoneScopedN("Record commands");
     for (u32 pass_i : pass_stack_) {
+      ZoneScopedN("Record command");
       auto& pass = passes_[pass_i];
       auto& submission_state = pass_submission_state_[pass_i];
 
@@ -508,11 +519,20 @@ void RenderGraph::execute(CmdEncoder& cmd) {
       vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
     }
 
+    // only write each image to the swapchain once
+    util::fixed_vector<u32, 20> swapchain_write_indices;
     for (u32 pass_i : swapchain_writer_passes_) {
       auto& pass = passes_[pass_i];
       if (const auto* output = pass.get_swapchain_write_usage(); output != nullptr) {
         auto* resource = get_resource(output->idx);
         auto* tex = get_texture(output->idx);
+
+        if (std::ranges::find(swapchain_write_indices, output->idx) !=
+            swapchain_write_indices.end()) {
+          continue;
+        }
+        swapchain_write_indices.push_back(output->idx);
+
         assert(resource && tex && resource->physical_idx < resource_pipeline_states_.size());
         if (!resource || !tex || resource->physical_idx >= resource_pipeline_states_.size()) {
           continue;

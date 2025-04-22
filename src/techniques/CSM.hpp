@@ -2,7 +2,8 @@
 
 #include <functional>
 
-#include "vk2/Buffer.hpp"
+#include "CommandEncoder.hpp"
+#include "Types.hpp"
 #include "vk2/Device.hpp"
 #include "vk2/PipelineManager.hpp"
 #include "vk2/SamplerCache.hpp"
@@ -14,8 +15,12 @@ namespace gfx {
 class StateTracker;
 
 struct RenderGraph;
+class BaseRenderer;
 class CSM {
  public:
+  using DrawFunc = std::function<void(CmdEncoder&, const mat4& vp)>;
+  explicit CSM(RenderGraph& rg, BaseRenderer* renderer, DrawFunc draw_fn);
+
   struct ShadowData {
     std::array<mat4, 5> light_space_matrices;
     vec4 biases;  // min = x, max = y, pcf scale, z, z_far: w
@@ -23,27 +28,28 @@ class CSM {
     uvec4 settings;
   };
 
-  using DrawFunc = std::function<void(const mat4& vp)>;
-  explicit CSM(VkPipelineLayout pipeline_layout);
   void debug_shadow_pass(StateTracker& state, VkCommandBuffer cmd,
                          const vk2::Sampler& linear_sampler);
-  void render2(VkCommandBuffer cmd, const DrawFunc& draw);
   void prepare_frame(RenderGraph& rg, u32 frame_num, const mat4& cam_view, vec3 light_dir,
                      float aspect_ratio, float fov_deg, const AABB& aabb, vec3 view_pos);
   void on_imgui(VkSampler sampler);
+  void init(RenderGraph& rg);
 
   [[nodiscard]] const vk2::Image& get_debug_img() const { return shadow_map_debug_img_; }
   [[nodiscard]] vk2::BufferHandle get_shadow_data_buffer(u32 frame_num) const {
     return shadow_data_bufs_[frame_num % shadow_data_bufs_.size()].handle;
   }
-  [[nodiscard]] const vk2::Sampler& get_shadow_sampler() const { return shadow_sampler_; }
-  // vk2::Image& get_shadow_img() { return shadow_map_img_; }
-  vk2::ImageHandle shadow_map_img;
-  [[nodiscard]] u32 get_cascade_count() const { return cascade_count_; }
+  [[nodiscard]] const AttachmentInfo& get_shadow_map_att_info() const {
+    return shadow_map_img_att_info_;
+  }
 
-  ShadowData data{};
+  [[nodiscard]] vk2::ImageHandle get_shadow_map_img() const { return shadow_map_img_; }
 
  private:
+  vk2::ImageHandle shadow_map_img_;
+  ShadowData data_{};
+  DrawFunc draw_fn_;
+  AttachmentInfo shadow_map_img_att_info_;
   vk2::PipelineHandle shadow_depth_pipline_;
   vk2::PipelineHandle depth_debug_pipeline_;
   uvec2 shadow_map_res_{};
@@ -57,7 +63,6 @@ class CSM {
   std::array<mat4, max_cascade_levels> light_matrices_;
   vk2::ImageHandle curr_shadow_map_img_;
   std::array<vk2::Holder<vk2::ImageViewHandle>, max_cascade_levels> shadow_map_img_views_;
-  vk2::Sampler shadow_sampler_;
   i32 debug_cascade_idx_{0};
   float shadow_z_near_{.1};
   float shadow_z_far_{225};
@@ -71,5 +76,6 @@ class CSM {
   bool pcf_{true};
   float cascade_linear_factor_{.6};
   float z_mult_{2.75};
+  BaseRenderer* renderer_{};
 };
 }  // namespace gfx

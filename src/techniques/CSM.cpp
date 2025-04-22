@@ -4,8 +4,11 @@
 #include <vulkan/vulkan_core.h>
 
 #include <tracy/Tracy.hpp>
+#include <utility>
 
 #include "AABB.hpp"
+#include "BaseRenderer.hpp"
+#include "CommandEncoder.hpp"
 #include "RenderGraph.hpp"
 #include "StateTracker.hpp"
 #include "glm/ext/matrix_transform.hpp"
@@ -151,8 +154,9 @@ void calc_csm_light_space_matrices(std::span<mat4> matrices, std::span<float> le
 
 namespace gfx {
 
-CSM::CSM(VkPipelineLayout pipeline_layout)
-    : shadow_map_res_(uvec2{4096}),
+CSM::CSM(RenderGraph& rg, BaseRenderer* renderer, DrawFunc draw_fn)
+    : draw_fn_(std::move(draw_fn)),
+      shadow_map_res_(uvec2{4096}),
       shadow_map_debug_img_(
           vk2::Image{ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
                                      .format = VK_FORMAT_R16G16B16A16_SFLOAT,
@@ -160,7 +164,7 @@ CSM::CSM(VkPipelineLayout pipeline_layout)
                                      .mip_levels = 1,
                                      .array_layers = 1,
                                      .usage = ImageUsage::General}}),
-      pipeline_layout_(pipeline_layout) {
+      renderer_(renderer) {
   for (auto& b : shadow_data_bufs_) {
     b = get_device().create_buffer_holder(BufferCreateInfo{
         .size = sizeof(ShadowData),
@@ -168,17 +172,9 @@ CSM::CSM(VkPipelineLayout pipeline_layout)
     });
   }
   ZoneScoped;
-  shadow_sampler_ = SamplerCache::get().get_or_create_sampler(SamplerCreateInfo{
-      .min_filter = VK_FILTER_LINEAR,
-      .mag_filter = VK_FILTER_LINEAR,
-      .address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-      .border_color = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE
-
-  });
   shadow_depth_pipline_ = PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
       .vertex_path = "shadow_depth.vert",
       .fragment_path = "shadow_depth.frag",
-      .layout = pipeline_layout_,
       .rendering = {.depth_format = to_vkformat(Format::D32Sfloat)},
       .rasterization = {.depth_clamp = true, .depth_bias = true},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::Less),
@@ -188,11 +184,16 @@ CSM::CSM(VkPipelineLayout pipeline_layout)
   depth_debug_pipeline_ = PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
       .vertex_path = "fullscreen_quad.vert",
       .fragment_path = "debug/depth_debug.frag",
-      .layout = pipeline_layout_,
       .rendering = {.color_formats = {shadow_map_debug_img_.format()}},
       .rasterization = {.cull_mode = CullMode::Front},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_disable(),
   });
+  shadow_map_img_att_info_ = {.size_class = SizeClass::Absolute,
+                              .dims = {shadow_map_res_, 1},
+                              .format = Format::D32Sfloat,
+                              .layers = cascade_count_};
+
+  init(rg);
 }
 
 void CSM::debug_shadow_pass(StateTracker& state, VkCommandBuffer cmd,
@@ -218,7 +219,7 @@ void CSM::debug_shadow_pass(StateTracker& state, VkCommandBuffer cmd,
     u32 tex_idx;
     u32 sampler_idx;
     u32 array_idx;
-  } pc{get_device().get_image(shadow_map_img)->view().sampled_img_resource().handle,
+  } pc{get_device().get_image(shadow_map_img_)->view().sampled_img_resource().handle,
        linear_sampler.resource_info.handle, static_cast<u32>(debug_cascade_idx_)};
   vkCmdPushConstants(cmd, pipeline_layout_, VK_SHADER_STAGE_ALL, 0, sizeof(pc), &pc);
   vkCmdDraw(cmd, 3, 1, 0, 0);
@@ -288,65 +289,83 @@ void CSM::prepare_frame(RenderGraph& rg, u32 frame_num, const mat4& cam_view, ve
                                 std::span(levels.data(), cascade_count_ - 1), cam_view, light_dir,
                                 z_mult_, fov_deg, aspect_ratio, shadow_z_near_, shadow_z_far,
                                 shadow_map_res_.x);
-  data = {.biases = {0., 0., 0., shadow_z_far}};
+  data_ = {.biases = {0., 0., 0., shadow_z_far}};
   for (u32 i = 0; i < cascade_count_; i++) {
-    data.light_space_matrices[i] = light_matrices_[i];
+    data_.light_space_matrices[i] = light_matrices_[i];
   }
   for (u32 i = 0; i < cascade_count_ - 1; i++) {
-    data.cascade_levels[i] = levels[i];
+    data_.cascade_levels[i] = levels[i];
   }
-  data.settings = {};
+  data_.settings = {};
   if (pcf_) {
-    data.settings.x |= 0x1;
+    data_.settings.x |= 0x1;
   }
-  data.biases.x = min_bias_;
-  data.biases.y = max_bias_;
-  data.biases.z = pcf_scale_;
-  data.settings.w = cascade_count_;
+  data_.biases.x = min_bias_;
+  data_.biases.y = max_bias_;
+  data_.biases.z = pcf_scale_;
+  data_.settings.w = cascade_count_;
 
   auto& buf = shadow_data_bufs_[frame_num % shadow_data_bufs_.size()];
   rg.set_resource("shadow_data_buf", buf.handle);
 }
 
-void CSM::render2(VkCommandBuffer cmd, const DrawFunc& draw) {
-  init::begin_debug_utils_label(cmd, "csm render");
-  if (curr_shadow_map_img_ != shadow_map_img) {
-    curr_shadow_map_img_ = shadow_map_img;
-    for (u32 i = 0; i < cascade_count_; i++) {
-      shadow_map_img_views_[i] =
-          get_device().create_image_view_holder(*get_device().get_image(curr_shadow_map_img_),
-                                                vk2::ImageViewCreateInfo{
-                                                    to_vkformat(Format::D32Sfloat),
-                                                    VkImageSubresourceRange{
-                                                        .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
-                                                        .baseMipLevel = 0,
-                                                        .levelCount = 1,
-                                                        .baseArrayLayer = i,
-                                                        .layerCount = 1,
-                                                    },
-                                                });
-    }
-  }
+void CSM::init(RenderGraph& rg) {
+  auto& csm_prepare_pass = rg.add_pass("csm_prepare");
+  csm_prepare_pass.add_proxy("shadow_data_buf", Access::TransferWrite);
+  csm_prepare_pass.set_execute_fn([this](CmdEncoder& cmd) {
+    auto* buf = get_device().get_buffer(
+        shadow_data_bufs_[renderer_->curr_frame_num() % shadow_data_bufs_.size()]);
+    if (!buf) return;
+    vkCmdUpdateBuffer(cmd.cmd(), buf->buffer(), 0, sizeof(CSM::ShadowData), &data_);
+  });
 
-  for (u32 i = 0; i < cascade_count_; i++) {
-    VkClearValue depth_clear{.depthStencil = {.depth = 1.f}};
-    // TODO: make image views into a handle. when image is destroyed, image views will be too, so
-    // then can make new ones
-    VkRenderingAttachmentInfo depth_att = init::rendering_attachment_info(
-        get_device().get_image_view(shadow_map_img_views_[i])->view(),
-        VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, &depth_clear);
-    auto* sm_img = get_device().get_image(shadow_map_img);
-    auto rendering_info = init::rendering_info(sm_img->extent_2d(), nullptr, &depth_att);
-    vkCmdBeginRenderingKHR(cmd, &rendering_info);
-    set_viewport_and_scissor(cmd, sm_img->extent_2d());
-    if (depth_bias_enabled_) {
-      vkCmdSetDepthBias(cmd, depth_bias_constant_factor_, 0.0f, depth_bias_slope_factor_);
+  auto& csm = rg.add_pass("csm");
+  auto rg_shadow_map_img =
+      csm.add("shadow_map_img", shadow_map_img_att_info_, Access::DepthStencilWrite);
+  csm.add_proxy("draw_cnt_buf", Access::IndirectRead);
+  csm.add_proxy("final_draw_cmd_buf", Access::IndirectRead);
+  csm.set_execute_fn([this, rg_shadow_map_img, &rg](CmdEncoder& cmd) {
+    shadow_map_img_ = rg.get_texture_handle(rg_shadow_map_img);
+    init::begin_debug_utils_label(cmd.cmd(), "csm render");
+    if (curr_shadow_map_img_ != shadow_map_img_) {
+      curr_shadow_map_img_ = shadow_map_img_;
+      for (u32 i = 0; i < cascade_count_; i++) {
+        shadow_map_img_views_[i] =
+            get_device().create_image_view_holder(*get_device().get_image(curr_shadow_map_img_),
+                                                  vk2::ImageViewCreateInfo{
+                                                      to_vkformat(Format::D32Sfloat),
+                                                      VkImageSubresourceRange{
+                                                          .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+                                                          .baseMipLevel = 0,
+                                                          .levelCount = 1,
+                                                          .baseArrayLayer = i,
+                                                          .layerCount = 1,
+                                                      },
+                                                  });
+      }
     }
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                      PipelineManager::get().get(shadow_depth_pipline_)->pipeline);
-    draw(light_matrices_[i]);
-    vkCmdEndRenderingKHR(cmd);
-  }
-  init::end_debug_utils_label(cmd);
+
+    for (u32 i = 0; i < cascade_count_; i++) {
+      VkClearValue depth_clear{.depthStencil = {.depth = 1.f}};
+      // TODO: make image views into a handle. when image is destroyed, image views will be too, so
+      // then can make new ones
+      VkRenderingAttachmentInfo depth_att = init::rendering_attachment_info(
+          get_device().get_image_view(shadow_map_img_views_[i])->view(),
+          VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, &depth_clear);
+      auto* sm_img = get_device().get_image(shadow_map_img_);
+      auto rendering_info = init::rendering_info(sm_img->extent_2d(), nullptr, &depth_att);
+      vkCmdBeginRenderingKHR(cmd.cmd(), &rendering_info);
+      set_viewport_and_scissor(cmd.cmd(), sm_img->extent_2d());
+      if (depth_bias_enabled_) {
+        vkCmdSetDepthBias(cmd.cmd(), depth_bias_constant_factor_, 0.0f, depth_bias_slope_factor_);
+      }
+      vkCmdBindPipeline(cmd.cmd(), VK_PIPELINE_BIND_POINT_GRAPHICS,
+                        PipelineManager::get().get(shadow_depth_pipline_)->pipeline);
+      draw_fn_(cmd, light_matrices_[i]);
+      vkCmdEndRenderingKHR(cmd.cmd());
+    }
+    init::end_debug_utils_label(cmd.cmd());
+  });
 }
+
 }  // namespace gfx

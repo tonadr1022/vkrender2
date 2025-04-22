@@ -4,6 +4,8 @@
 
 #include <cstdint>
 
+#include "Common.hpp"
+
 namespace gfx {
 
 enum class Format {
@@ -311,6 +313,37 @@ enum BufferUsageFlagBits : BufferUsageFlags {
   BufferUsageIndirectBufferBit = 0x00000100,
   BufferUsageDeviceAddressBit = 0x00020000,
   // TODO: rest
+};
+
+enum Access : uint16_t {
+  None = 1ULL << 0,
+  ColorWrite = 1ULL << 1,
+  ColorRead = 1ULL << 2,
+  ColorRW = ColorRead | ColorWrite,
+  DepthStencilRead = 1ULL << 3,
+  DepthStencilWrite = 1ULL << 4,
+  DepthStencilRW = DepthStencilRead | DepthStencilWrite,
+  VertexRead = 1ULL << 5,
+  IndexRead = 1ULL << 6,
+  IndirectRead = 1ULL << 7,
+  ComputeRead = 1ULL << 8,
+  ComputeWrite = 1ULL << 9,
+  ComputeRW = ComputeRead | ComputeWrite,
+  TransferRead = 1ULL << 10,
+  TransferWrite = 1ULL << 11,
+  FragmentRead = 1ULL << 12,
+};
+
+using AccessFlags = uint32_t;
+
+enum class SizeClass : uint8_t { Absolute, SwapchainRelative, InputRelative };
+
+struct AttachmentInfo {
+  SizeClass size_class{SizeClass::SwapchainRelative};
+  uvec3 dims{1};
+  Format format{};
+  u32 layers{1};
+  u32 levels{1};
 };
 
 }  // namespace gfx
