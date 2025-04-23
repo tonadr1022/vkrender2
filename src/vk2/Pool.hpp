@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <vector>
 
-#include "Common.hpp"
 #include "vk2/Hash.hpp"
 template <typename, typename>
 struct Pool;
@@ -14,13 +13,7 @@ struct Pool {
   static_assert(std::is_default_constructible_v<ObjectT>, "ObjectT must be default constructible");
 
   using IndexT = uint32_t;
-  Pool() {
-    u32 init_size = 10;
-    entries_.resize(init_size);
-    for (u32 i = 0; i < init_size; i++) {
-      free_list_.emplace_back(i);
-    }
-  }
+  Pool() { entries_.reserve(20); }
   Pool& operator=(Pool&& other) = delete;
   Pool& operator=(const Pool& other) = delete;
   Pool(const Pool& other) = delete;
@@ -42,13 +35,24 @@ struct Pool {
 
   template <typename... Args>
   HandleT alloc(Args&&... args) {
-    IndexT idx = get_new_idx();
-    ::new (std::addressof(entries_[idx])) Entry{std::forward<Args>(args)...};
+    HandleT handle;
+    if (!free_list_.empty()) {
+      handle.idx_ = free_list_.back();
+      free_list_.pop_back();
+      ::new (std::addressof(entries_[handle.idx_].object)) ObjectT{std::forward<Args>(args)...};
+    } else {
+      handle.idx_ = entries_.size();
+      entries_.emplace_back(std::forward<Args>(args)...);
+    }
+    handle.gen_ = entries_[handle.idx_].gen_;
+    num_created_++;
     size_++;
-    return HandleT{idx, entries_[idx].gen_};
+    return handle;
   }
 
   [[nodiscard]] IndexT size() const { return size_; }
+  [[nodiscard]] size_t get_num_created() const { return num_created_; }
+  [[nodiscard]] size_t get_num_destroyed() const { return num_destroyed_; }
 
   void destroy(HandleT handle) {
     if (handle.idx_ >= entries_.size()) {
@@ -61,6 +65,7 @@ struct Pool {
     entries_[handle.idx_].object = {};
     free_list_.emplace_back(handle.idx_);
     size_--;
+    num_destroyed_++;
   }
 
   ObjectT* get(HandleT handle) {
@@ -75,19 +80,13 @@ struct Pool {
   }
 
  private:
-  IndexT get_new_idx() {
-    if (!free_list_.empty()) {
-      IndexT idx = free_list_.back();
-      free_list_.pop_back();
-      return idx;
-    }
-    entries_.emplace_back();
-    return entries_.size();
-  }
+  IndexT get_new_idx() {}
 
   std::vector<IndexT> free_list_;
   std::vector<Entry> entries_;
   IndexT size_{};
+  size_t num_created_{};
+  size_t num_destroyed_{};
 };
 
 template <typename HandleT>

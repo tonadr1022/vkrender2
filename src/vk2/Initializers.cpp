@@ -150,14 +150,14 @@ VkRenderingInfo rendering_info(VkExtent2D render_extent,
 }
 
 VkRenderingInfo rendering_info(VkExtent2D render_extent,
-                               std::span<VkRenderingAttachmentInfo> color_attachments,
+                               VkRenderingAttachmentInfo* color_attachments, u32 color_att_count,
                                VkRenderingAttachmentInfo* depth_attachment,
                                VkRenderingAttachmentInfo* stencil_attachment) {
   return {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
           .renderArea = VkRect2D{{0, 0}, render_extent},
           .layerCount = 1,
-          .colorAttachmentCount = static_cast<u32>(color_attachments.size()),
-          .pColorAttachments = color_attachments.data(),
+          .colorAttachmentCount = color_att_count,
+          .pColorAttachments = color_attachments,
           .pDepthAttachment = depth_attachment,
           .pStencilAttachment = stencil_attachment};
 }

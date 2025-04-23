@@ -332,6 +332,7 @@ enum Access : uint16_t {
   TransferRead = 1ULL << 10,
   TransferWrite = 1ULL << 11,
   FragmentRead = 1ULL << 12,
+  ComputeSample = 1ULL << 13 | ComputeRead,
 };
 
 using AccessFlags = uint32_t;

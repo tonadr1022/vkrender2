@@ -95,6 +95,9 @@ VkImageUsageFlags get_image_usage(Access access) {
   if (access & (Access::FragmentRead)) {
     usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
   }
+  if (access & (Access::ComputeSample)) {
+    usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+  }
   if (access & (Access::DepthStencilRead | Access::DepthStencilWrite)) {
     usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
   }
@@ -814,55 +817,64 @@ void RenderGraph::setup_attachments() {
   physical_image_attachments_.resize(physical_resource_dims_.size());
   physical_buffers_.resize(physical_resource_dims_.size());
 
+  for (auto& [key, val] : img_cache_used_) {
+    img_cache_.emplace(key, std::move(val));
+  }
+  img_cache_used_.clear();
+
   for (size_t i = 0; i < physical_resource_dims_.size(); i++) {
     auto& dims = physical_resource_dims_[i];
     if (dims.is_image()) {
-      auto* img = vk2::get_device().get_image(physical_image_attachments_[i]);
-      bool is_reusable_img = false;
-      if (img) {
-        const auto& cinfo = img->create_info();
-        bool valid_extent = false;
-        if (dims.size_class == SizeClass::SwapchainRelative) {
-          valid_extent = cinfo.extent.width == swapchain_info_.width &&
-                         cinfo.extent.height == swapchain_info_.height;
-        } else {
-          valid_extent = cinfo.extent.width == dims.width && cinfo.extent.height == dims.height &&
-                         cinfo.extent.depth == dims.depth;
+      vk2::ImageCreateInfo info{};
+      info.extent = VkExtent3D{dims.width, dims.height, dims.depth};
+      info.array_layers = dims.layers;
+      info.mip_levels = dims.levels;
+      info.samples = (VkSampleCountFlagBits)(1 << (dims.samples - 1));
+      info.format = vk2::to_vkformat(dims.format);
+      info.override_usage_flags |= dims.image_usage_flags;
+      if (dims.depth == 1) {
+        info.view_type = VK_IMAGE_VIEW_TYPE_2D;
+        if (info.array_layers > 1) {
+          info.view_type = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
         }
-        if (valid_extent && cinfo.array_layers == dims.layers && cinfo.mip_levels == dims.levels &&
-            cinfo.samples == dims.samples && cinfo.format == vk2::to_vkformat(dims.format) &&
-            cinfo.override_usage_flags == dims.image_usage_flags) {
-          is_reusable_img = true;
-        }
+      } else {
+        info.view_type = VK_IMAGE_VIEW_TYPE_3D;
       }
-      if (!is_reusable_img) {
-        image_pipeline_states_.erase(physical_image_attachments_[i]);
-        vk2::ImageCreateInfo info{};
-        info.extent = VkExtent3D{dims.width, dims.height, dims.depth};
-        info.array_layers = dims.layers;
-        info.mip_levels = dims.levels;
-        info.samples = (VkSampleCountFlagBits)(1 << (dims.samples - 1));
-        info.format = vk2::to_vkformat(dims.format);
-        info.override_usage_flags |= dims.image_usage_flags;
-        if (dims.depth == 1) {
-          info.view_type = VK_IMAGE_VIEW_TYPE_2D;
-          if (info.array_layers > 1) {
-            info.view_type = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+      assert(i < physical_image_attachments_.size());
+      {
+        auto it = img_cache_.find(dims);
+        bool need_new_img{true};
+        if (it != img_cache_.end()) {
+          bool valid_extent{false};
+          auto* img = vk2::get_device().get_image(it->second);
+          if (img) {
+            const auto& cinfo = img->create_info();
+            if (dims.size_class == SizeClass::SwapchainRelative) {
+              valid_extent = cinfo.extent.width == swapchain_info_.width &&
+                             cinfo.extent.height == swapchain_info_.height;
+            } else {
+              valid_extent = cinfo.extent.width == dims.width &&
+                             cinfo.extent.height == dims.height && cinfo.extent.depth == dims.depth;
+            }
+            if (valid_extent && cinfo.array_layers == dims.layers &&
+                cinfo.mip_levels == dims.levels && cinfo.samples == dims.samples &&
+                cinfo.format == vk2::to_vkformat(dims.format) &&
+                cinfo.override_usage_flags == dims.image_usage_flags) {
+              physical_image_attachments_[i] = it->second.handle;
+              need_new_img = false;
+            }
           }
-        } else {
-          info.view_type = VK_IMAGE_VIEW_TYPE_3D;
+          img_cache_used_.emplace_back(it->first, std::move(it->second));
+          img_cache_.erase(it);
         }
-        assert(i < physical_image_attachments_.size());
-        {
-          auto it = img_cache_.find(dims);
-          if (it != img_cache_.end()) {
-            physical_image_attachments_[i] = it->second.handle;
-          } else {
-            auto result = img_cache_.emplace(dims, vk2::get_device().create_image_holder(info));
-            physical_image_attachments_[i] = result.first->second.handle;
-          }
+        if (need_new_img) {
+          image_pipeline_states_.erase(physical_image_attachments_[i]);
+          img_cache_used_.emplace_back(dims, vk2::get_device().create_image_holder(info));
+          // if (!inserted) {
+          //   it->second = vk2::get_device().create_image_holder(info);
+          // }
+          physical_image_attachments_[i] = img_cache_used_.back().second.handle;
         }
-        img = vk2::get_device().get_image(physical_image_attachments_[i]);
       }
     } else {
       if (dims.buffer_info.proxy_hash != 0) {
@@ -1024,7 +1036,7 @@ void RenderGraph::physical_pass_setup_barriers(u32 pass_i) {
         } else {
           b.srcStageMask = VK_PIPELINE_STAGE_NONE;
           b.srcAccessMask = 0;
-          assert(b.oldLayout == VK_IMAGE_LAYOUT_UNDEFINED);
+          // assert(b.oldLayout == VK_IMAGE_LAYOUT_UNDEFINED);
         }
         state.image_barriers.push_back(b);
       }

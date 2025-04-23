@@ -11,7 +11,7 @@ compile_shader() {
 	local spv_file="${file%.*}.spv"
 
 	echo "Compiling: $file"
-	if output=$(glslangValidator -V "$file" -o "$spv_file" -gVS 2>&1); then
+	if output=$(glslangValidator -gVS -V "$file" -o "$spv_file" 2>&1); then
 		echo "$output"
 	else
 		echo "Error compiling $file:"

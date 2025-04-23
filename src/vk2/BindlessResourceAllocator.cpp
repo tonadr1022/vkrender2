@@ -5,6 +5,7 @@
 
 #include <tracy/Tracy.hpp>
 
+#include "Logger.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/Resource.hpp"
 #include "vk2/Texture.hpp"

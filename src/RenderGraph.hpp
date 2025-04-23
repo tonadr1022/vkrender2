@@ -263,8 +263,12 @@ struct RenderGraph {
   std::unordered_set<uint32_t> dup_prune_set_;
 
   // owns images
-  std::unordered_map<ResourceDimensions, vk2::Holder<vk2::ImageHandle>, ResourceDimensionsHasher>
+  std::unordered_multimap<ResourceDimensions, vk2::Holder<vk2::ImageHandle>,
+                          ResourceDimensionsHasher>
       img_cache_;
+  std::vector<std::pair<ResourceDimensions, vk2::Holder<vk2::ImageHandle>>> img_cache_used_;
+  // std::unordered_map<ResourceDimensions, vk2::Holder<vk2::ImageHandle>, ResourceDimensionsHasher>
+  //     img_cache_used_;
 
   std::vector<vk2::ImageHandle> physical_image_attachments_;
   std::vector<vk2::BufferHandle> physical_buffers_;

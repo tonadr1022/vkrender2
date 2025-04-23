@@ -345,7 +345,7 @@ VkPipeline PipelineManager::load_graphics_pipeline_impl(const GraphicsPipelineCr
       .depthBiasSlopeFactor = info.rasterization.depth_bias_slope_factor,
       .lineWidth = info.rasterization.line_width};
   assert(info.blend.attachments.size() <= 4);
-  std::array<VkPipelineColorBlendAttachmentState, 4> attachments{};
+  std::array<VkPipelineColorBlendAttachmentState, 10> attachments{};
   u32 i = 0;
   u32 attachment_cnt = info.blend.attachments.size();
   for (const auto& attachment : info.blend.attachments) {
@@ -361,9 +361,12 @@ VkPipeline PipelineManager::load_graphics_pipeline_impl(const GraphicsPipelineCr
   }
   // dummy blend attachment if color attachment is specified but no blending
   if (i == 0 && color_format_cnt > 0) {
-    attachment_cnt = 1;
-    attachments[0] =
+    attachment_cnt = color_format_cnt;
+    auto default_blend =
         convert_color_blend_attachment(GraphicsPipelineCreateInfo::ColorBlendAttachment{});
+    for (u32 i = 0; i < attachment_cnt; i++) {
+      attachments[i] = default_blend;
+    }
   }
 
   VkPipelineColorBlendStateCreateInfo blend_state{

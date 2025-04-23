@@ -10,6 +10,7 @@
 #include "Logger.hpp"
 #include "VkBootstrap.h"
 #include "VkCommon.hpp"
+#include "imgui.h"
 
 namespace gfx::vk2 {
 namespace {
@@ -70,9 +71,9 @@ void Device::init_impl(const CreateInfo& info) {
   VkPhysicalDeviceSynchronization2Features sync2_features{};
   sync2_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
   sync2_features.synchronization2 = VK_TRUE;
-  std::vector<const char*> extensions{{VK_KHR_COPY_COMMANDS_2_EXTENSION_NAME,
-                                       VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
-                                       VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME}};
+  std::vector<const char*> extensions{
+      {VK_KHR_FORMAT_FEATURE_FLAGS_2_EXTENSION_NAME, VK_KHR_COPY_COMMANDS_2_EXTENSION_NAME,
+       VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME}};
 
   // NOT ON MACOS :(
 #ifndef __APPLE__
@@ -270,6 +271,16 @@ BufferHandle Device::create_buffer(const BufferCreateInfo& info) {
 
 Holder<BufferHandle> Device::create_buffer_holder(const BufferCreateInfo& info) {
   return Holder<BufferHandle>{this, buffer_pool_.alloc(info)};
+}
+
+void Device::on_imgui() const {
+  auto pool_stats = [](const char* pool_name, const auto& pool) {
+    ImGui::Text("%s: \nActive: %u\nCreated: %zu\nDestroyed: %zu", pool_name, pool.size(),
+                pool.get_num_created(), pool.get_num_destroyed());
+  };
+  pool_stats("Images", img_pool_);
+  pool_stats("Image Views", img_view_pool_);
+  pool_stats("Buffers", buffer_pool_);
 }
 
 }  // namespace gfx::vk2

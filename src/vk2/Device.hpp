@@ -90,6 +90,7 @@ class Device {
   static void init(const CreateInfo& info);
   static Device& get();
   static void destroy();
+  void on_imgui() const;
 
   [[nodiscard]] VkDevice device() const { return vkb_device_.device; }
   [[nodiscard]] VkPhysicalDevice phys_device() const { return vkb_phys_device_.physical_device; }
@@ -130,6 +131,7 @@ class Device {
   void destroy(BufferHandle handle);
 
   Image* get_image(ImageHandle handle) { return img_pool_.get(handle); }
+  Image* get_image(const Holder<ImageHandle>& handle) { return img_pool_.get(handle.handle); }
   ImageView* get_image_view(ImageViewHandle handle) { return img_view_pool_.get(handle); }
   ImageView* get_image_view(const Holder<ImageViewHandle>& handle) {
     return img_view_pool_.get(handle.handle);

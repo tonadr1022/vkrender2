@@ -141,6 +141,7 @@ struct VkRender2 final : public BaseRenderer {
     vec3 light_color;
     float ambient_intensity;
   };
+  SceneUniforms scene_uniform_cpu_data_;
 
   VkCommandPool imm_cmd_pool_;
   VkCommandBuffer imm_cmd_buf_;
@@ -248,10 +249,15 @@ struct VkRender2 final : public BaseRenderer {
   vk2::PipelineHandle cull_objs_pipeline_;
   vk2::PipelineHandle skybox_pipeline_;
   vk2::PipelineHandle postprocess_pipeline_;
-  vk2::PipelineHandle basic_draw_pipeline_;
-  vk2::PipelineHandle basic_draw3_pipeline_;
+  vk2::PipelineHandle gbuffer_pipeline_;
+  vk2::PipelineHandle deferred_shade_pipeline_;
+  Format gbuffer_a_format_{Format::R32G32B32A32Sfloat};
+  Format gbuffer_b_format_{Format::R32G32B32A32Sfloat};
+  Format gbuffer_c_format_{Format::R32G32B32A32Sfloat};
   Format draw_img_format_{Format::R32G32B32A32Sfloat};
   Format depth_img_format_{Format::D32Sfloat};
+  // TODO: make more robust settings
+  bool deferred_enabled_{true};
   VkPipelineLayout default_pipeline_layout_{};
   std::queue<InFlightResource<vk2::Buffer*>> pending_buffer_transfers_;
 
@@ -278,10 +284,13 @@ struct VkRender2 final : public BaseRenderer {
   // u64 cube_indices_gpu_offset_{};
 
   void add_basic_forward_pass(RenderGraph& rg);
-  void add_basic_forward_pass3(RenderGraph& rg);
   AttachmentInfo swapchain_att_info_;
-  // TODO: fix
+// TODO: fix
+#ifdef __APPLE__
+  bool portable_{true};
+#else
   bool portable_{false};
+#endif
 
  public:
   std::optional<vk2::Image> load_hdr_img(CmdEncoder& ctx, const std::filesystem::path& path,

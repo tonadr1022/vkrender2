@@ -105,7 +105,6 @@ void load_cam(Camera& cam) {
 void App::run() {
   load_cam(cam_data);
   float last_time{};
-  // VkRender2::get().load_scene("/Users/tony/models/Bistro_Godot_opt.glb", false);
   // VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false);
   // VkRender2::get().load_scene("/home/tony/models/Models/Sponza/glTF/Sponza.gltf", false);
   // VkRender2::get().load_scene("/users/tony/Bistro_Godot_opt.glb", false,
@@ -115,11 +114,13 @@ void App::run() {
   //                             glm::scale(mat4{1}, vec3{10}));
   // VkRender2::get().load_scene(
   //     "/home/tony/models/Models/MetalRoughSpheres/glTF-Binary/MetalRoughSpheres.glb");
-  // VkRender2::get().load_scene(local_models_dir / "Cube/glTF/Cube.gltf", false);
-  VkRender2::get().load_scene(local_models_dir / "sponza.glb", false);
-  std::filesystem::path env_tex = local_models_dir / "quarry_04_puresky_4k.hdr";
+  VkRender2::get().load_scene(local_models_dir / "Cube/glTF/Cube.gltf", false);
+  // VkRender2::get().load_scene(local_models_dir / "sponza.glb", false);
+  // VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false);
+  // VkRender2::get().load_scene("/Users/tony/models/Bistro_Godot_opt.glb", false);
+  // std::filesystem::path env_tex = local_models_dir / "quarry_04_puresky_4k.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/quarry_04_puresky_4k.hdr";
-  // std::filesystem::path env_tex = "/home/tony/Downloads/newport_loft.hdr";
+  std::filesystem::path env_tex = "/home/tony/Downloads/newport_loft.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/golden_gate_hills_4k.hdr";
 
   VkRender2::get().set_env_map(env_tex);
@@ -131,7 +132,6 @@ void App::run() {
     update(dt);
 
     mat4 proj = glm::perspective(glm::radians(fov_degrees), aspect_ratio(), 1000.f, .1f);
-    // mat4 proj = glm::perspective(glm::radians(fov_degrees), aspect_ratio(), 0.1f, 1000.f);
     VkRender2::get().draw({
         .view = cam_data.get_view(),
         .proj = proj,

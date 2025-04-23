@@ -41,7 +41,6 @@ vec3 cascade_debug_color(in ShadowData shadow_ubo, in SceneData data, vec3 fragP
 }
 
 float shadow_projection(uint shadow_img_idx, uint shadow_sampler_idx, vec4 shadow_coord, vec2 offset, float bias, uint layer) {
-    float shadow_factor = 1.0;
     // perspective divide
     shadow_coord = shadow_coord / shadow_coord.w;
     // [-1,1] to [0,1]
@@ -51,7 +50,7 @@ float shadow_projection(uint shadow_img_idx, uint shadow_sampler_idx, vec4 shado
             shadow_coord.x < 0.0 || shadow_coord.x > 1.0 ||
             shadow_coord.y < 0.0 || shadow_coord.y > 1.0)
         return 1.0;
-    vec3 sc = vec3(vec2(shadow_coord.st + offset), layer);
+    // vec3 sc = vec3(vec2(shadow_coord.st + offset), layer);
     float pcf_depth = texture(vk2_sampler2DArray(shadow_img_idx, shadow_sampler_idx), vec3(shadow_coord.st + offset, layer)).r;
     return step(curr_depth - bias, pcf_depth);
     // return (curr_depth - bias) > pcf_depth ? 0.0 : 1.0;

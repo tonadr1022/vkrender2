@@ -27,7 +27,7 @@ VkRenderingInfo rendering_info(VkExtent2D render_extent,
                                VkRenderingAttachmentInfo* depth_attachment = nullptr,
                                VkRenderingAttachmentInfo* stencil_attachment = nullptr);
 VkRenderingInfo rendering_info(VkExtent2D render_extent,
-                               std::span<VkRenderingAttachmentInfo> color_attachment,
+                               VkRenderingAttachmentInfo* color_attachments, u32 color_att_count,
                                VkRenderingAttachmentInfo* depth_attachment = nullptr,
                                VkRenderingAttachmentInfo* stencil_attachment = nullptr);
 VkCommandBufferBeginInfo command_buffer_begin_info(

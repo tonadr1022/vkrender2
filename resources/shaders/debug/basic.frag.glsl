@@ -29,14 +29,6 @@ struct Light {
     vec3 radiance;
 };
 
-// TODO: make a light buffer?
-void get_dir_light(out Light l) {
-    // TODO: move elsewhere this is cringe!
-    SceneData data = scene_data_buffer[scene_buffer].data;
-    l.L = -data.light_dir;
-    l.radiance = data.light_color;
-}
-
 void main() {
     SceneData scene_data = scene_data_buffer[scene_buffer].data;
     uvec4 debug_flags = scene_data.debug_flags;
@@ -59,10 +51,10 @@ void main() {
         } else if (material.ids2.x != 0) {
             ao = texture(vk2_sampler2D(material.ids2.x, sampler_idx), in_uv).r;
         }
-        if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_AO_MAP) {
-            out_frag_color = vec4(vec3(ao), 1.);
-            return;
-        }
+    }
+    if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_AO_MAP) {
+        out_frag_color = vec4(vec3(ao), 1.);
+        return;
     }
     float metallic = material.pbr_factors.x;
     float roughness = material.pbr_factors.y;
@@ -111,7 +103,10 @@ void main() {
     // dir light
     {
         Light l;
-        get_dir_light(l);
+        SceneData data = scene_data_buffer[scene_buffer].data;
+        l.L = -data.light_dir;
+        l.radiance = data.light_color;
+
         vec3 L = l.L;
         vec3 radiance = l.radiance;
         vec3 H = normalize(V + L);
