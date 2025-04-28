@@ -30,6 +30,10 @@ void get_vk_stage_access(Access access, VkAccessFlags2& out_access,
     out_stages |= VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
     out_access |= VK_ACCESS_2_SHADER_READ_BIT;
   }
+  if (access & Access::ComputeSample) {
+    out_stages |= VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+    out_access |= VK_ACCESS_2_SHADER_READ_BIT;
+  }
   if (access & Access::ComputeWrite) {
     out_stages |= VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
     out_access |= VK_ACCESS_2_SHADER_WRITE_BIT;
