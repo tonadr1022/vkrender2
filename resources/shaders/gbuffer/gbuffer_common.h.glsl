@@ -4,11 +4,11 @@
 #include "../resources.h.glsl"
 
 VK2_DECLARE_ARGUMENTS(GBufferPushConstants){
-uint scene_buffer;
-uint vertex_buffer_idx;
-uint instance_buffer;
-uint object_data_buffer;
-uint materials_buffer;
+u64 vtx;
+u64 scene_buffer;
+u64 instance_buffer;
+u64 object_data_buffer;
+u64 materials_buffer;
 uint sampler_idx;
 } ;
 

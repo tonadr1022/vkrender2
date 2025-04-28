@@ -115,8 +115,8 @@ void App::run() {
   // VkRender2::get().load_scene(
   //     "/home/tony/models/Models/MetalRoughSpheres/glTF-Binary/MetalRoughSpheres.glb");
   // VkRender2::get().load_scene(local_models_dir / "Cube/glTF/Cube.gltf", false);
-  VkRender2::get().load_scene(local_models_dir / "sponza.glb", false);
-  // VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false);
+  // VkRender2::get().load_scene(local_models_dir / "sponza.glb", false);
+  VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false);
   // VkRender2::get().load_scene("/Users/tony/models/Bistro_Godot_opt.glb", false);
   // std::filesystem::path env_tex = local_models_dir / "quarry_04_puresky_4k.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/quarry_04_puresky_4k.hdr";
@@ -131,16 +131,12 @@ void App::run() {
     last_time = curr_t;
     update(dt);
 
-    mat4 proj = glm::perspective(glm::radians(fov_degrees), aspect_ratio(), 1000.f, .1f);
-    VkRender2::get().draw({
-        .view = cam_data.get_view(),
-        .proj = proj,
-        .view_pos = cam_data.pos,
-        .light_dir = glm::normalize(scene_data.light_dir),
-        .light_color = scene_data.light_color * sun_intensity_,
-        .ambient_intensity = ambient_intensity_,
-        .fov_degrees = fov_degrees,
-    });
+    mat4 proj = glm::perspective(glm::radians(info_.fov_degrees), aspect_ratio(), 1000.f, .1f);
+    info_.view = cam_data.get_view();
+    info_.proj = proj;
+    info_.view_pos = cam_data.pos;
+    info_.light_dir = glm::normalize(info_.light_dir);
+    VkRender2::get().draw(info_);
   }
 
   save_cam(cam_data);
@@ -212,27 +208,27 @@ uvec2 App::window_dims() const {
 void App::on_imgui() {
   ImGui::Begin("hello");
   ImGui::Text("Frame Time: %f ms/frame, FPS: %f", dt * 1000.f, 1.f / dt);
-  ImGui::Text("Front dot L: %f", glm::dot(cam_data.front, scene_data.light_dir));
+  ImGui::Text("Front dot L: %f", glm::dot(cam_data.front, info_.light_dir));
   if (ImGui::TreeNodeEx("Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
     cam.on_imgui();
     ImGui::TreePop();
   }
 
-  ImGui::DragFloat3("Sunlight Direction", &scene_data.light_dir.x, 0.01, -10.f, 10.f);
+  ImGui::DragFloat3("Sunlight Direction", &info_.light_dir.x, 0.01, -10.f, 10.f);
   ImGui::DragFloat("Light Speed", &light_speed_, .01);
   ImGui::Checkbox("Light Spin", &spin_light_);
   if (spin_light_) {
     light_angle_ += light_speed_;
     light_angle_ = glm::clamp(light_angle_, .0f, 360.f);
 
-    scene_data.light_dir.x = std::sin(light_angle_);
-    scene_data.light_dir.z = std::cos(light_angle_);
+    info_.light_dir.x = std::sin(light_angle_);
+    info_.light_dir.z = std::cos(light_angle_);
     // scene_data.light_dir =
   }
 
-  ImGui::ColorEdit3("Sunlight Color", &scene_data.light_color.x, ImGuiColorEditFlags_Float);
-  ImGui::DragFloat("Sunlight Intensity", &sun_intensity_);
-  ImGui::DragFloat("Ambient Intensity", &ambient_intensity_);
+  ImGui::ColorEdit3("Sunlight Color", &info_.light_color.x, ImGuiColorEditFlags_Float);
+  ImGui::DragFloat("Ambient Intensity", &info_.ambient_intensity);
+  ImGui::DragFloat("IBL Ambient Intensity", &info_.ibl_ambient_intensity);
 
   if (ImGui::Button("add sponza")) {
     static int offset = 1;

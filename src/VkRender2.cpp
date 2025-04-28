@@ -360,6 +360,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
     scene_uniform_cpu_data_.debug_flags.w = debug_mode_;
     scene_uniform_cpu_data_.view_pos = info.view_pos;
     scene_uniform_cpu_data_.ambient_intensity = info.ambient_intensity;
+    scene_uniform_cpu_data_.ibl_ambient_intensity = info.ibl_ambient_intensity;
     memcpy(d.scene_uniform_buf->mapped_data(), &scene_uniform_cpu_data_, sizeof(SceneUniforms));
   }
 
@@ -1196,13 +1197,21 @@ void VkRender2::add_basic_forward_pass(RenderGraph& rg) {
         set_viewport_and_scissor(cmd.cmd(), render_extent);
 
         GBufferPushConstants pc{
-            curr_frame_2().scene_uniform_buf->resource_info_->handle,
-            static_vertex_buf_->buffer.resource_info_->handle,
-            static_instance_data_buf_->buffer.resource_info_->handle,
-            static_object_data_buf_->buffer.resource_info_->handle,
-            static_materials_buf_->buffer.resource_info_->handle,
+            static_vertex_buf_->buffer.device_addr(),
+            curr_frame_2().scene_uniform_buf->device_addr(),
+            static_instance_data_buf_->buffer.device_addr(),
+            static_object_data_buf_->buffer.device_addr(),
+            static_materials_buf_->buffer.device_addr(),
             linear_sampler_->resource_info.handle,
         };
+        // GBufferPushConstants pc{
+        //     static_vertex_buf_->buffer.resource_info_->handle,
+        //     curr_frame_2().scene_uniform_buf->resource_info_->handle,
+        //     static_instance_data_buf_->buffer.resource_info_->handle,
+        //     static_object_data_buf_->buffer.resource_info_->handle,
+        //     static_materials_buf_->buffer.resource_info_->handle,
+        //     linear_sampler_->resource_info.handle,
+        // };
         cmd.push_constants(sizeof(pc), &pc);
 
         // TODO: draw scene func

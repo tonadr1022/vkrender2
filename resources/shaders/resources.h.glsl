@@ -3,23 +3,15 @@
 
 #ifdef __cplusplus
 
-#define vmat4 glm::mat4
-#define vmat3 glm::mat3
-#define vvec3 glm::vec3
-#define vu32 u32
-#define vint i32
-
 #define VK2_DECLARE_ARGUMENTS(name) \
     struct name
 
 #else  // GLSL
 
-#define vmat4 mat4
-#define vmat3 mat3
-#define vvec3 vec3
-#define vu32 uint
-#define vint int
+#define u32 uint
+#define u64 uint64_t
 
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_EXT_nonuniform_qualifier : require
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_scalar_block_layout : require

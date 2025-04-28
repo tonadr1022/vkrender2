@@ -1,6 +1,7 @@
 #version 460
 
 #extension GL_GOOGLE_include_directive : enable
+#define BDA 1
 #include "../common.h.glsl"
 #include "./gbuffer_common.h.glsl"
 #include "../math.h.glsl"
@@ -19,14 +20,17 @@ layout(location = 2) out vec4 gbuffer_c;
 
 VK2_DECLARE_SAMPLED_IMAGES(texture2D);
 
-VK2_DECLARE_STORAGE_BUFFERS_RO(MaterialBuffers){
-Material mats[];
-} materials[];
+layout(std430, buffer_reference) readonly buffer Materials {
+    Material mats[];
+};
+// VK2_DECLARE_STORAGE_BUFFERS_RO(MaterialBuffers){
+// Material mats[];
+// } materials[];
 
 void main() {
-    SceneData scene_data = scene_data_buffer[scene_buffer].data;
+    SceneData scene_data = SceneDatas(scene_buffer).data;
     uvec4 debug_flags = scene_data.debug_flags;
-    Material material = materials[materials_buffer].mats[nonuniformEXT(material_id)];
+    Material material = Materials(materials_buffer).mats[nonuniformEXT(material_id)];
     vec3 N;
     if ((debug_flags.x & NORMAL_MAPS_ENABLED_BIT) != 0 && material.ids.y != 0) {
         vec3 tex_map_norm = texture(vk2_sampler2D(material.ids.y, sampler_idx), in_uv).rgb * 2.0 - 1.0;
@@ -42,6 +46,12 @@ void main() {
     vec4 albedo = material.albedo_factors;
     if (material.ids.x != 0) {
         albedo *= texture(vk2_sampler2D(material.ids.x, sampler_idx), in_uv);
+    }
+
+    // https://bgolus.medium.com/anti-aliased-alpha-test-the-esoteric-alpha-to-coverage-8b177335ae4f
+    //runAlphaTest(baseColor.a, mat.emissiveFactorAlphaCutoff.w / max(32.0 * fwidth(uv.x), 1.0));
+    if (albedo.a < .5) {
+        discard;
     }
 
     vec3 emissive = material.emissive_factors.w * material.emissive_factors.rgb;

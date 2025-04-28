@@ -125,7 +125,6 @@ void main() {
     }
 
     // IBL ambient
-    vec3 ambient = vec3(0.07) * albedo;
     {
         vec3 F = FresnelSchlickRoughness(NdotV, F0, roughness);
 
@@ -141,7 +140,8 @@ void main() {
         vec2 env_brdf = texture(vk2_sampler2D(brdf_lut_idx, linear_clamp_to_edge_sampler_idx), vec2(NdotV, roughness)).rg;
         vec3 specular = prefiltered_color * (F * env_brdf.x + env_brdf.y);
 
-        ambient = (kD * diffuse + specular) * ao * scene_data.ambient_intensity;
+        vec3 ambient = albedo.rgb * ao * scene_data.ambient_intensity + (kD * diffuse + specular) * ao * scene_data.ibl_ambient_intensity;
+        // ambient = (kD * diffuse + specular) * ao * scene_data.ambient_intensity;
         vec3 outputColor = light_out + emissive + ambient;
         // outputColor = emissive + ambient;
         out_frag_color = vec4(outputColor, 1.);

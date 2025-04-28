@@ -26,11 +26,20 @@ struct SceneData {
     vec3 light_dir;
     vec3 light_color;
     float ambient_intensity;
+    float ibl_ambient_intensity;
 };
 
+#ifdef BDA
+
+layout(std430, buffer_reference) readonly buffer SceneDatas {
+    SceneData data;
+};
+
+#else
 VK2_DECLARE_STORAGE_BUFFERS_RO(SceneUniforms){
 SceneData data;
 } scene_data_buffer[];
+#endif
 
 #endif
 

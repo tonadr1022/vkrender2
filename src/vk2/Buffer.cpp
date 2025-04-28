@@ -14,22 +14,21 @@ namespace gfx::vk2 {
 // https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/usage_patterns.html
 Buffer::Buffer(const BufferCreateInfo &cinfo, std::string name) : name_(std::move(name)) {
   auto usage = cinfo.usage;
-  if (cinfo.buffer_device_address) {
+  bool buffer_device_address = true;
+  auto alloc_flags = cinfo.alloc_flags;
+  if (buffer_device_address) {
     usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    alloc_flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
   }
   VkBufferCreateInfo buffer_create_info{
       .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = cinfo.size, .usage = usage};
-  auto alloc_flags = cinfo.alloc_flags;
-  if (cinfo.buffer_device_address) {
-    alloc_flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
-  }
   VmaAllocationCreateInfo alloc_info{.flags = alloc_flags, .usage = cinfo.mem_usage};
   vk2::get_device().create_buffer(&buffer_create_info, &alloc_info, buffer_, allocation_, info_);
   assert(info_.size);
   if (cinfo.usage & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) {
     resource_info_ = BindlessResourceAllocator::get().allocate_storage_buffer_descriptor(buffer_);
   }
-  if (cinfo.buffer_device_address) {
+  if (buffer_device_address) {
     VkBufferDeviceAddressInfo info{.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
                                    .buffer = buffer_};
     buffer_address_ = vkGetBufferDeviceAddress(vk2::get_device().device(), &info);

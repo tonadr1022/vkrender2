@@ -1,9 +1,10 @@
 #version 460
 
 #extension GL_GOOGLE_include_directive : enable
+#define BDA 1
 #include "../common.h.glsl"
-#include "./gbuffer_common.h.glsl"
 #include "../vertex_common.h.glsl"
+#include "./gbuffer_common.h.glsl"
 
 layout(location = 0) out vec3 out_normal;
 layout(location = 1) out vec2 out_uv;
@@ -23,20 +24,21 @@ struct ObjectData {
     vec4 extent;
 };
 
-VK2_DECLARE_STORAGE_BUFFERS_RO(ObjectDataBuffer){
-InstanceData datas[];
-} instance_buffers[];
+layout(std430, buffer_reference) readonly buffer InstanceDatas {
+    InstanceData datas[];
+};
 
-VK2_DECLARE_STORAGE_BUFFERS_RO(InstanceDataBuffers){
-ObjectData datas[];
-} object_data_buffers[];
+layout(std430, buffer_reference) readonly buffer ObjectDatas {
+    ObjectData datas[];
+};
 
 void main() {
-    InstanceData instance_data = instance_buffers[instance_buffer].datas[gl_InstanceIndex];
-    Vertex v = vertex_buffers[vertex_buffer_idx].vertices[gl_VertexIndex];
-    mat4 model = object_data_buffers[object_data_buffer].datas[instance_data.instance_id].model;
+    InstanceData instance_data = InstanceDatas(instance_buffer).datas[gl_InstanceIndex];
+    Vertex v = Vertices(vtx).vertices[gl_VertexIndex];
+
+    mat4 model = ObjectDatas(object_data_buffer).datas[instance_data.instance_id].model;
     vec4 pos = model * vec4(v.pos, 1.);
-    gl_Position = scene_data_buffer[scene_buffer].data.view_proj * pos;
+    gl_Position = SceneDatas(scene_buffer).data.view_proj * pos;
     out_frag_pos = vec3(pos);
 
     // TODO: something else lol

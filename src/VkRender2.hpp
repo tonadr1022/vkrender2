@@ -140,6 +140,7 @@ struct VkRender2 final : public BaseRenderer {
     float _p2;
     vec3 light_color;
     float ambient_intensity;
+    float ibl_ambient_intensity;
   };
   SceneUniforms scene_uniform_cpu_data_;
 

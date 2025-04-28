@@ -15,7 +15,7 @@ struct BufferCreateInfo {
   VkBufferUsageFlags usage{};
   VmaMemoryUsage mem_usage{VMA_MEMORY_USAGE_AUTO};
   VmaAllocationCreateFlags alloc_flags{};
-  bool buffer_device_address{false};
+  // bool buffer_device_address{false};
 };
 
 class Buffer {

@@ -56,6 +56,7 @@ void Device::init_impl(const CreateInfo& info) {
   VkPhysicalDeviceFeatures features{};
   features.shaderStorageImageWriteWithoutFormat = true;
   features.depthClamp = true;
+  features.shaderInt64 = true;
   features.multiDrawIndirect = true;
   VkPhysicalDeviceVulkan11Features features11{
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES};

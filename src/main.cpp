@@ -3,15 +3,9 @@
 #include <print>
 
 #include "App.hpp"
-#include "Logger.hpp"
-#include "RenderGraph.hpp"
-#include "Timer.hpp"
-#include "Types.hpp"
-#include "VkRender2.hpp"
 
 #define CMP(arg, cmp) strcmp(arg, cmp) == 0
 
-using namespace gfx;
 using vr = std::expected<void, const char*>;
 int main(int argc, char* argv[]) {
   u32 w{800}, h{800};

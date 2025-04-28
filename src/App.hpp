@@ -5,6 +5,7 @@
 #include "Camera.hpp"
 #include "Common.hpp"
 #include "Scene.hpp"
+#include "VkRender2.hpp"
 struct GLFWwindow;
 
 struct App {
@@ -32,13 +33,8 @@ struct App {
   std::filesystem::path resource_dir;
   std::filesystem::path local_models_dir;
   std::vector<SceneHandle> scenes_;
-  float sun_intensity_{1.};
-  float ambient_intensity_{.1};
-  struct SceneData {
-    vec3 light_dir{2., -3.5, 2};
-    vec3 light_color{1.0, 1.0, 1.0};
-  } scene_data;
-  float fov_degrees{70.f};
+  gfx::SceneDrawInfo info_{
+      .light_dir = {2., -3.5, 2.}, .light_color = {1., 1., 1.}, .fov_degrees = 70.f};
   bool spin_light_{};
   float light_angle_{};
   float light_speed_{.002f};
