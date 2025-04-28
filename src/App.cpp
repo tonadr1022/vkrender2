@@ -116,11 +116,12 @@ void App::run() {
   //     "/home/tony/models/Models/MetalRoughSpheres/glTF-Binary/MetalRoughSpheres.glb");
   // VkRender2::get().load_scene(local_models_dir / "Cube/glTF/Cube.gltf", false);
   // VkRender2::get().load_scene(local_models_dir / "sponza.glb", false);
-  VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false);
+  // VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false);
+  VkRender2::get().load_scene(local_models_dir / "Bistro_Godot_opt.glb", false);
   // VkRender2::get().load_scene("/Users/tony/models/Bistro_Godot_opt.glb", false);
   // std::filesystem::path env_tex = local_models_dir / "quarry_04_puresky_4k.hdr";
+  std::filesystem::path env_tex = local_models_dir / "newport_loft.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/quarry_04_puresky_4k.hdr";
-  std::filesystem::path env_tex = "/home/tony/Downloads/newport_loft.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/golden_gate_hills_4k.hdr";
 
   VkRender2::get().set_env_map(env_tex);
