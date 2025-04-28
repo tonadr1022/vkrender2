@@ -53,9 +53,7 @@ struct PerFrameData {
   VkCommandBuffer main_cmd_buffer;
   VkSemaphore swapchain_semaphore, render_semaphore;
   VkFence render_fence;
-#ifdef TRACY_ENABLE
   tracy::VkCtx* tracy_vk_ctx{};
-#endif
 };
 
 struct QueueManager {

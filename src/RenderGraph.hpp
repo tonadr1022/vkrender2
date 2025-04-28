@@ -120,7 +120,8 @@ struct RenderGraphPass {
   void add(const std::string& name, const vk2::Holder<vk2::BufferHandle>& buffer, Access access);
   // void add(const std::string& name, vk2::ImageHandle image, Access access);
   void add_proxy(const std::string& name, Access access);
-  RenderResourceHandle add(const std::string& name, const AttachmentInfo& info, Access access);
+  RenderResourceHandle add(const std::string& name, const AttachmentInfo& info, Access access,
+                           const std::string& input = "");
 
   template <typename F>
   void set_execute_fn(F&& fn)

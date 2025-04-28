@@ -190,11 +190,9 @@ BaseRenderer::BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info)
       frame.render_fence = vk2::get_device().create_fence();
       frame.swapchain_semaphore = vk2::get_device().create_semaphore();
       frame.render_semaphore = vk2::get_device().create_semaphore();
-#ifdef TRACY_ENABLE
       frame.tracy_vk_ctx =
           TracyVkContext(vk2::get_device().phys_device(), vk2::get_device().device(),
                          queues_.graphics_queue, frame.main_cmd_buffer);
-#endif
     }
   }
 

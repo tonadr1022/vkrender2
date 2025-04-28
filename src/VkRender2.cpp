@@ -23,6 +23,7 @@
 #include "shaders/common.h.glsl"
 #include "shaders/debug/basic_common.h.glsl"
 #include "shaders/gbuffer/gbuffer_common.h.glsl"
+#include "shaders/gbuffer/shade_common.h.glsl"
 #include "shaders/shadow_depth_common.h.glsl"
 #include "util/CVar.hpp"
 #include "util/IndexAllocator.hpp"
@@ -385,7 +386,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
   VK_CHECK(vkResetCommandBuffer(cmd, 0));
   VK_CHECK(vkBeginCommandBuffer(cmd, &cmd_begin_info));
 
-  CmdEncoder ctx{cmd, default_pipeline_layout_};
+  CmdEncoder ctx{cmd, default_pipeline_layout_, curr_frame().tracy_vk_ctx};
 
   bind_bindless_descriptors(ctx);
   vk2::BindlessResourceAllocator::get().set_frame_num(curr_frame_num());
@@ -412,6 +413,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
   rg_.setup_attachments();
   rg_.execute(ctx);
 
+  TracyVkCollect(curr_frame().tracy_vk_ctx, cmd);
   VK_CHECK(vkEndCommandBuffer(cmd));
 
   std::array<VkSemaphoreSubmitInfo, 10> wait_semaphores{};
@@ -460,6 +462,7 @@ void VkRender2::on_gui() {
       ImGui::TreePop();
     }
 
+    ImGui::Checkbox("Deferred enabled", &deferred_enabled_);
     ImGui::Checkbox("Render prefilter env map skybox", &render_prefilter_mip_skybox_);
     ImGui::SliderInt("Prefilter Env Map Layer", &prefilter_mip_skybox_level_, 0,
                      ibl_->prefiltered_env_map_tex_->texture->create_info().mip_levels - 1);
@@ -785,6 +788,7 @@ void VkRender2::init_pipelines() {
       .rasterization = {.cull_mode = CullMode::None},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
   });
+
   skybox_pipeline_ = PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
       .vertex_path = "skybox/skybox.vert",
       .fragment_path = "skybox/skybox.frag",
@@ -1024,6 +1028,7 @@ void VkRender2::add_basic_forward_pass(RenderGraph& rg) {
   clear_buff.add_proxy("draw_cnt_buf", Access::TransferWrite);
   clear_buff.add_proxy("final_draw_cmd_buf", Access::TransferWrite);
   clear_buff.set_execute_fn([this](CmdEncoder& cmd) {
+    TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "clear_draw_cnt_buf");
     auto& curr_frame_data = curr_frame_2();
     auto& draw_cnt_buf = curr_frame_data.draw_cnt_buf;
     auto& final_draw_cmd_buf = curr_frame_data.final_draw_cmd_buf;
@@ -1038,6 +1043,7 @@ void VkRender2::add_basic_forward_pass(RenderGraph& rg) {
   cull.add_proxy("draw_cnt_buf", Access::ComputeRW);
   cull.add_proxy("final_draw_cmd_buf", Access::ComputeWrite);
   cull.set_execute_fn([this](CmdEncoder& cmd) {
+    TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "cull");
     PipelineManager::get().bind_compute(cmd.cmd(), cull_objs_pipeline_);
     auto& curr_frame_data = curr_frame_2();
     auto& draw_cnt_buf = curr_frame_data.draw_cnt_buf;
@@ -1069,6 +1075,7 @@ void VkRender2::add_basic_forward_pass(RenderGraph& rg) {
     auto depth_out_handle =
         forward.add("depth", {.format = depth_img_format_}, Access::DepthStencilWrite);
     forward.set_execute_fn([&rg, final_out_handle, this, depth_out_handle](CmdEncoder& cmd) {
+      TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "forward");
       auto& curr_frame_data = curr_frame_2();
       auto& draw_cnt_buf = curr_frame_data.draw_cnt_buf;
       auto& final_draw_cmd_buf = curr_frame_data.final_draw_cmd_buf;
@@ -1141,95 +1148,79 @@ void VkRender2::add_basic_forward_pass(RenderGraph& rg) {
       vkCmdEndRenderingKHR(cmd.cmd());
     });
   } else {
-    auto& gbuffer = rg.add_pass("gbuffer");
-    auto rg_gbuffer_a = gbuffer.add("gbuffer_a", {.format = gbuffer_a_format_}, Access::ColorWrite);
-    auto rg_gbuffer_b = gbuffer.add("gbuffer_b", {.format = gbuffer_b_format_}, Access::ColorWrite);
-    auto rg_gbuffer_c = gbuffer.add("gbuffer_c", {.format = gbuffer_c_format_}, Access::ColorWrite);
-    gbuffer.add_proxy("draw_cnt_buf", Access::IndirectRead);
-    gbuffer.add_proxy("final_draw_cmd_buf", Access::IndirectRead);
-    gbuffer.add_proxy("shadow_data_buf", Access::ComputeRead);
-    gbuffer.add("shadow_map_img", csm_->get_shadow_map_att_info(), Access::ComputeRead);
-    auto depth_out_handle =
-        gbuffer.add("depth", {.format = depth_img_format_}, Access::DepthStencilWrite);
-    gbuffer.set_execute_fn([&rg, rg_gbuffer_a, rg_gbuffer_b, rg_gbuffer_c, this,
-                            depth_out_handle](CmdEncoder& cmd) {
-      auto& curr_frame_data = curr_frame_2();
-      auto& draw_cnt_buf = curr_frame_data.draw_cnt_buf;
-      auto& final_draw_cmd_buf = curr_frame_data.final_draw_cmd_buf;
-      auto* gbuffer_a = rg.get_texture(rg_gbuffer_a);
-      auto* gbuffer_b = rg.get_texture(rg_gbuffer_b);
-      auto* gbuffer_c = rg.get_texture(rg_gbuffer_c);
-      assert(gbuffer_a && gbuffer_b && gbuffer_c);
-      if (!gbuffer_a || !gbuffer_b || !gbuffer_c) {
-        return;
-      }
+    {
+      auto& gbuffer = rg.add_pass("gbuffer");
+      auto rg_gbuffer_a =
+          gbuffer.add("gbuffer_a", {.format = gbuffer_a_format_}, Access::ColorWrite);
+      auto rg_gbuffer_b =
+          gbuffer.add("gbuffer_b", {.format = gbuffer_b_format_}, Access::ColorWrite);
+      auto rg_gbuffer_c =
+          gbuffer.add("gbuffer_c", {.format = gbuffer_c_format_}, Access::ColorWrite);
+      gbuffer.add_proxy("draw_cnt_buf", Access::IndirectRead);
+      gbuffer.add_proxy("final_draw_cmd_buf", Access::IndirectRead);
+      auto depth_out_handle =
+          gbuffer.add("depth", {.format = depth_img_format_}, Access::DepthStencilWrite);
+      gbuffer.set_execute_fn([&rg, rg_gbuffer_a, rg_gbuffer_b, rg_gbuffer_c, this,
+                              depth_out_handle](CmdEncoder& cmd) {
+        TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "gbuffer");
+        auto& curr_frame_data = curr_frame_2();
+        auto& draw_cnt_buf = curr_frame_data.draw_cnt_buf;
+        auto& final_draw_cmd_buf = curr_frame_data.final_draw_cmd_buf;
+        auto* gbuffer_a = rg.get_texture(rg_gbuffer_a);
+        auto* gbuffer_b = rg.get_texture(rg_gbuffer_b);
+        auto* gbuffer_c = rg.get_texture(rg_gbuffer_c);
+        assert(gbuffer_a && gbuffer_b && gbuffer_c);
+        if (!gbuffer_a || !gbuffer_b || !gbuffer_c) {
+          return;
+        }
 
-      PipelineManager::get().bind_graphics(cmd.cmd(), gbuffer_pipeline_);
+        PipelineManager::get().bind_graphics(cmd.cmd(), gbuffer_pipeline_);
 
-      VkClearValue clear_value{.color = {{0.0, 0.0, 0.0, 0.0}}};
-      VkRenderingAttachmentInfo color_atts[] = {
-          vk2::init::rendering_attachment_info(
-              gbuffer_a->view().view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &clear_value),
-          vk2::init::rendering_attachment_info(
-              gbuffer_b->view().view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &clear_value),
-          vk2::init::rendering_attachment_info(
-              gbuffer_c->view().view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &clear_value)};
-      VkClearValue depth_clear{};
-      auto depth_att = init::rendering_attachment_info(
-          rg.get_texture(depth_out_handle)->view().view(),
-          VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL_KHR, &depth_clear);
-      VkExtent2D render_extent{gbuffer_a->create_info().extent.width,
-                               gbuffer_a->create_info().extent.height};
-      VkRenderingInfo render_info = vk2::init::rendering_info(
-          render_extent, color_atts, COUNTOF(color_atts), &depth_att, nullptr);
-      vkCmdBeginRenderingKHR(cmd.cmd(), &render_info);
-      set_viewport_and_scissor(cmd.cmd(), render_extent);
+        VkClearValue clear_value{.color = {{0.0, 0.0, 0.0, 0.0}}};
+        VkRenderingAttachmentInfo color_atts[] = {
+            vk2::init::rendering_attachment_info(
+                gbuffer_a->view().view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &clear_value),
+            vk2::init::rendering_attachment_info(
+                gbuffer_b->view().view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &clear_value),
+            vk2::init::rendering_attachment_info(
+                gbuffer_c->view().view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &clear_value)};
+        VkClearValue depth_clear{};
+        auto depth_att = init::rendering_attachment_info(
+            rg.get_texture(depth_out_handle)->view().view(),
+            VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL_KHR, &depth_clear);
+        VkExtent2D render_extent{gbuffer_a->create_info().extent.width,
+                                 gbuffer_a->create_info().extent.height};
+        VkRenderingInfo render_info = vk2::init::rendering_info(
+            render_extent, color_atts, COUNTOF(color_atts), &depth_att, nullptr);
+        vkCmdBeginRenderingKHR(cmd.cmd(), &render_info);
+        set_viewport_and_scissor(cmd.cmd(), render_extent);
 
-      GBufferPushConstants pc{
-          curr_frame_2().scene_uniform_buf->resource_info_->handle,
-          static_vertex_buf_->buffer.resource_info_->handle,
-          static_instance_data_buf_->buffer.resource_info_->handle,
-          static_object_data_buf_->buffer.resource_info_->handle,
-          static_materials_buf_->buffer.resource_info_->handle,
-          linear_sampler_->resource_info.handle,
-      };
-      cmd.push_constants(sizeof(pc), &pc);
+        GBufferPushConstants pc{
+            curr_frame_2().scene_uniform_buf->resource_info_->handle,
+            static_vertex_buf_->buffer.resource_info_->handle,
+            static_instance_data_buf_->buffer.resource_info_->handle,
+            static_object_data_buf_->buffer.resource_info_->handle,
+            static_materials_buf_->buffer.resource_info_->handle,
+            linear_sampler_->resource_info.handle,
+        };
+        cmd.push_constants(sizeof(pc), &pc);
 
-      // TODO: draw scene func
-      vkCmdBindIndexBuffer(cmd.cmd(), static_index_buf_->buffer.buffer(), 0, VK_INDEX_TYPE_UINT32);
-      if (portable_) {
-        vkCmdDrawIndexedIndirect(cmd.cmd(), get_device().get_buffer(final_draw_cmd_buf)->buffer(),
-                                 0, draw_cnt_, sizeof(VkDrawIndexedIndirectCommand));
-      } else {
-        vkCmdDrawIndexedIndirectCount(cmd.cmd(),
-                                      get_device().get_buffer(final_draw_cmd_buf)->buffer(), 0,
-                                      get_device().get_buffer(draw_cnt_buf)->buffer(), 0, max_draws,
-                                      sizeof(VkDrawIndexedIndirectCommand));
-      }
+        // TODO: draw scene func
+        vkCmdBindIndexBuffer(cmd.cmd(), static_index_buf_->buffer.buffer(), 0,
+                             VK_INDEX_TYPE_UINT32);
+        if (portable_) {
+          vkCmdDrawIndexedIndirect(cmd.cmd(), get_device().get_buffer(final_draw_cmd_buf)->buffer(),
+                                   0, draw_cnt_, sizeof(VkDrawIndexedIndirectCommand));
+        } else {
+          vkCmdDrawIndexedIndirectCount(cmd.cmd(),
+                                        get_device().get_buffer(final_draw_cmd_buf)->buffer(), 0,
+                                        get_device().get_buffer(draw_cnt_buf)->buffer(), 0,
+                                        max_draws, sizeof(VkDrawIndexedIndirectCommand));
+        }
 
-      // {
-      //   PipelineManager::get().bind_graphics(cmd.cmd(), skybox_pipeline_);
-      //   u32 skybox_handle{};
-      //   if (render_prefilter_mip_skybox_) {
-      //     assert(ibl_->prefiltered_env_tex_views_.size() > (size_t)prefilter_mip_skybox_level_);
-      //     skybox_handle = ibl_->prefiltered_env_tex_views_[prefilter_mip_skybox_level_]
-      //                         ->sampled_img_resource()
-      //                         .handle;
-      //   } else {
-      //     skybox_handle = convoluted_skybox.get()
-      //                         ?
-      //                         ibl_->irradiance_cubemap_tex_->view().sampled_img_resource().handle
-      //                         : ibl_->env_cubemap_tex_->view().sampled_img_resource().handle;
-      //   }
-      //   struct {
-      //     u32 scene_buffer, tex_idx, sampler_idx;
-      //   } pc{curr_frame_2().scene_uniform_buf->resource_info_->handle, skybox_handle,
-      //        linear_sampler_->resource_info.handle};
-      //   cmd.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-      //   vkCmdDraw(cmd.cmd(), 36, 1, 0, 0);
-      // }
-      vkCmdEndRenderingKHR(cmd.cmd());
-    });
+        vkCmdEndRenderingKHR(cmd.cmd());
+      });
+    }
     {
       auto& shade = rg.add_pass("shade");
       auto rg_gbuffer_a =
@@ -1238,11 +1229,14 @@ void VkRender2::add_basic_forward_pass(RenderGraph& rg) {
           shade.add("gbuffer_b", {.format = gbuffer_b_format_}, Access::ComputeRead);
       auto rg_gbuffer_c =
           shade.add("gbuffer_c", {.format = gbuffer_c_format_}, Access::ComputeRead);
+      shade.add("shadow_map_img", csm_->get_shadow_map_att_info(), Access::FragmentRead);
+      shade.add_proxy("shadow_data_buf", Access::ComputeRead);
       auto depth_handle = shade.add("depth", {.format = depth_img_format_}, Access::ComputeSample);
       auto final_out_handle =
           shade.add("draw_out", {.format = draw_img_format_}, Access::ComputeWrite);
       shade.set_execute_fn([&rg, rg_gbuffer_b, rg_gbuffer_c, rg_gbuffer_a, final_out_handle, this,
                             depth_handle](CmdEncoder& cmd) {
+        TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "shade");
         auto* gbuffer_a = rg.get_texture(rg_gbuffer_a);
         auto* gbuffer_b = rg.get_texture(rg_gbuffer_b);
         auto* gbuffer_c = rg.get_texture(rg_gbuffer_c);
@@ -1252,10 +1246,7 @@ void VkRender2::add_basic_forward_pass(RenderGraph& rg) {
         if (!gbuffer_a || !gbuffer_b || !gbuffer_c || !shade_out_tex || !depth_img) {
           return;
         }
-        struct {
-          mat4 inv_view_proj;
-          u32 gbuffer_a, gbuffer_b, gbuffer_c, depth_img, output_tex, sampler;
-        } pc{
+        GBufferShadePushConstants pc{
             glm::inverse(scene_uniform_cpu_data_.view_proj),
             gbuffer_a->view().storage_img_resource().handle,
             gbuffer_b->view().storage_img_resource().handle,
@@ -1263,12 +1254,68 @@ void VkRender2::add_basic_forward_pass(RenderGraph& rg) {
             depth_img->view().sampled_img_resource().handle,
             shade_out_tex->view().storage_img_resource().handle,
             linear_sampler_->resource_info.handle,
-        };
+            curr_frame_2().scene_uniform_buf->resource_info_->handle,
+            get_device()
+                .get_image(csm_->get_shadow_map_img())
+                ->view()
+                .sampled_img_resource()
+                .handle,
+            shadow_sampler_.resource_info.handle,
+            get_device()
+                .get_buffer(csm_->get_shadow_data_buffer(curr_frame_num()))
+                ->resource_info_->handle,
+            ibl_->irradiance_cubemap_tex_->view().sampled_img_resource().handle,
+            ibl_->brdf_lut_->view().sampled_img_resource().handle,
+            ibl_->prefiltered_env_map_tex_->texture->view().sampled_img_resource().handle,
+            linear_sampler_clamp_to_edge_->resource_info.handle};
         PipelineManager::get().bind_compute(cmd.cmd(), deferred_shade_pipeline_);
 
         cmd.push_constants(sizeof(pc), &pc);
         cmd.dispatch((gbuffer_a->create_info().extent.width + 16) / 16,
                      (gbuffer_a->create_info().extent.height + 16) / 16, 1);
+      });
+    }
+    {
+      auto& skybox = rg.add_pass("skybox");
+      // skybox.add("draw_out", {.format = draw_img_format_}, Access::ColorRW);
+      auto draw_tex = skybox.add("draw_out", {.format = draw_img_format_}, Access::ColorRW);
+      auto depth_handle =
+          skybox.add("depth", {.format = depth_img_format_}, Access::DepthStencilRead);
+
+      skybox.set_execute_fn([this, &rg, draw_tex, depth_handle](CmdEncoder& cmd) {
+        TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "skybox");
+        auto* tex = rg.get_texture(draw_tex);
+        VkRenderingAttachmentInfo color_attachment = vk2::init::rendering_attachment_info(
+            tex->view().view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        auto depth_att =
+            init::rendering_attachment_info(rg.get_texture(depth_handle)->view().view(),
+                                            VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL_KHR);
+        VkExtent2D render_extent{tex->create_info().extent.width, tex->create_info().extent.height};
+        VkRenderingInfo render_info =
+            vk2::init::rendering_info(render_extent, &color_attachment, &depth_att, nullptr);
+        vkCmdBeginRenderingKHR(cmd.cmd(), &render_info);
+        set_viewport_and_scissor(cmd.cmd(), render_extent);
+
+        PipelineManager::get().bind_graphics(cmd.cmd(), skybox_pipeline_);
+        u32 skybox_handle{};
+        if (render_prefilter_mip_skybox_) {
+          assert(ibl_->prefiltered_env_tex_views_.size() > (size_t)prefilter_mip_skybox_level_);
+          skybox_handle = ibl_->prefiltered_env_tex_views_[prefilter_mip_skybox_level_]
+                              ->sampled_img_resource()
+                              .handle;
+        } else {
+          skybox_handle = convoluted_skybox.get()
+                              ? ibl_->irradiance_cubemap_tex_->view().sampled_img_resource().handle
+                              : ibl_->env_cubemap_tex_->view().sampled_img_resource().handle;
+        }
+        struct {
+          u32 scene_buffer, tex_idx, sampler_idx;
+        } pc{curr_frame_2().scene_uniform_buf->resource_info_->handle, skybox_handle,
+             linear_sampler_->resource_info.handle};
+        cmd.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
+        vkCmdDraw(cmd.cmd(), 36, 1, 0, 0);
+
+        vkCmdEndRenderingKHR(cmd.cmd());
       });
     }
   }
@@ -1278,6 +1325,7 @@ void VkRender2::add_basic_forward_pass(RenderGraph& rg) {
     auto draw_out_handle = pp.add("draw_out", {.format = draw_img_format_}, Access::ComputeRead);
     auto final_out_handle = pp.add("final_out", swapchain_att_info_, Access::ComputeWrite);
     pp.set_execute_fn([this, &rg, draw_out_handle, final_out_handle](CmdEncoder& cmd) {
+      TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "post_process");
       if (postprocess_pass_enabled.get()) {
         u32 postprocess_flags = 0;
         if (debug_mode_ != DEBUG_MODE_NONE) {
@@ -1305,6 +1353,7 @@ void VkRender2::add_basic_forward_pass(RenderGraph& rg) {
     auto& imgui_p = rg.add_pass("imgui");
     auto handle = imgui_p.add("final_out", swapchain_att_info_, Access::ColorRW);
     imgui_p.set_execute_fn([this, handle, &rg](CmdEncoder& cmd) {
+      TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "imgui");
       auto* tex = rg.get_texture(handle);
       render_imgui(cmd.cmd(), {tex->extent_2d().width, tex->extent_2d().height},
                    tex->view().view());

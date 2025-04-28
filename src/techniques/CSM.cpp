@@ -4,6 +4,7 @@
 #include <vulkan/vulkan_core.h>
 
 #include <tracy/Tracy.hpp>
+#include <tracy/TracyVulkan.hpp>
 #include <utility>
 
 #include "AABB.hpp"
@@ -311,6 +312,7 @@ void CSM::add_pass(RenderGraph& rg) {
   auto& csm_prepare_pass = rg.add_pass("csm_prepare");
   csm_prepare_pass.add_proxy("shadow_data_buf", Access::TransferWrite);
   csm_prepare_pass.set_execute_fn([this](CmdEncoder& cmd) {
+    TracyVkZone(cmd.get_tracy_ctx(), cmd.cmd(), "csm_prepare");
     auto* buf = get_device().get_buffer(
         shadow_data_bufs_[renderer_->curr_frame_num() % shadow_data_bufs_.size()]);
     if (!buf) return;
@@ -323,6 +325,7 @@ void CSM::add_pass(RenderGraph& rg) {
   csm.add_proxy("draw_cnt_buf", Access::IndirectRead);
   csm.add_proxy("final_draw_cmd_buf", Access::IndirectRead);
   csm.set_execute_fn([this, rg_shadow_map_img, &rg](CmdEncoder& cmd) {
+    TracyVkZone(cmd.get_tracy_ctx(), cmd.cmd(), "csm");
     shadow_map_img_ = rg.get_texture_handle(rg_shadow_map_img);
     init::begin_debug_utils_label(cmd.cmd(), "csm render");
     if (curr_shadow_map_img_ != shadow_map_img_) {

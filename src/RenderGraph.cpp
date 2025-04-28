@@ -150,7 +150,7 @@ void RenderGraphPass::add_proxy(const std::string& name, Access access) {
 }
 
 RenderResourceHandle RenderGraphPass::add(const std::string& name, const AttachmentInfo& info,
-                                          Access access) {
+                                          Access access, const std::string&) {
   uint32_t handle = graph_.get_or_add_texture_resource(name);
   RenderResource& res = *graph_.get_resource(handle);
   res.access = static_cast<Access>(res.access | access);
@@ -397,27 +397,39 @@ VoidResult RenderGraph::bake() {
         }
 
         // check if an invalidate already exists
-        auto existing_invalidate = std::ranges::find_if(
+        auto existing_invalidate_it = std::ranges::find_if(
             phys_pass.invalidate_barriers,
             [resource_i](const Barrier& barrier) { return barrier.resource_idx == resource_i; });
-        if (existing_invalidate != phys_pass.invalidate_barriers.end()) {
-          existing_invalidate->access |= res.invalidated_accesses;
-          existing_invalidate->stages |= res.invalidated_stages;
-          existing_invalidate->layout = res.initial_layout;
-          continue;
+        bool existing_flush{}, existing_invalidate{};
+        if (existing_invalidate_it != phys_pass.invalidate_barriers.end()) {
+          existing_invalidate_it->access |= res.invalidated_accesses;
+          existing_invalidate_it->stages |= res.invalidated_stages;
+          existing_invalidate_it->layout = res.initial_layout;
+          existing_invalidate = true;
+        }
+        auto existing_flush_it = std::ranges::find_if(
+            phys_pass.flush_barriers,
+            [resource_i](const Barrier& barrier) { return barrier.resource_idx == resource_i; });
+        if (existing_flush_it != phys_pass.flush_barriers.end()) {
+          existing_flush_it->access |= res.flushed_accesses;
+          existing_flush_it->stages |= res.flushed_stages;
+          existing_flush_it->layout = res.final_layout;
+          existing_flush = true;
         }
 
         assert(res.final_layout != VK_IMAGE_LAYOUT_UNDEFINED);
-        phys_pass.invalidate_barriers.emplace_back(Barrier{.resource_idx = resource_i,
-                                                           .layout = res.initial_layout,
-                                                           .access = res.invalidated_accesses,
-                                                           .stages = res.invalidated_stages});
-        if (res.flushed_accesses) {
+        if (!existing_invalidate) {
+          phys_pass.invalidate_barriers.emplace_back(Barrier{.resource_idx = resource_i,
+                                                             .layout = res.initial_layout,
+                                                             .access = res.invalidated_accesses,
+                                                             .stages = res.invalidated_stages});
+        }
+        if (res.flushed_accesses && !existing_flush) {
           phys_pass.flush_barriers.emplace_back(Barrier{.resource_idx = resource_i,
                                                         .layout = res.final_layout,
                                                         .access = res.flushed_accesses,
                                                         .stages = res.flushed_stages});
-        } else if (res.invalidated_accesses) {
+        } else if (res.invalidated_accesses && !existing_flush) {
           // if pass read something that needs protection before writing, need flush with no
           // access sets the last pass which the resource was used as a stage
           phys_pass.flush_barriers.emplace_back(Barrier{.resource_idx = resource_i,
@@ -491,7 +503,9 @@ void RenderGraph::execute(CmdEncoder& cmd) {
       // }
       vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
 
+      // LINFO("pre executed");
       pass.execute_(cmd);
+      // LINFO("executed");
     }
   }
 
@@ -1165,11 +1179,14 @@ RenderGraph::ResourceState* RenderGraph::get_resource_pipeline_state(u32 idx) {
   // TODO: remove stale pipeline states
   // TODO: imgui menu
 
-  RenderResource* resource = get_resource(idx);
-  if (!resource) return nullptr;
-  if (resource->get_type() == ResourceType::Texture) {
-    return &image_pipeline_states_[physical_image_attachments_[resource->physical_idx]];
+  assert(idx < physical_resource_dims_.size());
+  if (idx >= physical_resource_dims_.size()) {
+    return nullptr;
   }
-  return &buffer_pipeline_states_[physical_buffers_[resource->physical_idx]];
+  auto& dims = physical_resource_dims_[idx];
+  if (dims.is_image()) {
+    return &image_pipeline_states_[physical_image_attachments_[idx]];
+  }
+  return &buffer_pipeline_states_[physical_buffers_[idx]];
 }
 }  // namespace gfx
