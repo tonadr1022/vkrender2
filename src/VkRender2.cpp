@@ -21,6 +21,7 @@
 #include "glm/packing.hpp"
 #include "imgui.h"
 #include "shaders/common.h.glsl"
+#include "shaders/cull_objects_common.h.glsl"
 #include "shaders/debug/basic_common.h.glsl"
 #include "shaders/gbuffer/gbuffer_common.h.glsl"
 #include "shaders/gbuffer/shade_common.h.glsl"
@@ -47,6 +48,8 @@ namespace {
 VkRender2* vkrender2_instance{};
 
 AutoCVarInt ao_map_enabled{"renderer.ao_map", "AO Map", 1, CVarFlags::EditCheckbox};
+AutoCVarInt csm_enabled{"renderer.csm_enabled", "CSM Enabled", 1, CVarFlags::EditCheckbox};
+AutoCVarInt ibl_enabled{"renderer.ibl_enabled", "IBL Enabled", 1, CVarFlags::EditCheckbox};
 AutoCVarInt postprocess_pass_enabled{"renderer.postprocess_pass_enabled",
                                      "PostProcess Pass Enabled", 1, CVarFlags::EditCheckbox};
 AutoCVarInt tonemap_enabled{"renderer.tonemap_enabled", "Tonemapping Enabled", 1,
@@ -265,17 +268,7 @@ VkRender2::VkRender2(const InitInfo& info)
     };
     cmd.push_constants(sizeof(pc), &pc);
     vkCmdBindIndexBuffer(cmd.cmd(), static_index_buf_->buffer.buffer(), 0, VK_INDEX_TYPE_UINT32);
-    auto& curr_frame_data = curr_frame_2();
-    auto* draw_cnt_buf = get_device().get_buffer(curr_frame_data.draw_cnt_buf);
-    auto* final_draw_cmd_buf = get_device().get_buffer(curr_frame_data.final_draw_cmd_buf);
-    if (portable_) {
-      vkCmdDrawIndexedIndirect(cmd.cmd(), final_draw_cmd_buf->buffer(), 0, draw_cnt_,
-                               sizeof(VkDrawIndexedIndirectCommand));
-    } else {
-      vkCmdDrawIndexedIndirectCount(cmd.cmd(), final_draw_cmd_buf->buffer(), 0,
-                                    draw_cnt_buf->buffer(), 0, max_draws,
-                                    sizeof(VkDrawIndexedIndirectCommand));
-    }
+    draw_opaque(cmd, unculled_draw_data_);
   });
   shadow_sampler_ = SamplerCache::get().get_or_create_sampler(
       SamplerCreateInfo{.min_filter = VK_FILTER_LINEAR,
@@ -355,12 +348,17 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
     if (normal_map_enabled.get()) {
       scene_uniform_cpu_data_.debug_flags.x |= NORMAL_MAPS_ENABLED_BIT;
     }
+    if (csm_enabled.get()) {
+      scene_uniform_cpu_data_.debug_flags.x |= CSM_ENABLED_BIT;
+    }
+    if (ibl_enabled.get()) {
+      scene_uniform_cpu_data_.debug_flags.x |= IBL_ENABLED_BIT;
+    }
     scene_uniform_cpu_data_.light_color = info.light_color;
     scene_uniform_cpu_data_.light_dir = glm::normalize(info.light_dir);
     scene_uniform_cpu_data_.debug_flags.w = debug_mode_;
     scene_uniform_cpu_data_.view_pos = info.view_pos;
     scene_uniform_cpu_data_.ambient_intensity = info.ambient_intensity;
-    scene_uniform_cpu_data_.ibl_ambient_intensity = info.ibl_ambient_intensity;
     memcpy(d.scene_uniform_buf->mapped_data(), &scene_uniform_cpu_data_, sizeof(SceneUniforms));
   }
 
@@ -398,7 +396,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
   rg_.reset();
   rg_.set_swapchain_info(RenderGraphSwapchainInfo{
       .curr_img = swapchain_img, .width = swapchain_.dims.x, .height = swapchain_.dims.y});
-  auto& curr_frame_data = curr_frame_2();
+  // auto& curr_frame_data = curr_frame_2();
   rg_.set_backbuffer_img("final_out");
 
   csm_->prepare_frame(rg_, curr_frame_num(), info.view, info.light_dir, aspect_ratio(),
@@ -409,8 +407,13 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
     LERROR("bake error {}", res.error());
     exit(1);
   }
-  rg_.set_resource("draw_cnt_buf", curr_frame_data.draw_cnt_buf.handle);
-  rg_.set_resource("final_draw_cmd_buf", curr_frame_data.final_draw_cmd_buf.handle);
+
+  rg_.set_resource("main_culled_draw_cmd_buf",
+                   main_culled_draw_data_.output_draw_cmd_buf[curr_frame_in_flight_num()].handle);
+  rg_.set_resource("unculled_draw_cmd_buf",
+                   unculled_draw_data_.output_draw_cmd_buf[curr_frame_in_flight_num()].handle);
+  // rg_.set_resource("draw_cnt_buf", curr_frame_data.draw_cnt_buf.handle);
+  // rg_.set_resource("final_draw_cmd_buf", curr_frame_data.final_draw_cmd_buf.handle);
   rg_.setup_attachments();
   rg_.execute(ctx);
 
@@ -463,7 +466,17 @@ void VkRender2::on_gui() {
       ImGui::TreePop();
     }
 
-    ImGui::Checkbox("Deferred enabled", &deferred_enabled_);
+    if (ImGui::BeginCombo("Tonemapper", tonemap_type_names_[tonemap_type_])) {
+      for (u32 i = 0; i < 2; i++) {
+        if (ImGui::Selectable(tonemap_type_names_[i], tonemap_type_ == i)) {
+          tonemap_type_ = i;
+        }
+      }
+      ImGui::EndCombo();
+    }
+
+    ImGui::Checkbox("Deferred Rendering", &deferred_enabled_);
+    ImGui::Checkbox("Frustum Culling", &frustum_cull_enabled_);
     ImGui::Checkbox("Render prefilter env map skybox", &render_prefilter_mip_skybox_);
     ImGui::SliderInt("Prefilter Env Map Layer", &prefilter_mip_skybox_level_, 0,
                      ibl_->prefiltered_env_map_tex_->texture->create_info().mip_levels - 1);
@@ -499,6 +512,45 @@ void VkRender2::on_gui() {
 VkRender2::~VkRender2() { vkDeviceWaitIdle(device_); }
 
 void VkRender2::on_resize() {}
+
+namespace {
+
+void transform_mesh_bounds(const MeshBounds& untransformed_bounds, MeshBounds& new_bounds,
+                           const glm::mat4& transform) {
+  std::array<glm::vec3, 8> bounds_corners = {
+      untransformed_bounds.origin + untransformed_bounds.extents * glm::vec3{-1, -1, -1},
+      untransformed_bounds.origin + untransformed_bounds.extents * glm::vec3{-1, -1, 1},
+      untransformed_bounds.origin + untransformed_bounds.extents * glm::vec3{-1, 1, -1},
+      untransformed_bounds.origin + untransformed_bounds.extents * glm::vec3{-1, 1, 1},
+      untransformed_bounds.origin + untransformed_bounds.extents * glm::vec3{1, -1, -1},
+      untransformed_bounds.origin + untransformed_bounds.extents * glm::vec3{1, -1, 1},
+      untransformed_bounds.origin + untransformed_bounds.extents * glm::vec3{1, 1, -1},
+      untransformed_bounds.origin + untransformed_bounds.extents * glm::vec3{1, 1, 1}};
+
+  glm::vec3 new_min{std::numeric_limits<float>::max()};
+  glm::vec3 new_max{std::numeric_limits<float>::lowest()};
+
+  // transform the bounds
+  for (const auto& corner : bounds_corners) {
+    glm::vec3 transformed_corner = glm::vec3(transform * glm::vec4(corner, 1.f));
+    new_min = glm::min(new_min, transformed_corner);
+    new_max = glm::max(new_max, transformed_corner);
+  }
+  glm::vec3 new_extents = (new_max - new_min) * 0.5f;
+  glm::vec3 new_origin = (new_max + new_min) * 0.5f;
+
+  float max_magnitude_scale = 0.f;
+  for (int i = 0; i < 3; ++i) {
+    max_magnitude_scale = std::max(max_magnitude_scale, glm::length(glm::vec3(transform[i])));
+  }
+
+  float new_radius = max_magnitude_scale * untransformed_bounds.radius;
+  new_bounds.radius = new_radius;
+  new_bounds.extents = new_extents;
+  new_bounds.origin = new_origin;
+}
+
+}  // namespace
 
 SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynamic,
                                   const mat4& transform) {
@@ -600,8 +652,13 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
     bool mult_transform = transform != mat4{1};
     for (auto& node : resources->scene_graph_data.node_datas) {
       for (auto& mesh_indices : node.meshes) {
+        MeshBounds new_bounds;
+        transform_mesh_bounds(resources->mesh_draw_infos[mesh_indices.mesh_idx].bounds, new_bounds,
+                              node.world_transform);
         obj_datas.emplace_back(gfx::ObjectData{
-            .model = mult_transform ? transform * node.world_transform : node.world_transform});
+            .model = mult_transform ? transform * node.world_transform : node.world_transform,
+            .sphere_radius = vec4{new_bounds.origin, new_bounds.radius},
+            .extent = vec4{new_bounds.extents, 0.}});
         obj_draw.obj_data_slots.emplace_back(static_object_data_buf_->allocator.alloc());
         instance_datas.emplace_back(mesh_indices.material_id + resources->materials_idx_offset,
                                     obj_draw.obj_data_slots.back().idx());
@@ -778,6 +835,7 @@ void VkRender2::transfer_submit(
 }
 
 void VkRender2::init_pipelines() {
+  cull_objs_pipeline_ = PipelineManager::get().load_compute_pipeline({"cull_objects.comp"});
   postprocess_pipeline_ =
       PipelineManager::get().load_compute_pipeline({"postprocess/postprocess.comp"});
   img_pipeline_ = PipelineManager::get().load_compute_pipeline({"debug/clear_img.comp"});
@@ -811,19 +869,31 @@ void VkRender2::init_pipelines() {
 }
 
 void VkRender2::init_indirect_drawing() {
-  for (auto& f : per_frame_data_2_) {
-    f.draw_cnt_buf = vk2::get_device().create_buffer_holder(BufferCreateInfo{
-        .size = sizeof(u32),
+  // for (auto& f : per_frame_data_2_) {
+  //   f.draw_cnt_buf = vk2::get_device().create_buffer_holder(BufferCreateInfo{
+  //       .size = sizeof(u32),
+  //       .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+  //                VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+  //   });
+  //   f.final_draw_cmd_buf = get_device().create_buffer_holder(BufferCreateInfo{
+  //       .size = max_draws * sizeof(VkDrawIndexedIndirectCommand),
+  //       .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+  //                VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+  //   });
+  // }
+
+  // TODO: variable length lmao
+  auto make_draw_cmd_buf = []() -> vk2::Holder<vk2::BufferHandle> {
+    return get_device().create_buffer_holder(BufferCreateInfo{
+        .size = (max_draws * sizeof(VkDrawIndexedIndirectCommand)) + sizeof(u32),
         .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
                  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
     });
-    f.final_draw_cmd_buf = get_device().create_buffer_holder(BufferCreateInfo{
-        .size = max_draws * sizeof(VkDrawIndexedIndirectCommand),
-        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-                 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-    });
+  };
+  for (u32 i = 0; i < frames_in_flight_; i++) {
+    unculled_draw_data_.output_draw_cmd_buf[i] = make_draw_cmd_buf();
+    main_culled_draw_data_.output_draw_cmd_buf[i] = make_draw_cmd_buf();
   }
-  cull_objs_pipeline_ = PipelineManager::get().load_compute_pipeline({"cull_objects.comp"});
 }
 
 std::optional<vk2::Image> VkRender2::load_hdr_img(CmdEncoder& ctx,
@@ -1025,61 +1095,86 @@ void VkRender2::draw_cube(VkCommandBuffer cmd) const {
 
 void VkRender2::add_basic_forward_pass(RenderGraph& rg) {
   ZoneScoped;
-  auto& clear_buff = rg.add_pass("clear_draw_cnt_buf");
-  clear_buff.add_proxy("draw_cnt_buf", Access::TransferWrite);
-  clear_buff.add_proxy("final_draw_cmd_buf", Access::TransferWrite);
-  clear_buff.set_execute_fn([this](CmdEncoder& cmd) {
-    TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "clear_draw_cnt_buf");
-    auto& curr_frame_data = curr_frame_2();
-    auto& draw_cnt_buf = curr_frame_data.draw_cnt_buf;
-    auto& final_draw_cmd_buf = curr_frame_data.final_draw_cmd_buf;
-    vkCmdFillBuffer(cmd.cmd(), get_device().get_buffer(draw_cnt_buf)->buffer(), 0, sizeof(u32), 0);
-    if (portable_) {
-      vkCmdFillBuffer(cmd.cmd(), get_device().get_buffer(final_draw_cmd_buf)->buffer(), 0,
-                      get_device().get_buffer(final_draw_cmd_buf)->size(), 0);
-    }
-  });
+  {
+    auto& clear_buff = rg.add_pass("clear_draw_cnt_buf");
+    clear_buff.add_proxy("unculled_draw_cmd_buf", Access::TransferWrite);
+    clear_buff.add_proxy("main_culled_draw_cmd_buf", Access::TransferWrite);
+    clear_buff.set_execute_fn([this](CmdEncoder& cmd) {
+      TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "clear_draw_cnt_buf");
+      vk2::BufferHandle bufs[] = {
+          main_culled_draw_data_.output_draw_cmd_buf[curr_frame_in_flight_num()].handle,
+          unculled_draw_data_.output_draw_cmd_buf[curr_frame_in_flight_num()].handle};
+      for (auto buf_handle : bufs) {
+        auto* buf = get_device().get_buffer(buf_handle);
+        if (!buf) {
+          continue;
+        }
+        if (portable_) {
+          // fill whole buffer with 0 since can't use draw indirect count.
+          vkCmdFillBuffer(cmd.cmd(), buf->buffer(), 0, buf->size(), 0);
+        } else {
+          // fill draw cnt with 0
+          vkCmdFillBuffer(cmd.cmd(), buf->buffer(), 0, sizeof(u32), 0);
+        }
+      }
+    });
+  }
 
-  auto& cull = rg.add_pass("cull");
-  cull.add_proxy("draw_cnt_buf", Access::ComputeRW);
-  cull.add_proxy("final_draw_cmd_buf", Access::ComputeWrite);
-  cull.set_execute_fn([this](CmdEncoder& cmd) {
-    TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "cull");
-    PipelineManager::get().bind_compute(cmd.cmd(), cull_objs_pipeline_);
-    auto& curr_frame_data = curr_frame_2();
-    auto& draw_cnt_buf = curr_frame_data.draw_cnt_buf;
-    auto& final_draw_cmd_buf = curr_frame_data.final_draw_cmd_buf;
-    struct {
-      u32 num_objs;
-      u32 in_draw_cmds_buf;
-      u32 out_draw_cmds_buf;
-      u32 draw_cnt_buf;
-      u32 object_bounds_buf;
-    } pc{static_cast<u32>(draw_cnt_), static_draw_info_buf_->buffer.resource_info_->handle,
-         get_device().get_buffer(final_draw_cmd_buf)->resource_info_->handle,
-         get_device().get_buffer(draw_cnt_buf)->resource_info_->handle,
-         static_object_data_buf_->buffer.resource_info_->handle};
-    cmd.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-    cmd.dispatch((draw_cnt_ + 256) / 256, 1, 1);
-  });
+  {
+    auto& cull = rg.add_pass("cull");
+    cull.add_proxy("main_culled_draw_cmd_buf", Access::ComputeRW);
+    cull.add_proxy("unculled_draw_cmd_buf", Access::ComputeRW);
+    cull.set_execute_fn([this](CmdEncoder& cmd) {
+      TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "cull");
+      PipelineManager::get().bind_compute(cmd.cmd(), cull_objs_pipeline_);
+      glm::mat4 transpose_proj = glm::transpose(scene_uniform_cpu_data_.proj);
+      auto normalize_plane = [](const vec4& p) -> vec4 { return p / glm::length(vec3(p)); };
+      glm::vec4 frustum_x = normalize_plane(transpose_proj[3] + transpose_proj[0]);  // x+w <0
+      glm::vec4 frustum_y = normalize_plane(transpose_proj[3] + transpose_proj[1]);  // y+w <0
+      u32 flags{};
 
-  csm_->add_pass(rg);
+      auto dispatch_cull = [&frustum_x, &frustum_y, this, flags](
+                               CmdEncoder& cmd, bool enabled,
+                               vk2::BufferHandle draw_cmd_buf) mutable {
+        u32 new_flags = flags;
+        if (enabled) {
+          new_flags |= FRUSTUM_CULL_ENABLED_BIT;
+        }
+        CullObjectPushConstants pc{curr_frame_2().scene_uniform_buf->device_addr(),
+                                   static_cast<u32>(draw_cnt_),
+                                   static_draw_info_buf_->buffer.resource_info_->handle,
+                                   get_device().get_buffer(draw_cmd_buf)->resource_info_->handle,
+                                   static_object_data_buf_->buffer.resource_info_->handle,
+                                   new_flags,
+                                   {frustum_x.x, frustum_x.z, frustum_y.y, frustum_y.z}};
+        cmd.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
+        cmd.dispatch((draw_cnt_ + 256) / 256, 1, 1);
+      };
+      dispatch_cull(cmd, frustum_cull_enabled_,
+                    main_culled_draw_data_.output_draw_cmd_buf[curr_frame_in_flight_num()].handle);
+      dispatch_cull(cmd, false,
+                    unculled_draw_data_.output_draw_cmd_buf[curr_frame_in_flight_num()].handle);
+    });
+  }
+
+  if (csm_enabled.get()) {
+    csm_->add_pass(rg);
+  }
 
   if (!deferred_enabled_) {
     auto& forward = rg.add_pass("forward");
     auto final_out_handle =
         forward.add("draw_out", {.format = draw_img_format_}, Access::ColorWrite);
-    forward.add_proxy("draw_cnt_buf", Access::IndirectRead);
-    forward.add_proxy("final_draw_cmd_buf", Access::IndirectRead);
-    forward.add_proxy("shadow_data_buf", Access::FragmentRead);
-    forward.add("shadow_map_img", csm_->get_shadow_map_att_info(), Access::FragmentRead);
+    // TODO: make an indirect drawer class that adds the buffers it needs to the render graph pass
+    forward.add_proxy("main_culled_draw_cmd_buf", Access::IndirectRead);
+    if (csm_enabled.get()) {
+      forward.add_proxy("shadow_data_buf", Access::FragmentRead);
+      forward.add("shadow_map_img", csm_->get_shadow_map_att_info(), Access::FragmentRead);
+    }
     auto depth_out_handle =
         forward.add("depth", {.format = depth_img_format_}, Access::DepthStencilWrite);
     forward.set_execute_fn([&rg, final_out_handle, this, depth_out_handle](CmdEncoder& cmd) {
       TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "forward");
-      auto& curr_frame_data = curr_frame_2();
-      auto& draw_cnt_buf = curr_frame_data.draw_cnt_buf;
-      auto& final_draw_cmd_buf = curr_frame_data.final_draw_cmd_buf;
       auto* tex = rg.get_texture(final_out_handle);
       assert(tex);
       if (!tex) return;
@@ -1116,15 +1211,7 @@ void VkRender2::add_basic_forward_pass(RenderGraph& rg) {
       PipelineManager::get().bind_graphics(cmd.cmd(), draw_pipeline_);
 
       vkCmdBindIndexBuffer(cmd.cmd(), static_index_buf_->buffer.buffer(), 0, VK_INDEX_TYPE_UINT32);
-      if (portable_) {
-        vkCmdDrawIndexedIndirect(cmd.cmd(), get_device().get_buffer(final_draw_cmd_buf)->buffer(),
-                                 0, draw_cnt_, sizeof(VkDrawIndexedIndirectCommand));
-      } else {
-        vkCmdDrawIndexedIndirectCount(cmd.cmd(),
-                                      get_device().get_buffer(final_draw_cmd_buf)->buffer(), 0,
-                                      get_device().get_buffer(draw_cnt_buf)->buffer(), 0, max_draws,
-                                      sizeof(VkDrawIndexedIndirectCommand));
-      }
+      draw_opaque(cmd, main_culled_draw_data_);
 
       {
         PipelineManager::get().bind_graphics(cmd.cmd(), skybox_pipeline_);
@@ -1157,16 +1244,12 @@ void VkRender2::add_basic_forward_pass(RenderGraph& rg) {
           gbuffer.add("gbuffer_b", {.format = gbuffer_b_format_}, Access::ColorWrite);
       auto rg_gbuffer_c =
           gbuffer.add("gbuffer_c", {.format = gbuffer_c_format_}, Access::ColorWrite);
-      gbuffer.add_proxy("draw_cnt_buf", Access::IndirectRead);
-      gbuffer.add_proxy("final_draw_cmd_buf", Access::IndirectRead);
+      gbuffer.add_proxy("main_culled_draw_cmd_buf", Access::IndirectRead);
       auto depth_out_handle =
           gbuffer.add("depth", {.format = depth_img_format_}, Access::DepthStencilWrite);
       gbuffer.set_execute_fn([&rg, rg_gbuffer_a, rg_gbuffer_b, rg_gbuffer_c, this,
                               depth_out_handle](CmdEncoder& cmd) {
         TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "gbuffer");
-        auto& curr_frame_data = curr_frame_2();
-        auto& draw_cnt_buf = curr_frame_data.draw_cnt_buf;
-        auto& final_draw_cmd_buf = curr_frame_data.final_draw_cmd_buf;
         auto* gbuffer_a = rg.get_texture(rg_gbuffer_a);
         auto* gbuffer_b = rg.get_texture(rg_gbuffer_b);
         auto* gbuffer_c = rg.get_texture(rg_gbuffer_c);
@@ -1217,16 +1300,7 @@ void VkRender2::add_basic_forward_pass(RenderGraph& rg) {
         // TODO: draw scene func
         vkCmdBindIndexBuffer(cmd.cmd(), static_index_buf_->buffer.buffer(), 0,
                              VK_INDEX_TYPE_UINT32);
-        if (portable_) {
-          vkCmdDrawIndexedIndirect(cmd.cmd(), get_device().get_buffer(final_draw_cmd_buf)->buffer(),
-                                   0, draw_cnt_, sizeof(VkDrawIndexedIndirectCommand));
-        } else {
-          vkCmdDrawIndexedIndirectCount(cmd.cmd(),
-                                        get_device().get_buffer(final_draw_cmd_buf)->buffer(), 0,
-                                        get_device().get_buffer(draw_cnt_buf)->buffer(), 0,
-                                        max_draws, sizeof(VkDrawIndexedIndirectCommand));
-        }
-
+        draw_opaque(cmd, main_culled_draw_data_);
         vkCmdEndRenderingKHR(cmd.cmd());
       });
     }
@@ -1238,8 +1312,10 @@ void VkRender2::add_basic_forward_pass(RenderGraph& rg) {
           shade.add("gbuffer_b", {.format = gbuffer_b_format_}, Access::ComputeRead);
       auto rg_gbuffer_c =
           shade.add("gbuffer_c", {.format = gbuffer_c_format_}, Access::ComputeRead);
-      shade.add("shadow_map_img", csm_->get_shadow_map_att_info(), Access::FragmentRead);
-      shade.add_proxy("shadow_data_buf", Access::ComputeRead);
+      if (csm_enabled.get()) {
+        shade.add("shadow_map_img", csm_->get_shadow_map_att_info(), Access::FragmentRead);
+        shade.add_proxy("shadow_data_buf", Access::ComputeRead);
+      }
       auto depth_handle = shade.add("depth", {.format = depth_img_format_}, Access::ComputeSample);
       auto final_out_handle =
           shade.add("draw_out", {.format = draw_img_format_}, Access::ComputeWrite);
@@ -1286,7 +1362,6 @@ void VkRender2::add_basic_forward_pass(RenderGraph& rg) {
     }
     {
       auto& skybox = rg.add_pass("skybox");
-      // skybox.add("draw_out", {.format = draw_img_format_}, Access::ColorRW);
       auto draw_tex = skybox.add("draw_out", {.format = draw_img_format_}, Access::ColorRW);
       auto depth_handle =
           skybox.add("depth", {.format = depth_img_format_}, Access::DepthStencilRead);
@@ -1349,9 +1424,10 @@ void VkRender2::add_basic_forward_pass(RenderGraph& rg) {
         PipelineManager::get().bind_compute(cmd.cmd(), postprocess_pipeline_);
         auto* post_processed_img = rg.get_texture(final_out_handle);
         struct {
-          u32 in_tex_idx, out_tex_idx, flags;
+          u32 in_tex_idx, out_tex_idx, flags, tonemap_type;
         } pc{rg.get_texture(draw_out_handle)->view().storage_img_resource().handle,
-             post_processed_img->view().storage_img_resource().handle, postprocess_flags};
+             post_processed_img->view().storage_img_resource().handle, postprocess_flags,
+             tonemap_type_};
         cmd.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
         vkCmdDispatch(cmd.cmd(), (post_processed_img->extent_2d().width + 16) / 16,
                       (post_processed_img->extent_2d().height + 16) / 16, 1);
@@ -1370,4 +1446,16 @@ void VkRender2::add_basic_forward_pass(RenderGraph& rg) {
   }
 }
 
+void VkRender2::draw_opaque(CmdEncoder& cmd, const StaticGPUDrawData& draw_buf) {
+  VkBuffer draw_cmd_buf =
+      get_device().get_buffer(draw_buf.output_draw_cmd_buf[curr_frame_in_flight_num()])->buffer();
+  constexpr u32 draw_cmd_offset{sizeof(u32)};
+  if (portable_) {
+    vkCmdDrawIndexedIndirect(cmd.cmd(), draw_cmd_buf, draw_cmd_offset, draw_cnt_,
+                             sizeof(VkDrawIndexedIndirectCommand));
+  } else {
+    vkCmdDrawIndexedIndirectCount(cmd.cmd(), draw_cmd_buf, draw_cmd_offset, draw_cmd_buf, 0,
+                                  max_draws, sizeof(VkDrawIndexedIndirectCommand));
+  }
+}
 }  // namespace gfx

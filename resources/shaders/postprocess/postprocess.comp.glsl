@@ -11,6 +11,7 @@ layout(push_constant) uniform PC {
     uint in_tex_idx;
     uint out_tex_idx;
     uint flags;
+    uint tonemap_type;
 };
 
 #define TONEMAP_BIT 0x1
@@ -18,8 +19,6 @@ layout(push_constant) uniform PC {
 #define DISABLED_BIT 0x4
 
 VK2_DECLARE_STORAGE_IMAGES(image2D);
-
-#define tonemap(x) ACESFilm(x)
 
 void main() {
     ivec2 img_size = imageSize(vk2_get_storage_img(image2D, in_tex_idx)).xy;
@@ -30,7 +29,11 @@ void main() {
     vec4 color = imageLoad(vk2_get_storage_img(image2D, in_tex_idx), ivec2(gl_GlobalInvocationID.xy));
     bool disabled = (flags & DISABLED_BIT) != 0;
     if (!disabled && (flags & TONEMAP_BIT) != 0) {
-        color.rgb = tonemap(color.rgb);
+        if (tonemap_type == 0) {
+            color.rgb = tonemap(color.rgb);
+        } else {
+            color.rgb = ACESFilm(color.rgb);
+        }
     }
     if (!disabled && (flags & GAMMA_CORRECT_BIT) != 0) {
         color.rgb = gamma_correct(color.rgb);

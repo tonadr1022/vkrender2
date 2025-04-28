@@ -120,8 +120,8 @@ struct VkRender2 final : public BaseRenderer {
  private:
   struct FrameData {
     std::optional<vk2::Buffer> scene_uniform_buf;
-    vk2::Holder<vk2::BufferHandle> draw_cnt_buf;
-    vk2::Holder<vk2::BufferHandle> final_draw_cmd_buf;
+    // vk2::Holder<vk2::BufferHandle> draw_cnt_buf;
+    // vk2::Holder<vk2::BufferHandle> final_draw_cmd_buf;
   };
   std::vector<FrameData> per_frame_data_2_;
   FrameData& curr_frame_2() { return per_frame_data_2_[curr_frame_num() % 2]; }
@@ -140,7 +140,6 @@ struct VkRender2 final : public BaseRenderer {
     float _p2;
     vec3 light_color;
     float ambient_intensity;
-    float ibl_ambient_intensity;
   };
   SceneUniforms scene_uniform_cpu_data_;
 
@@ -209,8 +208,17 @@ struct VkRender2 final : public BaseRenderer {
 
   gfx::RenderGraph rg_;
   DrawStats static_draw_stats_{};
-  // TODO: this is disgusting, but eventually a rewrite will wipe this out anyway
+
+  struct StaticGPUDrawData {
+    vk2::Holder<vk2::BufferHandle> output_draw_cmd_buf[max_frames_in_flight];
+  };
+  StaticGPUDrawData unculled_draw_data_;
+  StaticGPUDrawData main_culled_draw_data_;
+
+  void draw_opaque(CmdEncoder& cmd, const StaticGPUDrawData& draw_buf);
+
  public:
+  // TODO: remove this this is awful
   std::optional<LinearBuffer> static_vertex_buf_;
 
  private:
@@ -259,6 +267,7 @@ struct VkRender2 final : public BaseRenderer {
   Format depth_img_format_{Format::D32Sfloat};
   // TODO: make more robust settings
   bool deferred_enabled_{true};
+  bool frustum_cull_enabled_{true};
   VkPipelineLayout default_pipeline_layout_{};
   std::queue<InFlightResource<vk2::Buffer*>> pending_buffer_transfers_;
 
@@ -292,6 +301,8 @@ struct VkRender2 final : public BaseRenderer {
 #else
   bool portable_{false};
 #endif
+  u32 tonemap_type_{1};
+  const char* tonemap_type_names_[2] = {"Optimized Filmic", "ACES Film"};
 
  public:
   std::optional<vk2::Image> load_hdr_img(CmdEncoder& ctx, const std::filesystem::path& path,

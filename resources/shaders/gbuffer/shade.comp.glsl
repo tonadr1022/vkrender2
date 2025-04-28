@@ -37,10 +37,10 @@ void main() {
     float metallic = gbuffer_a.b;
     float roughness = gbuffer_a.a;
     vec4 albedo = gbuffer_b;
-    if (albedo.a == 0) {
-        STORE(vec4(0.));
-        return;
-    }
+    // if (albedo.a == 0) {
+    //     STORE(vec4(0.));
+    //     return;
+    // }
     vec3 emissive = gbuffer_c.rgb;
     float ao = gbuffer_c.a;
     vec3 V = normalize(scene_data.view_pos - world_pos);
@@ -54,7 +54,10 @@ void main() {
         return;
     }
 
-    float shadow = calc_shadow(shadow_datas[shadow_buffer_idx].data, scene_data, shadow_img_idx, shadow_sampler_idx, N, world_pos);
+    float shadow = 1.0;
+    if ((debug_flags.x & CSM_ENABLED_BIT) != 0) {
+        shadow = calc_shadow(shadow_datas[shadow_buffer_idx].data, scene_data, shadow_img_idx, shadow_sampler_idx, N, world_pos);
+    }
     if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_SHADOW) {
         STORE(vec4(vec3(shadow), 1.));
         return;
@@ -87,21 +90,24 @@ void main() {
     }
     // IBL ambient
     {
+        vec3 ambient;
         vec3 F = FresnelSchlickRoughness(NdotV, F0, roughness);
-
         vec3 kS = F;
         vec3 kD = (1.0 - kS) * (1.0 - metallic);
         vec3 irradiance = texture(vk2_samplerCube(irradiance_img_idx, sampler_idx), N).rgb;
         vec3 diffuse = irradiance * albedo.rgb;
-
-        const float MaxReflectionLod = 4.;
-        vec3 R = reflect(-V, N);
-        vec3 prefiltered_color = textureLod(vk2_samplerCube(prefiltered_env_map_idx,
-                    linear_clamp_to_edge_sampler_idx), R, roughness * MaxReflectionLod).rgb;
-        vec2 env_brdf = texture(vk2_sampler2D(brdf_lut_idx, linear_clamp_to_edge_sampler_idx), vec2(NdotV, roughness)).rg;
-        vec3 specular = prefiltered_color * (F * env_brdf.x + env_brdf.y);
-
-        vec3 ambient = kD * diffuse * ao * scene_data.ambient_intensity + (kD * diffuse + specular) * ao * scene_data.ibl_ambient_intensity;
+        if ((debug_flags.x & IBL_ENABLED_BIT) != 0) {
+            const float MaxReflectionLod = 4.;
+            vec3 R = reflect(-V, N);
+            vec3 prefiltered_color = textureLod(vk2_samplerCube(prefiltered_env_map_idx,
+                        linear_clamp_to_edge_sampler_idx), R, roughness * MaxReflectionLod).rgb;
+            vec2 env_brdf = texture(vk2_sampler2D(brdf_lut_idx, linear_clamp_to_edge_sampler_idx), vec2(NdotV, roughness)).rg;
+            vec3 specular = prefiltered_color * (F * env_brdf.x + env_brdf.y);
+            ambient = (kD * diffuse + specular) * ao * scene_data.ambient_intensity;
+        } else {
+            ambient = kD * diffuse * ao * scene_data.ambient_intensity;
+            // ambient = albedo.rgb * ao * scene_data.ambient_intensity;
+        }
         vec3 outputColor = light_out + emissive + ambient;
         STORE(vec4(outputColor, 1.));
     }

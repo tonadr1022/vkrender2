@@ -50,9 +50,9 @@ void main() {
 
     // https://bgolus.medium.com/anti-aliased-alpha-test-the-esoteric-alpha-to-coverage-8b177335ae4f
     //runAlphaTest(baseColor.a, mat.emissiveFactorAlphaCutoff.w / max(32.0 * fwidth(uv.x), 1.0));
-    if (albedo.a < .5) {
-        discard;
-    }
+    // if (albedo.a < .7) {
+    //     discard;
+    // }
 
     vec3 emissive = material.emissive_factors.w * material.emissive_factors.rgb;
     if (material.ids.w != 0) {

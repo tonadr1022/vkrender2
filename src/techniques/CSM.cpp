@@ -322,8 +322,7 @@ void CSM::add_pass(RenderGraph& rg) {
   auto& csm = rg.add_pass("csm");
   auto rg_shadow_map_img =
       csm.add("shadow_map_img", shadow_map_img_att_info_, Access::DepthStencilWrite);
-  csm.add_proxy("draw_cnt_buf", Access::IndirectRead);
-  csm.add_proxy("final_draw_cmd_buf", Access::IndirectRead);
+  csm.add_proxy("unculled_draw_cmd_buf", Access::IndirectRead);
   csm.set_execute_fn([this, rg_shadow_map_img, &rg](CmdEncoder& cmd) {
     TracyVkZone(cmd.get_tracy_ctx(), cmd.cmd(), "csm");
     shadow_map_img_ = rg.get_texture_handle(rg_shadow_map_img);

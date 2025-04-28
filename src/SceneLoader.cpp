@@ -283,31 +283,6 @@ void update_node_transforms(std::vector<NodeData>& nodes, std::vector<u32>& root
       }
     }
   }
-  // struct RefreshEntry {
-  //   u32 node_idx{NodeData::null_idx};
-  //   u32 parent_idx{NodeData::null_idx};
-  // };
-  // // TODO: don't allocate here
-  // std::vector<RefreshEntry> to_refresh;
-  // to_refresh.reserve(nodes.size());
-  // for (u64 node_idx = 0; node_idx < root_node_indices.size(); node_idx++) {
-  //   auto& node = nodes[node_idx];
-  //   if (node.parent_idx == NodeData::null_idx) {
-  //     to_refresh.emplace_back(node_idx, NodeData::null_idx);
-  //   }
-  // }
-  //
-  // while (!to_refresh.empty()) {
-  //   RefreshEntry entry = to_refresh.back();
-  //   to_refresh.pop_back();
-  //   auto& node = nodes[entry.node_idx];
-  //   node.world_transform = entry.parent_idx == NodeData::null_idx
-  //                              ? node.local_transform
-  //                              : nodes[entry.parent_idx].world_transform * node.local_transform;
-  //   for (auto c : node.children_indices) {
-  //     to_refresh.emplace_back(c, entry.node_idx);
-  //   }
-  // }
 }
 
 void load_scene_graph_data(SceneLoadData& result, fastgltf::Asset& gltf, u32 default_mat_idx) {
@@ -364,6 +339,10 @@ void load_scene_graph_data(SceneLoadData& result, fastgltf::Asset& gltf, u32 def
     }
   }
   update_node_transforms(result.node_datas, result.root_node_indices);
+  for (u32 i = 0; i < result.node_datas.size(); i++) {
+    // result.node_datas[i].meshes
+    // result.node_mesh_bounds[i]
+  }
 }
 
 struct CpuImageData {
@@ -950,7 +929,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
               calculate_mesh_bounds(mesh_draw_info.bounds, min, max);
             } else {
               assert(0 && "why does this gltf not have bounds lmao noob");
-              // Fallback: calculate bounds from vertices if accessor min/max not set
+              // calculate bounds from vertices if accessor min/max not set
               calculate_mesh_bounds(
                   mesh_draw_info.bounds, &result->vertices[mesh_draw_info.first_vertex],
                   pos_accessor.count, sizeof(gfx::Vertex), offsetof(gfx::Vertex, pos));

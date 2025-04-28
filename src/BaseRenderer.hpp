@@ -87,7 +87,6 @@ struct SceneDrawInfo {
   vec3 light_dir;
   vec3 light_color;
   float ambient_intensity{0.1};
-  float ibl_ambient_intensity{.1};
   float fov_degrees{70.f};
 };
 
@@ -116,6 +115,7 @@ class BaseRenderer {
 
   [[nodiscard]] u64 get_num_frames_in_flight() const { return frames_in_flight_; }
   [[nodiscard]] u64 curr_frame_num() const { return curr_frame_num_; }
+  [[nodiscard]] u64 curr_frame_in_flight_num() const { return curr_frame_num_ % frames_in_flight_; }
 
  protected:
   struct BaseInitInfo {

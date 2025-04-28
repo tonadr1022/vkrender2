@@ -3,16 +3,26 @@
 #extension GL_GOOGLE_include_directive : enable
 
 #include "resources.h.glsl"
+#define BDA 1
+#include "./common.h.glsl"
+#include "./cull_objects_common.h.glsl"
 
 layout(local_size_x = 256) in;
 
-layout(push_constant) uniform PC {
-    uint num_objs;
-    uint in_draw_info_buf_idx;
-    uint out_draw_cmds_buf_idx;
-    uint draw_cnt_buf_idx;
-    uint object_bounds_buf_idx;
-} pc;
+bool is_visible_frustum(vec3 origin, float radius) {
+    if ((flags & FRUSTUM_CULL_ENABLED_BIT) == 0) {
+        return true;
+    }
+    origin = (SceneDatas(scene_data).data.view * vec4(origin, 1.0)).xyz;
+    bool visible = true;
+    // bool distance_cull = bool(bitfieldExtract(cull_data.enable_bits, DISTANCE_CULL_BIT, 1));
+    // if (distance_cull) {
+    //     visible = visible && origin.z + radius > cull_data.z_near && origin.z - radius < cull_data.z_far;
+    // }
+    visible = visible && origin.z * frustum[1] - abs(origin.x) * frustum[0] > -radius;
+    visible = visible && origin.z * frustum[3] - abs(origin.y) * frustum[2] > -radius;
+    return visible;
+}
 
 struct ObjectBounds {
     mat4 model;
@@ -44,36 +54,32 @@ DrawInfo cmds[];
 } draw_cmds[];
 
 VK2_DECLARE_STORAGE_BUFFERS(OutDrawCmdsBuffer){
+uint cnt;
 DrawCmd cmds[];
 } out_cmds[];
 
-VK2_DECLARE_STORAGE_BUFFERS(DrawCntBuffer){
-uint cnt;
-} draw_cnts[];
-
 bool is_visible(in ObjectBounds bounds) {
-    return true;
+    return is_visible_frustum(bounds.sphere_bounds.xyz, bounds.sphere_bounds.w);
 }
 
 void main() {
     uint id = gl_GlobalInvocationID.x;
-    if (id >= pc.num_objs) {
+    if (id >= num_objs) {
         return;
     }
-    DrawInfo draw_info = draw_cmds[pc.in_draw_info_buf_idx].cmds[id];
+    DrawInfo draw_info = draw_cmds[in_draw_info_buf_idx].cmds[id];
     if (draw_info.data.x == 0) {
         return;
     }
-    ObjectBounds bounds = object_bounds[pc.object_bounds_buf_idx].bounds[id];
     // get the object. test its frustum against the view frustum
-    if (is_visible(bounds)) {
-        uint out_idx = atomicAdd(draw_cnts[pc.draw_cnt_buf_idx].cnt, 1);
+    if (is_visible(object_bounds[object_bounds_buf_idx].bounds[id])) {
+        uint out_idx = atomicAdd(out_cmds[out_draw_cmds_buf_idx].cnt, 1);
         DrawCmd cmd;
         cmd.first_instance = id;
         cmd.index_cnt = draw_info.data.x;
         cmd.first_index = draw_info.data.y;
         cmd.vertex_offset = int(draw_info.data.z);
         cmd.instance_cnt = 1;
-        out_cmds[pc.out_draw_cmds_buf_idx].cmds[out_idx] = cmd;
+        out_cmds[out_draw_cmds_buf_idx].cmds[out_idx] = cmd;
     }
 }

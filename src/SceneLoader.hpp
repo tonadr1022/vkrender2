@@ -24,12 +24,6 @@ struct Vertex {
   vec4 tangent;
 };
 
-struct MeshBounds {
-  glm::vec3 origin;
-  float radius;
-  glm::vec3 extents;
-};
-
 struct Material {
   vec4 emissive_factors{0.};
   vec4 albedo_factors{1.};

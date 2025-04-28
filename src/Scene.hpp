@@ -5,6 +5,12 @@
 #include "Common.hpp"
 #include "vk2/Handle.hpp"
 
+struct MeshBounds {
+  glm::vec3 origin;
+  float radius;
+  glm::vec3 extents;
+};
+
 struct NodeData {
   static constexpr u32 null_idx = UINT32_MAX;
   mat4 local_transform{mat4{1}};
@@ -24,6 +30,7 @@ struct NodeData {
 
 struct SceneLoadData {
   std::vector<NodeData> node_datas;
+  std::vector<MeshBounds> node_mesh_bounds;
   std::vector<u32> mesh_node_indices;
   std::vector<u32> root_node_indices;
 };
