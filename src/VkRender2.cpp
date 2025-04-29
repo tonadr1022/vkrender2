@@ -205,6 +205,13 @@ VkRender2::VkRender2(const InitInfo& info)
   });
   vk2::StagingBufferPool::get().free(staging);
 
+  nearest_sampler_ = SamplerCache::get().get_or_create_sampler({
+      .min_filter = VK_FILTER_NEAREST,
+      .mag_filter = VK_FILTER_NEAREST,
+      .mipmap_mode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+      .address_mode = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+  });
+
   linear_sampler_ = SamplerCache::get().get_or_create_sampler({
       .min_filter = VK_FILTER_LINEAR,
       .mag_filter = VK_FILTER_LINEAR,
@@ -259,9 +266,9 @@ VkRender2::VkRender2(const InitInfo& info)
   csm_ = std::make_unique<CSM>(this, [this](CmdEncoder& cmd, const mat4& vp) {
     ShadowDepthPushConstants pc{
         vp,
-        static_vertex_buf_->buffer.resource_info_->handle,
-        static_instance_data_buf_->buffer.resource_info_->handle,
-        static_object_data_buf_->buffer.resource_info_->handle,
+        static_vertex_buf_->buffer.device_addr(),
+        static_instance_data_buf_->buffer.device_addr(),
+        static_object_data_buf_->buffer.device_addr(),
         curr_frame_2().scene_uniform_buf->resource_info_->handle,
         static_materials_buf_->buffer.resource_info_->handle,
         linear_sampler_->resource_info.handle,
@@ -328,6 +335,10 @@ VkRender2::VkRender2(const InitInfo& info)
   rg_.set_swapchain_info(
       RenderGraphSwapchainInfo{.width = swapchain_.dims.x, .height = swapchain_.dims.y});
   rg_.set_backbuffer_img("final_out");
+
+  opaque_draw_mgr_.emplace(100'000);
+  opaque_alpha_mask_draw_mgr_.emplace(100'000);
+  transparent_draw_mgr_.emplace(100'000);
 }
 
 void VkRender2::on_draw(const SceneDrawInfo& info) {
@@ -631,6 +642,7 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
                        .emplace(path.string(),
                                 StaticSceneGPUResources{
                                     .scene_graph_data = std::move(res.scene_graph_data),
+                                    .materials = std::move(res.materials),
                                     .mesh_draw_infos = std::move(res.mesh_draw_infos),
                                     .first_vertex = vertices_gpu_offset / sizeof(gfx::Vertex),
                                     .first_index = indices_gpu_offset / sizeof(u32),
@@ -642,6 +654,20 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
     }
     static_draw_stats_.total_vertices += resources->num_vertices;
     static_draw_stats_.total_indices += resources->num_indices;
+
+    u32 num_opaque_objs{}, num_opaque_alpha_mask_objs{}, num_transparent_objs{};
+    for (auto& node : resources->scene_graph_data.node_datas) {
+      for (auto& mesh_indices : node.meshes) {
+        const auto& mat = resources->materials[mesh_indices.material_id];
+        if (mat.ids2.w & MATERIAL_ALPHA_MODE_MASK_BIT) {
+          num_opaque_alpha_mask_objs++;
+        } else if (mat.ids2.w & MATERIAL_TRANSPARENT_BIT) {
+          num_transparent_objs++;
+        } else {
+          num_opaque_objs++;
+        }
+      }
+    }
 
     std::vector<gfx::ObjectData> obj_datas;
     std::vector<InstanceData> instance_datas;
@@ -655,13 +681,18 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
         MeshBounds new_bounds;
         transform_mesh_bounds(resources->mesh_draw_infos[mesh_indices.mesh_idx].bounds, new_bounds,
                               node.world_transform);
-        obj_datas.emplace_back(gfx::ObjectData{
-            .model = mult_transform ? transform * node.world_transform : node.world_transform,
-            .sphere_radius = vec4{new_bounds.origin, new_bounds.radius},
-            .extent = vec4{new_bounds.extents, 0.}});
-        obj_draw.obj_data_slots.emplace_back(static_object_data_buf_->allocator.alloc());
-        instance_datas.emplace_back(mesh_indices.material_id + resources->materials_idx_offset,
-                                    obj_draw.obj_data_slots.back().idx());
+        const auto& mat = resources->materials[mesh_indices.material_id];
+        if (mat.ids2.w & MATERIAL_ALPHA_MODE_MASK_BIT) {
+        } else if (mat.ids2.w & MATERIAL_TRANSPARENT_BIT) {
+        } else {
+          obj_draw.obj_data_slots.emplace_back(static_object_data_buf_->allocator.alloc());
+          instance_datas.emplace_back(mesh_indices.material_id + resources->materials_idx_offset,
+                                      obj_draw.obj_data_slots.back().idx());
+          obj_datas.emplace_back(gfx::ObjectData{
+              .model = mult_transform ? transform * node.world_transform : node.world_transform,
+              .sphere_radius = vec4{new_bounds.origin, new_bounds.radius},
+              .extent = vec4{new_bounds.extents, 0.}});
+        }
       }
     }
     obj_data_cnt_ += obj_datas.size();
@@ -669,8 +700,10 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
     u64 obj_datas_size = obj_datas.size() * sizeof(gfx::ObjectData);
     u64 instance_datas_size = instance_datas.size() * sizeof(InstanceData);
 
-    std::vector<GPUDrawInfo> cmds;
-    cmds.reserve(resources->scene_graph_data.mesh_node_indices.size());
+    std::vector<GPUDrawInfo> opaque_cmds;
+    std::vector<GPUDrawInfo> alpha_mask_cmds;
+    std::vector<GPUDrawInfo> transparent_cmds;
+    opaque_cmds.reserve(resources->scene_graph_data.mesh_node_indices.size());
 
     vec3 scene_min = vec3{std::numeric_limits<float>::max()};
     vec3 scene_max = vec3{std::numeric_limits<float>::lowest()};
@@ -681,33 +714,40 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
         vec3 max = node.world_transform * vec4(mesh.bounds.origin + mesh.bounds.extents, 1.);
         scene_min = glm::min(scene_min, min);
         scene_max = glm::max(scene_max, max);
-        cmds.emplace_back(GPUDrawInfo{
+        GPUDrawInfo draw{
             .index_cnt = mesh.index_count,
             .first_index = static_cast<u32>(resources->first_index + mesh.first_index),
             .vertex_offset = static_cast<u32>(resources->first_vertex + mesh.first_vertex),
-            .pad = 0});
+            .pad = 0};
+        const auto& mat = resources->materials[mesh_indices.material_id];
+        if (mat.ids2.w & MATERIAL_ALPHA_MODE_MASK_BIT) {
+          alpha_mask_cmds.emplace_back(draw);
+        } else if (mat.ids2.w & MATERIAL_TRANSPARENT_BIT) {
+          transparent_cmds.emplace_back(draw);
+        } else {
+          opaque_cmds.emplace_back(draw);
+        }
       }
     }
 
     scene_aabb_.min = glm::min(scene_aabb_.min, scene_min);
     scene_aabb_.max = glm::max(scene_aabb_.max, scene_max);
 
-    u64 cmds_buf_size = cmds.size() * sizeof(GPUDrawInfo);
-
+    u64 cmds_buf_size = opaque_cmds.size() * sizeof(GPUDrawInfo);
     auto staging = LinearStagingBuffer{vk2::StagingBufferPool::get().acquire(
         cmds_buf_size + obj_datas_size + instance_datas_size)};
-    u64 cmds_staging_offset = staging.copy(cmds.data(), cmds_buf_size);
+    u64 cmds_staging_offset = staging.copy(opaque_cmds.data(), cmds_buf_size);
     u64 obj_datas_staging_offset = staging.copy(obj_datas.data(), obj_datas_size);
     u64 instance_datas_staging_offset = staging.copy(instance_datas.data(), instance_datas_size);
 
     transfer_submit([&, this](VkCommandBuffer cmd, VkFence fence,
                               std::queue<InFlightResource<vk2::Buffer*>>& transfers) {
-      obj_draw.draw_cmd_slots.reserve(cmds.size());
-      for (u64 i = 0; i < cmds.size(); i++) {
+      obj_draw.draw_cmd_slots.reserve(opaque_cmds.size());
+      for (u64 i = 0; i < opaque_cmds.size(); i++) {
         obj_draw.draw_cmd_slots.emplace_back(static_draw_info_buf_->allocator.alloc());
       }
-      std::vector<VkBufferCopy2KHR> copies(cmds.size());
-      for (u64 cmd_i = 0; cmd_i < cmds.size(); cmd_i++) {
+      std::vector<VkBufferCopy2KHR> copies(opaque_cmds.size());
+      for (u64 cmd_i = 0; cmd_i < opaque_cmds.size(); cmd_i++) {
         copies[cmd_i] =
             init::buffer_copy(cmds_staging_offset + (cmd_i * sizeof(GPUDrawInfo)),
                               obj_draw.draw_cmd_slots[cmd_i].offset(), sizeof(GPUDrawInfo));
@@ -762,8 +802,8 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
     });
 
     // TODO: only increment draw count when the fence is ready
-    draw_cnt_ += cmds.size();
-    static_draw_stats_.draw_cmds += cmds.size();
+    draw_cnt_ += opaque_cmds.size();
+    static_draw_stats_.draw_cmds += opaque_cmds.size();
     // });
     return {};
   }
@@ -1127,15 +1167,14 @@ void VkRender2::add_basic_forward_pass(RenderGraph& rg) {
     cull.set_execute_fn([this](CmdEncoder& cmd) {
       TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "cull");
       PipelineManager::get().bind_compute(cmd.cmd(), cull_objs_pipeline_);
-      glm::mat4 transpose_proj = glm::transpose(scene_uniform_cpu_data_.proj);
-      auto normalize_plane = [](const vec4& p) -> vec4 { return p / glm::length(vec3(p)); };
-      glm::vec4 frustum_x = normalize_plane(transpose_proj[3] + transpose_proj[0]);  // x+w <0
-      glm::vec4 frustum_y = normalize_plane(transpose_proj[3] + transpose_proj[1]);  // y+w <0
-      u32 flags{};
 
-      auto dispatch_cull = [&frustum_x, &frustum_y, this, flags](
-                               CmdEncoder& cmd, bool enabled,
-                               vk2::BufferHandle draw_cmd_buf) mutable {
+      auto dispatch_cull = [this](CmdEncoder& cmd, bool enabled, vk2::BufferHandle draw_cmd_buf,
+                                  const mat4& mat = {}) mutable {
+        glm::mat4 transpose_proj = glm::transpose(mat);
+        auto normalize_plane = [](const vec4& p) -> vec4 { return p / glm::length(vec3(p)); };
+        glm::vec4 frustum_x = normalize_plane(transpose_proj[3] + transpose_proj[0]);  // x+w <0
+        glm::vec4 frustum_y = normalize_plane(transpose_proj[3] + transpose_proj[1]);  // y+w <0
+        u32 flags{};
         u32 new_flags = flags;
         if (enabled) {
           new_flags |= FRUSTUM_CULL_ENABLED_BIT;
@@ -1151,7 +1190,8 @@ void VkRender2::add_basic_forward_pass(RenderGraph& rg) {
         cmd.dispatch((draw_cnt_ + 256) / 256, 1, 1);
       };
       dispatch_cull(cmd, frustum_cull_enabled_,
-                    main_culled_draw_data_.output_draw_cmd_buf[curr_frame_in_flight_num()].handle);
+                    main_culled_draw_data_.output_draw_cmd_buf[curr_frame_in_flight_num()].handle,
+                    scene_uniform_cpu_data_.proj);
       dispatch_cull(cmd, false,
                     unculled_draw_data_.output_draw_cmd_buf[curr_frame_in_flight_num()].handle);
     });
@@ -1338,7 +1378,7 @@ void VkRender2::add_basic_forward_pass(RenderGraph& rg) {
             gbuffer_c->view().storage_img_resource().handle,
             depth_img->view().sampled_img_resource().handle,
             shade_out_tex->view().storage_img_resource().handle,
-            linear_sampler_->resource_info.handle,
+            nearest_sampler_->resource_info.handle,
             curr_frame_2().scene_uniform_buf->resource_info_->handle,
             get_device()
                 .get_image(csm_->get_shadow_map_img())
@@ -1458,4 +1498,66 @@ void VkRender2::draw_opaque(CmdEncoder& cmd, const StaticGPUDrawData& draw_buf) 
                                   max_draws, sizeof(VkDrawIndexedIndirectCommand));
   }
 }
+
+// VkRender2::StaticMeshManager::RenderObjectHandle VkRender2::StaticMeshManager::add_draws(
+//     std::span<GPUDrawInfo> draws) {
+//   auto* staging = vk2::StagingBufferPool::get().acquire(draws.size_bytes());
+//   memcpy(staging->mapped_data(), draws.data(), draws.size_bytes());
+//
+//   Alloc a;
+//   a.draw_cmd_slot = draw_cmds_buf_allocator.allocate(draws.size_bytes());
+//   // copy to GPU buffer
+//
+//   // if needed, resize out draw cmd buffer
+//
+//   return allocs_.alloc(a);
+// }
+
+void VkRender2::StaticMeshDrawManager::remove_scene(RenderObjectHandle handle) {
+  Alloc* a = allocs_.get(handle);
+  assert(a);
+  if (!a) return;
+  // clear the buffer area on the GPU
+  draw_cmds_buf_allocator.free(a->draw_cmd_slot);
+  allocs_.destroy(handle);
+}
+
+VkRender2::StaticMeshDrawManager::RenderObjectHandle VkRender2::StaticMeshDrawManager::add_draws(
+    VkCommandBuffer cmd, size_t size, size_t staging_offset, vk2::Buffer& staging) {
+  Alloc a;
+  a.draw_cmd_slot = draw_cmds_buf_allocator.allocate(size);
+  auto* draw_cmds_buf = get_device().get_buffer(draw_cmds_buf_handle);
+  assert(draw_cmds_buf);
+  if (!draw_cmds_buf) {
+    return {};
+  }
+
+  if (a.draw_cmd_slot.get_offset() >= draw_cmds_buf->size()) {
+    LINFO("unimplemented: need to resize Static mesh draw cmd buffer");
+    exit(1);
+  }
+  VkBufferCopy2KHR copy = init::buffer_copy(staging_offset, a.draw_cmd_slot.offset, size);
+  VkCopyBufferInfo2KHR buf_copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+                                     .srcBuffer = staging.buffer(),
+                                     .dstBuffer = draw_cmds_buf->buffer(),
+                                     .regionCount = 1,
+                                     .pRegions = &copy};
+  vkCmdCopyBuffer2KHR(cmd, &buf_copy_info);
+  return allocs_.alloc(a);
+}
+
+VkRender2::StaticMeshDrawManager::StaticMeshDrawManager(size_t initial_max_draw_cnt) {
+  draw_cmds_buf_handle = get_device().create_buffer_holder(BufferCreateInfo{
+      .size = (initial_max_draw_cnt * sizeof(GPUDrawInfo)),
+      .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+  });
+  for (u32 i = 0; i < VkRender2::get().get_num_frames_in_flight(); i++) {
+    out_draw_cmds_buf[i] = get_device().create_buffer_holder(BufferCreateInfo{
+        .size = (initial_max_draw_cnt * sizeof(VkDrawIndexedIndirectCommand)) + sizeof(u32),
+        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+                 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+    });
+  }
+}
+
 }  // namespace gfx

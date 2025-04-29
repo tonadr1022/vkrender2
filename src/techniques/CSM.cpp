@@ -173,7 +173,7 @@ CSM::CSM(BaseRenderer* renderer, DrawFunc draw_fn)
     });
   }
   ZoneScoped;
-  shadow_depth_pipline_ = PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
+  GraphicsPipelineCreateInfo shadow_depth_info{
       .vertex_path = "shadow_depth.vert",
       .fragment_path = "shadow_depth.frag",
       .rendering = {.depth_format = to_vkformat(Format::D32Sfloat)},
@@ -181,7 +181,12 @@ CSM::CSM(BaseRenderer* renderer, DrawFunc draw_fn)
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::Less),
       .dynamic_state = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
                         VK_DYNAMIC_STATE_DEPTH_BIAS},
-  });
+  };
+  shadow_depth_pipline_ = PipelineManager::get().load_graphics_pipeline(shadow_depth_info);
+  shadow_depth_info.fragment_path = "";
+  shadow_depth_alpha_mask_pipline_ =
+      PipelineManager::get().load_graphics_pipeline(shadow_depth_info);
+
   depth_debug_pipeline_ = PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
       .vertex_path = "fullscreen_quad.vert",
       .fragment_path = "debug/depth_debug.frag",

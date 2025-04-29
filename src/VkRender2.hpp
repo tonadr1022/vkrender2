@@ -183,6 +183,7 @@ struct VkRender2 final : public BaseRenderer {
 
   struct StaticSceneGPUResources {
     SceneLoadData scene_graph_data;
+    std::vector<gfx::Material> materials;
     std::vector<gfx::PrimitiveDrawInfo> mesh_draw_infos;
     std::vector<util::SlotAllocator<gfx::ObjectData>::Slot> object_data_slots;
     u64 first_vertex;
@@ -211,7 +212,37 @@ struct VkRender2 final : public BaseRenderer {
 
   struct StaticGPUDrawData {
     vk2::Holder<vk2::BufferHandle> output_draw_cmd_buf[max_frames_in_flight];
+    vk2::Holder<vk2::BufferHandle> alpha_mask_output_draw_cmd_buf[max_frames_in_flight];
   };
+
+  struct StaticMeshDrawManager {
+    explicit StaticMeshDrawManager(size_t initial_max_draw_cnt);
+    StaticMeshDrawManager(const StaticMeshDrawManager&) = delete;
+    StaticMeshDrawManager(StaticMeshDrawManager&&) = delete;
+    StaticMeshDrawManager& operator=(const StaticMeshDrawManager&) = delete;
+    StaticMeshDrawManager& operator=(StaticMeshDrawManager&&) = delete;
+
+    struct Alloc {
+      util::FreeListAllocator::Slot draw_cmd_slot;
+    };
+    using RenderObjectHandle = GenerationalHandle<struct Alloc>;
+    // RenderObjectHandle add_draws(std::span<GPUDrawInfo> draws);
+    RenderObjectHandle add_draws(VkCommandBuffer cmd, size_t size, size_t staging_offset,
+                                 vk2::Buffer& staging);
+    void remove_scene(RenderObjectHandle handle);
+
+    Pool<RenderObjectHandle, Alloc> allocs_;
+    util::FreeListAllocator draw_cmds_buf_allocator;
+    vk2::Holder<vk2::BufferHandle> draw_cmds_buf_handle;  // GPUDrawInfo
+
+    vk2::Holder<vk2::BufferHandle>
+        out_draw_cmds_buf[max_frames_in_flight];  // [draw cnt][DrawCmd[]]
+  };
+
+  std::optional<StaticMeshDrawManager> opaque_draw_mgr_;
+  std::optional<StaticMeshDrawManager> opaque_alpha_mask_draw_mgr_;
+  std::optional<StaticMeshDrawManager> transparent_draw_mgr_;
+
   StaticGPUDrawData unculled_draw_data_;
   StaticGPUDrawData main_culled_draw_data_;
 
@@ -230,19 +261,19 @@ struct VkRender2 final : public BaseRenderer {
   std::optional<SlotBuffer<GPUDrawInfo>> static_draw_info_buf_;
   std::optional<SlotBuffer<gfx::ObjectData>> static_object_data_buf_;
   std::vector<vk2::Image> static_textures_;
-  // std::optional<vk2::Buffer> final_draw_cmd_buf_;
-  // std::optional<vk2::Buffer> draw_cnt_buf_;
 
   StateTracker state_;
   StateTracker transfer_q_state_;
-  // std::optional<vk2::Image> post_processed_img_;
 
   std::optional<vk2::Sampler> linear_sampler_;
+  std::optional<vk2::Sampler> nearest_sampler_;
   std::optional<vk2::Sampler> linear_sampler_clamp_to_edge_;
+
   struct DefaultData {
     std::optional<vk2::Image> white_img;
   } default_data_;
   gfx::DefaultMaterialData default_mat_data_;
+
   struct InstanceData {
     u32 material_id;
     u32 instance_id;

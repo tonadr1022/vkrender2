@@ -117,10 +117,10 @@ void App::run() {
   // VkRender2::get().load_scene(local_models_dir / "Cube/glTF/Cube.gltf", false);
   // VkRender2::get().load_scene(local_models_dir / "sponza.glb", false);
   // VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false);
-  VkRender2::get().load_scene(local_models_dir / "Bistro_Godot.glb", false);
+  // VkRender2::get().load_scene(local_models_dir / "Bistro_Godot.glb", false);
+  VkRender2::get().load_scene(local_models_dir / "Bistro_Godot_opt.glb", false);
   // VkRender2::get().load_scene("/home/tony/models/Models/DamagedHelmet/glTF/DamagedHelmet.gltf",
   //                             false);
-  // VkRender2::get().load_scene("/Users/tony/models/Bistro_Godot_opt.glb", false);
   // std::filesystem::path env_tex = local_models_dir / "quarry_04_puresky_4k.hdr";
   std::filesystem::path env_tex = local_models_dir / "immenstadter_horn_2k.hdr";
   // std::filesystem::path env_tex = local_models_dir / "newport_loft.hdr";

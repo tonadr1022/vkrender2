@@ -51,6 +51,7 @@ class CSM {
   DrawFunc draw_fn_;
   AttachmentInfo shadow_map_img_att_info_;
   vk2::PipelineHandle shadow_depth_pipline_;
+  vk2::PipelineHandle shadow_depth_alpha_mask_pipline_;
   vk2::PipelineHandle depth_debug_pipeline_;
   uvec2 shadow_map_res_{};
   u32 cascade_count_{4};

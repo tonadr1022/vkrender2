@@ -90,6 +90,7 @@ struct SceneDrawInfo {
   float fov_degrees{70.f};
 };
 
+static constexpr u32 max_frames_in_flight{3};
 class BaseRenderer {
  public:
   struct InitInfo {
@@ -108,7 +109,6 @@ class BaseRenderer {
 
   virtual ~BaseRenderer();
 
-  static constexpr u32 max_frames_in_flight{3};
   void draw(const SceneDrawInfo& info);
 
   bool draw_imgui{true};

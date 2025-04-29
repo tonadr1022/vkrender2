@@ -35,10 +35,10 @@ ObjectBounds bounds[];
 } object_bounds[];
 
 struct DrawInfo {
-    uvec4 data; // index_cnt, first_index, vertex_offset
-    // uint index_cnt;
-    // uint first_index;
-    // int vertex_offset;
+    uint index_cnt;
+    uint first_index;
+    uint vertex_offset;
+    uint _pad;
 };
 
 struct DrawCmd {
@@ -68,7 +68,7 @@ void main() {
         return;
     }
     DrawInfo draw_info = draw_cmds[in_draw_info_buf_idx].cmds[id];
-    if (draw_info.data.x == 0) {
+    if (draw_info.index_cnt == 0) {
         return;
     }
     // get the object. test its frustum against the view frustum
@@ -76,9 +76,9 @@ void main() {
         uint out_idx = atomicAdd(out_cmds[out_draw_cmds_buf_idx].cnt, 1);
         DrawCmd cmd;
         cmd.first_instance = id;
-        cmd.index_cnt = draw_info.data.x;
-        cmd.first_index = draw_info.data.y;
-        cmd.vertex_offset = int(draw_info.data.z);
+        cmd.index_cnt = draw_info.index_cnt;
+        cmd.first_index = draw_info.first_index;
+        cmd.vertex_offset = int(draw_info.vertex_offset);
         cmd.instance_cnt = 1;
         out_cmds[out_draw_cmds_buf_idx].cmds[out_idx] = cmd;
     }

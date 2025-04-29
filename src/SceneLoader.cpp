@@ -806,6 +806,12 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
                                  ->occlusionRoughnessMetallicTexture.value());
         mat.ids2.w |= PACKED_OCCLUSION_ROUGHNESS_METALLIC;
       }
+      if (gltf_mat.alphaMode == fastgltf::AlphaMode::Mask) {
+        mat.ids2.w |= MATERIAL_ALPHA_MODE_MASK_BIT;
+      } else if (gltf_mat.alphaMode == fastgltf::AlphaMode::Blend) {
+        mat.ids2.w |= MATERIAL_TRANSPARENT_BIT;
+      }
+
       mat.emissive_factors = vec4(gltf_mat.emissiveFactor.x(), gltf_mat.emissiveFactor.y(),
                                   gltf_mat.emissiveFactor.z(), gltf_mat.emissiveStrength);
 

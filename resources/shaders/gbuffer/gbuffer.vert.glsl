@@ -33,7 +33,7 @@ layout(std430, buffer_reference) readonly buffer ObjectDatas {
 };
 
 void main() {
-    InstanceData instance_data = InstanceDatas(instance_buffer).datas[gl_InstanceIndex];
+    InstanceData instance_data = InstanceDatas(instance_buffer).datas[gl_BaseInstance];
     Vertex v = Vertices(vtx).vertices[gl_VertexIndex];
 
     mat4 model = ObjectDatas(object_data_buffer).datas[instance_data.instance_id].model;
