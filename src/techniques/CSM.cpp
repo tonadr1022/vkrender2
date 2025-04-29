@@ -10,6 +10,7 @@
 #include "AABB.hpp"
 #include "BaseRenderer.hpp"
 #include "CommandEncoder.hpp"
+#include "Logger.hpp"
 #include "RenderGraph.hpp"
 #include "StateTracker.hpp"
 #include "glm/ext/matrix_transform.hpp"
@@ -155,8 +156,9 @@ void calc_csm_light_space_matrices(std::span<mat4> matrices, std::span<float> le
 
 namespace gfx {
 
-CSM::CSM(BaseRenderer* renderer, DrawFunc draw_fn)
+CSM::CSM(BaseRenderer* renderer, DrawFunc draw_fn, AddRenderDependenciesFunc add_deps_fn)
     : draw_fn_(std::move(draw_fn)),
+      add_deps_fn_(std::move(add_deps_fn)),
       shadow_map_res_(uvec2{4096}),
       shadow_map_debug_img_(
           vk2::Image{ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
@@ -182,10 +184,10 @@ CSM::CSM(BaseRenderer* renderer, DrawFunc draw_fn)
       .dynamic_state = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
                         VK_DYNAMIC_STATE_DEPTH_BIAS},
   };
-  shadow_depth_pipline_ = PipelineManager::get().load_graphics_pipeline(shadow_depth_info);
-  shadow_depth_info.fragment_path = "";
   shadow_depth_alpha_mask_pipline_ =
       PipelineManager::get().load_graphics_pipeline(shadow_depth_info);
+  shadow_depth_info.fragment_path = "";
+  shadow_depth_pipline_ = PipelineManager::get().load_graphics_pipeline(shadow_depth_info);
 
   depth_debug_pipeline_ = PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
       .vertex_path = "fullscreen_quad.vert",
@@ -252,6 +254,7 @@ void CSM::on_imgui(VkSampler sampler) {
   }
   ImGui::DragFloat("PCF Scale", &pcf_scale_, .001, .0f, 5.f);
   ImGui::Checkbox("PCF", &pcf_);
+  ImGui::Checkbox("Alpha Cutout", &alpha_cutout_enabled_);
   if (ImGui::TreeNode("shadow map")) {
     ImGui::SliderInt("view level", &debug_cascade_idx_, 0, cascade_count_ - 1);
     if (debug_render_enabled_) {
@@ -327,7 +330,7 @@ void CSM::add_pass(RenderGraph& rg) {
   auto& csm = rg.add_pass("csm");
   auto rg_shadow_map_img =
       csm.add("shadow_map_img", shadow_map_img_att_info_, Access::DepthStencilWrite);
-  csm.add_proxy("unculled_draw_cmd_buf", Access::IndirectRead);
+  add_deps_fn_(csm);
   csm.set_execute_fn([this, rg_shadow_map_img, &rg](CmdEncoder& cmd) {
     TracyVkZone(cmd.get_tracy_ctx(), cmd.cmd(), "csm");
     shadow_map_img_ = rg.get_texture_handle(rg_shadow_map_img);
@@ -364,9 +367,21 @@ void CSM::add_pass(RenderGraph& rg) {
       if (depth_bias_enabled_) {
         vkCmdSetDepthBias(cmd.cmd(), depth_bias_constant_factor_, 0.0f, depth_bias_slope_factor_);
       }
-      vkCmdBindPipeline(cmd.cmd(), VK_PIPELINE_BIND_POINT_GRAPHICS,
-                        PipelineManager::get().get(shadow_depth_pipline_)->pipeline);
-      draw_fn_(cmd, light_matrices_[i]);
+
+      {
+        TracyVkZone(cmd.get_tracy_ctx(), cmd.cmd(), "opaque");
+        vkCmdBindPipeline(cmd.cmd(), VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          PipelineManager::get().get(shadow_depth_pipline_)->pipeline);
+        draw_fn_(cmd, light_matrices_[i], false);
+      }
+      {
+        TracyVkZone(cmd.get_tracy_ctx(), cmd.cmd(), "opaque_alpha_mask");
+        if (alpha_cutout_enabled_) {
+          vkCmdBindPipeline(cmd.cmd(), VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            PipelineManager::get().get(shadow_depth_alpha_mask_pipline_)->pipeline);
+        }
+        draw_fn_(cmd, light_matrices_[i], true);
+      }
       vkCmdEndRenderingKHR(cmd.cmd());
     }
     init::end_debug_utils_label(cmd.cmd());

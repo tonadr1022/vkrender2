@@ -38,7 +38,7 @@ struct DrawInfo {
     uint index_cnt;
     uint first_index;
     uint vertex_offset;
-    uint _pad;
+    uint instance_id;
 };
 
 struct DrawCmd {
@@ -72,10 +72,10 @@ void main() {
         return;
     }
     // get the object. test its frustum against the view frustum
-    if (is_visible(object_bounds[object_bounds_buf_idx].bounds[id])) {
+    if (is_visible(object_bounds[object_bounds_buf_idx].bounds[draw_info.instance_id])) {
         uint out_idx = atomicAdd(out_cmds[out_draw_cmds_buf_idx].cnt, 1);
         DrawCmd cmd;
-        cmd.first_instance = id;
+        cmd.first_instance = draw_info.instance_id;
         cmd.index_cnt = draw_info.index_cnt;
         cmd.first_index = draw_info.first_index;
         cmd.vertex_offset = int(draw_info.vertex_offset);

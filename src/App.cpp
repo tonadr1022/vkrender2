@@ -60,6 +60,10 @@ App::App(const InitInfo& info) : cam(cam_data, .1) {
     ((App*)glfwGetWindowUserPointer(win))->on_key_event(key, scancode, action, mods);
   });
 
+  glfwSetDropCallback(window, [](GLFWwindow* win, int count, const char** paths) {
+    ((App*)glfwGetWindowUserPointer(win))->on_file_drop(count, paths);
+  });
+
   glfwSetCursorPosCallback(window, [](GLFWwindow* win, double xpos, double ypos) {
     ((App*)glfwGetWindowUserPointer(win))->on_cursor_event({xpos, ypos});
   });
@@ -241,4 +245,10 @@ void App::on_imgui() {
   }
   CVarSystem::get().draw_imgui_editor();
   ImGui::End();
+}
+
+void App::on_file_drop(int count, const char** paths) {
+  for (int i = 0; i < count; i++) {
+    LINFO("dropped file: {}", paths[i]);
+  }
 }

@@ -290,7 +290,7 @@ BaseRenderer::~BaseRenderer() {
 }
 void BaseRenderer::on_draw(const SceneDrawInfo&) {}
 
-void BaseRenderer::on_gui() {}
+void BaseRenderer::on_imgui() {}
 
 void BaseRenderer::on_update() {}
 
@@ -300,7 +300,7 @@ void BaseRenderer::draw(const SceneDrawInfo& info) {
   ImGui::NewFrame();
 
   if (on_gui_callback_) on_gui_callback_();
-  on_gui();
+  on_imgui();
   ImGuiIO& io = ImGui::GetIO();
   ImGui::Render();
   if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {

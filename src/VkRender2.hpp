@@ -70,6 +70,12 @@ struct LinearStagingBuffer {
   vk2::Buffer* buffer_{};
 };
 
+struct FreeListBuffer {
+  vk2::Holder<vk2::BufferHandle> buffer;
+  util::FreeListAllocator allocator;
+  [[nodiscard]] vk2::Buffer* get_buffer() const { return vk2::get_device().get_buffer(buffer); }
+};
+
 struct VkRender2 final : public BaseRenderer {
   static VkRender2& get();
   static void init(const InitInfo& info);
@@ -92,7 +98,7 @@ struct VkRender2 final : public BaseRenderer {
 
  private:
   void on_draw(const SceneDrawInfo& info) override;
-  void on_gui() override;
+  void on_imgui() override;
   void on_resize() override;
 
   // TODO: refactor
@@ -126,7 +132,6 @@ struct VkRender2 final : public BaseRenderer {
   std::vector<FrameData> per_frame_data_2_;
   FrameData& curr_frame_2() { return per_frame_data_2_[curr_frame_num() % 2]; }
   void init_pipelines();
-  void init_indirect_drawing();
   static constexpr u32 max_draws{100'000};
 
   struct SceneUniforms {
@@ -181,11 +186,55 @@ struct VkRender2 final : public BaseRenderer {
     u32 materials;
   };
 
+  struct StaticMeshDrawManager {
+    using Handle = GenerationalHandle<struct Alloc>;
+
+    explicit StaticMeshDrawManager(size_t initial_max_draw_cnt);
+    StaticMeshDrawManager(const StaticMeshDrawManager&) = delete;
+    StaticMeshDrawManager(StaticMeshDrawManager&&) = delete;
+    StaticMeshDrawManager& operator=(const StaticMeshDrawManager&) = delete;
+    StaticMeshDrawManager& operator=(StaticMeshDrawManager&&) = delete;
+
+    struct Alloc {
+      util::FreeListAllocator::Slot draw_cmd_slot;
+    };
+
+    Handle add_draws(StateTracker& state, VkCommandBuffer cmd, size_t size, size_t staging_offset,
+                     vk2::Buffer& staging);
+    void remove_draws(StateTracker& state, VkCommandBuffer cmd, Handle handle);
+
+    [[nodiscard]] u32 get_num_draw_cmds() const { return num_draw_cmds_; }
+    [[nodiscard]] vk2::BufferHandle get_draw_info_buf_handle() const;
+    [[nodiscard]] vk2::BufferHandle get_frame_output_buf_handle() const;
+    [[nodiscard]] vk2::BufferHandle get_frame_unculled_output_buf_handle() const;
+    [[nodiscard]] vk2::Buffer* get_draw_info_buf() const;
+    [[nodiscard]] vk2::Buffer* get_frame_output_buf() const;
+    [[nodiscard]] vk2::Buffer* get_frame_unculled_output_buf() const;
+
+    bool draw_enabled{true};
+    [[nodiscard]] bool should_draw() const { return draw_enabled && get_num_draw_cmds() > 0; }
+
+   private:
+    Pool<Handle, Alloc> allocs_;
+    FreeListBuffer draw_cmds_buf_;
+    vk2::Holder<vk2::BufferHandle>
+        out_draw_cmds_buf_unculled_[max_frames_in_flight];  // [draw
+                                                            // cnt][VkDrawIndexedIndirectCommand[]]
+    vk2::Holder<vk2::BufferHandle>
+        out_draw_cmds_buf_[max_frames_in_flight];  // [draw cnt][VkDrawIndexedIndirectCommand[]]
+    u32 num_draw_cmds_{};
+  };
+
   struct StaticSceneGPUResources {
     SceneLoadData scene_graph_data;
     std::vector<gfx::Material> materials;
     std::vector<gfx::PrimitiveDrawInfo> mesh_draw_infos;
     std::vector<util::SlotAllocator<gfx::ObjectData>::Slot> object_data_slots;
+    StaticMeshDrawManager::Handle opaque_draws_handle;
+    StaticMeshDrawManager::Handle opaque_alpha_draws_handle;
+    StaticMeshDrawManager::Handle transparent_draws_handle;
+    util::FreeListAllocator::Slot instance_data_slot;
+    util::FreeListAllocator::Slot object_data_slot;
     u64 first_vertex;
     u64 first_index;
     u64 num_vertices;
@@ -196,15 +245,9 @@ struct VkRender2 final : public BaseRenderer {
     u32 index_cnt;
     u32 first_index;
     u32 vertex_offset;
-    u32 pad;
+    u32 instance_id;
   };
 
-  struct ObjectDraw {
-    std::vector<util::SlotAllocator<GPUDrawInfo>::Slot> draw_cmd_slots;
-    std::vector<util::SlotAllocator<gfx::ObjectData>::Slot> obj_data_slots;
-  };
-
-  std::unordered_map<SceneHandle, ObjectDraw> active_static_draws_;
   std::unordered_map<std::string, StaticSceneGPUResources> static_scenes_;
 
   gfx::RenderGraph rg_;
@@ -215,38 +258,18 @@ struct VkRender2 final : public BaseRenderer {
     vk2::Holder<vk2::BufferHandle> alpha_mask_output_draw_cmd_buf[max_frames_in_flight];
   };
 
-  struct StaticMeshDrawManager {
-    explicit StaticMeshDrawManager(size_t initial_max_draw_cnt);
-    StaticMeshDrawManager(const StaticMeshDrawManager&) = delete;
-    StaticMeshDrawManager(StaticMeshDrawManager&&) = delete;
-    StaticMeshDrawManager& operator=(const StaticMeshDrawManager&) = delete;
-    StaticMeshDrawManager& operator=(StaticMeshDrawManager&&) = delete;
+  std::optional<StaticMeshDrawManager> static_opaque_draw_mgr_;
+  std::optional<StaticMeshDrawManager> static_opaque_alpha_mask_draw_mgr_;
+  std::optional<StaticMeshDrawManager> static_transparent_draw_mgr_;
+  bool should_draw(const StaticMeshDrawManager& mgr) const;
 
-    struct Alloc {
-      util::FreeListAllocator::Slot draw_cmd_slot;
-    };
-    using RenderObjectHandle = GenerationalHandle<struct Alloc>;
-    // RenderObjectHandle add_draws(std::span<GPUDrawInfo> draws);
-    RenderObjectHandle add_draws(VkCommandBuffer cmd, size_t size, size_t staging_offset,
-                                 vk2::Buffer& staging);
-    void remove_scene(RenderObjectHandle handle);
+  // StaticGPUDrawData unculled_draw_data_;
+  // StaticGPUDrawData main_culled_draw_data_;
 
-    Pool<RenderObjectHandle, Alloc> allocs_;
-    util::FreeListAllocator draw_cmds_buf_allocator;
-    vk2::Holder<vk2::BufferHandle> draw_cmds_buf_handle;  // GPUDrawInfo
+  void execute_static_geo_draws(CmdEncoder& cmd);
+  void execute_draw(CmdEncoder& cmd, const vk2::Buffer& buffer) const;
 
-    vk2::Holder<vk2::BufferHandle>
-        out_draw_cmds_buf[max_frames_in_flight];  // [draw cnt][DrawCmd[]]
-  };
-
-  std::optional<StaticMeshDrawManager> opaque_draw_mgr_;
-  std::optional<StaticMeshDrawManager> opaque_alpha_mask_draw_mgr_;
-  std::optional<StaticMeshDrawManager> transparent_draw_mgr_;
-
-  StaticGPUDrawData unculled_draw_data_;
-  StaticGPUDrawData main_culled_draw_data_;
-
-  void draw_opaque(CmdEncoder& cmd, const StaticGPUDrawData& draw_buf);
+  // void draw_opaque(CmdEncoder& cmd, const StaticGPUDrawData& draw_buf);
 
  public:
   // TODO: remove this this is awful
@@ -254,13 +277,12 @@ struct VkRender2 final : public BaseRenderer {
 
  private:
   std::optional<LinearBuffer> static_index_buf_;
+  FreeListBuffer static_instance_data_buf_;
+  FreeListBuffer static_object_data_buf_;
   std::optional<LinearBuffer> static_materials_buf_;
-  std::optional<LinearBuffer> static_instance_data_buf_;
 
-  AABB scene_aabb_{};
-  std::optional<SlotBuffer<GPUDrawInfo>> static_draw_info_buf_;
-  std::optional<SlotBuffer<gfx::ObjectData>> static_object_data_buf_;
   std::vector<vk2::Image> static_textures_;
+  AABB scene_aabb_{};
 
   StateTracker state_;
   StateTracker transfer_q_state_;
@@ -324,7 +346,7 @@ struct VkRender2 final : public BaseRenderer {
   u64 cube_vertices_gpu_offset_{};
   // u64 cube_indices_gpu_offset_{};
 
-  void add_basic_forward_pass(RenderGraph& rg);
+  void add_rendering_passes(RenderGraph& rg);
   AttachmentInfo swapchain_att_info_;
 // TODO: fix
 #ifdef __APPLE__

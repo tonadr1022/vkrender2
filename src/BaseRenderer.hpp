@@ -124,7 +124,7 @@ class BaseRenderer {
   explicit BaseRenderer(const InitInfo& info, const BaseInitInfo& base_info);
   virtual void on_update();
   virtual void on_draw(const SceneDrawInfo& info);
-  virtual void on_gui();
+  virtual void on_imgui();
   virtual void on_resize();
   void render_imgui(VkCommandBuffer cmd, uvec2 draw_extent, VkImageView target_img_view);
 

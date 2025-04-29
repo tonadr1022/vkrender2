@@ -20,7 +20,7 @@ void main() {
     uvec4 debug_flags = scene_data.debug_flags;
     Material material = materials[materials_buffer].mats[nonuniformEXT(material_id)];
     vec4 color = texture(vk2_sampler2D(material.ids.x, sampler_idx), in_uv);
-    // if ((material.ids2.w & MATERIAL_ALPHA_MODE_MASK_BIT) != 0 && color.a < .5) {
-    //     discard;
-    // }
+    if ((material.ids2.w & MATERIAL_ALPHA_MODE_MASK_BIT) != 0 && color.a < .5) {
+        discard;
+    }
 }

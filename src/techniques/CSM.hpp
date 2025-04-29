@@ -15,11 +15,13 @@ namespace gfx {
 class StateTracker;
 
 struct RenderGraph;
+struct RenderGraphPass;
 class BaseRenderer;
 class CSM {
  public:
-  using DrawFunc = std::function<void(CmdEncoder&, const mat4& vp)>;
-  explicit CSM(BaseRenderer* renderer, DrawFunc draw_fn);
+  using DrawFunc = std::function<void(CmdEncoder&, const mat4& vp, bool opaque_alpha)>;
+  using AddRenderDependenciesFunc = std::function<void(RenderGraphPass& pass)>;
+  explicit CSM(BaseRenderer* renderer, DrawFunc draw_fn, AddRenderDependenciesFunc add_deps_fn);
   void add_pass(RenderGraph& rg);
 
   struct ShadowData {
@@ -49,6 +51,7 @@ class CSM {
   vk2::ImageHandle shadow_map_img_;
   ShadowData data_{};
   DrawFunc draw_fn_;
+  AddRenderDependenciesFunc add_deps_fn_;
   AttachmentInfo shadow_map_img_att_info_;
   vk2::PipelineHandle shadow_depth_pipline_;
   vk2::PipelineHandle shadow_depth_alpha_mask_pipline_;
@@ -78,5 +81,6 @@ class CSM {
   float cascade_linear_factor_{.6};
   float z_mult_{2.75};
   BaseRenderer* renderer_{};
+  bool alpha_cutout_enabled_{true};
 };
 }  // namespace gfx
