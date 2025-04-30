@@ -57,6 +57,9 @@ class CSM {
 
   [[nodiscard]] bool get_debug_render_enabled() const { return debug_render_enabled_; }
 
+  using LightMatrixArray = std::array<mat4, max_cascade_levels>;
+  [[nodiscard]] const LightMatrixArray& get_light_matrices() const { return light_matrices_; }
+
  private:
   vk2::ImageHandle shadow_map_img_;
   ShadowData data_{};
@@ -75,7 +78,7 @@ class CSM {
   VkDescriptorSet imgui_set_{};
   VkImage curr_debug_img_{};
   uvec2 curr_debug_img_size_{};
-  std::array<mat4, max_cascade_levels> light_matrices_;
+  LightMatrixArray light_matrices_;
   vk2::ImageHandle curr_shadow_map_img_;
   std::array<vk2::Holder<vk2::ImageViewHandle>, max_cascade_levels> shadow_map_img_views_;
   BaseRenderer* renderer_{};

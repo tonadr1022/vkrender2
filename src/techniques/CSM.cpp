@@ -10,7 +10,6 @@
 #include "AABB.hpp"
 #include "BaseRenderer.hpp"
 #include "CommandEncoder.hpp"
-#include "Logger.hpp"
 #include "RenderGraph.hpp"
 #include "StateTracker.hpp"
 #include "Types.hpp"
@@ -46,10 +45,11 @@ void calc_frustum_corners_world_space(std::span<vec4> corners, const mat4& vp_ma
 AutoCVarFloat z_pad{"z_pad", "z_padding", 1.5, CVarFlags::EditFloatDrag};
 
 // https://github.com/walbourn/directx-sdk-samples/blob/main/CascadedShadowMaps11/CascadedShadowMaps11.cpp
-mat4 calc_light_space_matrix(const mat4& cam_view, const mat4& proj, vec3 light_dir, float) {
+mat4 calc_light_space_matrix(const mat4& cam_view, const mat4& cam_proj, vec3 light_dir, float,
+                             mat4& light_proj) {
   vec3 center{};
   std::array<vec4, 8> corners;
-  calc_frustum_corners_world_space(corners, proj * cam_view);
+  calc_frustum_corners_world_space(corners, cam_proj * cam_view);
   for (auto v : corners) {
     center += vec3(v);
   }
@@ -80,22 +80,22 @@ mat4 calc_light_space_matrix(const mat4& cam_view, const mat4& proj, vec3 light_
   // } else {
   //   max.z *= z_mult;
   // }
-  mat4 light_proj = glm::orthoRH_ZO(min.x, max.x, max.y, min.y, min.z, max.z);
+  light_proj = glm::orthoRH_ZO(min.x, max.x, max.y, min.y, min.z, max.z);
   return light_proj * light_view;
 }
 
 // TODO: calculate near and far based on scene AABB:
 // https://github.com/walbourn/directx-sdk-samples/blob/main/CascadedShadowMaps11/CascadedShadowsManager.cpp
-mat4 calc_light_space_matrix(const mat4& cam_view, const mat4& proj, vec3 light_dir, float z_mult,
-                             u32 shadow_map_size, mat4& proj_mat) {
+mat4 calc_light_space_matrix(const mat4& cam_view, const mat4& cam_proj, vec3 light_dir,
+                             float z_mult, u32 shadow_map_size, mat4& proj_mat) {
   if (!stable_light_view.get()) {
-    return calc_light_space_matrix(cam_view, proj, light_dir, z_mult);
+    return calc_light_space_matrix(cam_view, cam_proj, light_dir, z_mult, proj_mat);
   }
 
   // get center of frustum corners of cascade
   vec3 center{};
   std::array<vec4, 8> corners;
-  calc_frustum_corners_world_space(corners, proj * cam_view);
+  calc_frustum_corners_world_space(corners, cam_proj * cam_view);
   for (auto v : corners) {
     center += vec3(v);
   }

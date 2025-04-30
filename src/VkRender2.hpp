@@ -126,9 +126,11 @@ struct VkRender2 final : public BaseRenderer {
  private:
   struct FrameData {
     std::optional<vk2::Buffer> scene_uniform_buf;
+    // vk2::Holder<vk2::BufferHandle> line_buffer;
     // vk2::Holder<vk2::BufferHandle> draw_cnt_buf;
     // vk2::Holder<vk2::BufferHandle> final_draw_cmd_buf;
   };
+
   std::vector<FrameData> per_frame_data_2_;
   FrameData& curr_frame_2() { return per_frame_data_2_[curr_frame_num() % 2]; }
   void init_pipelines();
@@ -276,7 +278,7 @@ struct VkRender2 final : public BaseRenderer {
   std::optional<StaticMeshDrawManager> static_opaque_draw_mgr_;
   std::optional<StaticMeshDrawManager> static_opaque_alpha_mask_draw_mgr_;
   std::optional<StaticMeshDrawManager> static_transparent_draw_mgr_;
-  std::vector<mat4> cull_projection_matrices_;
+  std::vector<mat4> cull_vp_matrices_;
   std::array<StaticMeshDrawManager*, 3> draw_managers_;
   u32 main_mesh_pass_idx_{0};
 
@@ -339,7 +341,6 @@ struct VkRender2 final : public BaseRenderer {
   Format depth_img_format_{Format::D32Sfloat};
   // TODO: make more robust settings
   bool deferred_enabled_{true};
-  bool frustum_cull_enabled_{true};
   VkPipelineLayout default_pipeline_layout_{};
   std::queue<InFlightResource<vk2::Buffer*>> pending_buffer_transfers_;
 
@@ -379,6 +380,11 @@ struct VkRender2 final : public BaseRenderer {
 #endif
   u32 tonemap_type_{1};
   const char* tonemap_type_names_[2] = {"Optimized Filmic", "ACES Film"};
+  struct FrustumCullSettings {
+    bool enabled{true};
+    bool paused{false};
+  } frustum_cull_settings_;
+  vec2 near_far_z_{.1, 1000.f};
 
  public:
   std::optional<vk2::Image> load_hdr_img(CmdEncoder& ctx, const std::filesystem::path& path,

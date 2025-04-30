@@ -356,12 +356,11 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
   {
     ZoneScopedN("scene uniform buffer");
     auto& d = curr_frame_2();
-    mat4 proj = info.proj;
-    proj[1][1] *= -1;
-    mat4 vp = proj * info.view;
-    scene_uniform_cpu_data_.view_proj = vp;
+    scene_uniform_cpu_data_.proj = glm::perspective(glm::radians(info.fov_degrees), aspect_ratio(),
+                                                    near_far_z_.y, near_far_z_.x);
+    scene_uniform_cpu_data_.proj[1][1] *= -1;
+    scene_uniform_cpu_data_.view_proj = scene_uniform_cpu_data_.proj * info.view;
     scene_uniform_cpu_data_.view = info.view;
-    scene_uniform_cpu_data_.proj = proj;
     scene_uniform_cpu_data_.debug_flags = uvec4{};
     if (ao_map_enabled.get()) {
       scene_uniform_cpu_data_.debug_flags.x |= AO_ENABLED_BIT;
@@ -422,9 +421,13 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
 
   csm_->prepare_frame(rg_, curr_frame_num(), info.view, info.light_dir, aspect_ratio(),
                       info.fov_degrees, scene_aabb_, info.view_pos);
-  cull_projection_matrices_.emplace_back(info.proj);
+
+  if (!frustum_cull_settings_.paused) {
+    cull_vp_matrices_.clear();
+    cull_vp_matrices_.emplace_back(scene_uniform_cpu_data_.view_proj);
+  }
   for (u32 cascade_level = 0; cascade_level < csm_->get_num_cascade_levels(); cascade_level++) {
-    cull_projection_matrices_.emplace_back(csm_->get_cascade_proj_mat(cascade_level));
+    cull_vp_matrices_.emplace_back(csm_->get_light_matrices()[cascade_level]);
   }
   add_rendering_passes(rg_);
   auto res = rg_.bake();
@@ -510,6 +513,11 @@ void VkRender2::on_imgui() {
       csm_->on_imgui();
       ImGui::TreePop();
     }
+    if (ImGui::TreeNodeEx("Frustum Culling")) {
+      ImGui::Checkbox("Enabled", &frustum_cull_settings_.enabled);
+      ImGui::Checkbox("Paused", &frustum_cull_settings_.paused);
+      ImGui::TreePop();
+    }
 
     if (ImGui::BeginCombo("Tonemapper", tonemap_type_names_[tonemap_type_])) {
       for (u32 i = 0; i < 2; i++) {
@@ -521,7 +529,6 @@ void VkRender2::on_imgui() {
     }
 
     ImGui::Checkbox("Deferred Rendering", &deferred_enabled_);
-    ImGui::Checkbox("Frustum Culling", &frustum_cull_enabled_);
     ImGui::Checkbox("Render prefilter env map skybox", &render_prefilter_mip_skybox_);
     ImGui::SliderInt("Prefilter Env Map Layer", &prefilter_mip_skybox_level_, 0,
                      ibl_->prefiltered_env_map_tex_->texture->create_info().mip_levels - 1);
@@ -557,45 +564,6 @@ void VkRender2::on_imgui() {
 VkRender2::~VkRender2() { vkDeviceWaitIdle(device_); }
 
 void VkRender2::on_resize() {}
-
-namespace {
-
-void transform_mesh_bounds(const MeshBounds& untransformed_bounds, MeshBounds& new_bounds,
-                           const glm::mat4& transform) {
-  std::array<glm::vec3, 8> bounds_corners = {
-      untransformed_bounds.origin + untransformed_bounds.extents * glm::vec3{-1, -1, -1},
-      untransformed_bounds.origin + untransformed_bounds.extents * glm::vec3{-1, -1, 1},
-      untransformed_bounds.origin + untransformed_bounds.extents * glm::vec3{-1, 1, -1},
-      untransformed_bounds.origin + untransformed_bounds.extents * glm::vec3{-1, 1, 1},
-      untransformed_bounds.origin + untransformed_bounds.extents * glm::vec3{1, -1, -1},
-      untransformed_bounds.origin + untransformed_bounds.extents * glm::vec3{1, -1, 1},
-      untransformed_bounds.origin + untransformed_bounds.extents * glm::vec3{1, 1, -1},
-      untransformed_bounds.origin + untransformed_bounds.extents * glm::vec3{1, 1, 1}};
-
-  glm::vec3 new_min{std::numeric_limits<float>::max()};
-  glm::vec3 new_max{std::numeric_limits<float>::lowest()};
-
-  // transform the bounds
-  for (const auto& corner : bounds_corners) {
-    glm::vec3 transformed_corner = glm::vec3(transform * glm::vec4(corner, 1.f));
-    new_min = glm::min(new_min, transformed_corner);
-    new_max = glm::max(new_max, transformed_corner);
-  }
-  glm::vec3 new_extents = (new_max - new_min) * 0.5f;
-  glm::vec3 new_origin = (new_max + new_min) * 0.5f;
-
-  float max_magnitude_scale = 0.f;
-  for (int i = 0; i < 3; ++i) {
-    max_magnitude_scale = std::max(max_magnitude_scale, glm::length(glm::vec3(transform[i])));
-  }
-
-  float new_radius = max_magnitude_scale * untransformed_bounds.radius;
-  new_bounds.radius = new_radius;
-  new_bounds.extents = new_extents;
-  new_bounds.origin = new_origin;
-}
-
-}  // namespace
 
 SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynamic,
                                   const mat4& transform) {
@@ -729,23 +697,38 @@ SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynami
     bool is_non_identity_root_node_transform = transform != mat4{1};
     for (auto& node : resources->scene_graph_data.node_datas) {
       for (auto& mesh_indices : node.meshes) {
-        MeshBounds new_bounds;
-        transform_mesh_bounds(resources->mesh_draw_infos[mesh_indices.mesh_idx].bounds, new_bounds,
-                              node.world_transform);
         const auto& mat = resources->materials[mesh_indices.material_id];
         auto& mesh = resources->mesh_draw_infos[mesh_indices.mesh_idx];
-        vec3 min = node.world_transform * vec4(mesh.bounds.origin - mesh.bounds.extents, 1.);
-        vec3 max = node.world_transform * vec4(mesh.bounds.origin + mesh.bounds.extents, 1.);
-        scene_min = glm::min(scene_min, min);
-        scene_max = glm::max(scene_max, max);
+        mat4 model = is_non_identity_root_node_transform ? transform * node.world_transform
+                                                         : node.world_transform;
+        // https://stackoverflow.com/questions/6053522/how-to-recalculate-axis-aligned-bounding-box-after-translate-rotate/58630206#58630206
+        auto transform_aabb = [](const glm::mat4& model, const AABB& aabb) -> AABB {
+          AABB result;
+          result.min = glm::vec3(model[3]);  // translation part
+          result.max = result.min;
+
+          for (int i = 0; i < 3; ++i) {    // for each row (x, y, z in result)
+            for (int j = 0; j < 3; ++j) {  // for each column (x, y, z in input aabb)
+              float a = model[i][j] * aabb.min[j];
+              float b = model[i][j] * aabb.max[j];
+              result.min[i] += glm::min(a, b);
+              result.max[i] += glm::max(a, b);
+            }
+          }
+          return result;
+        };
+        AABB world_space_aabb = transform_aabb(model, mesh.aabb);
+        scene_min = glm::min(scene_min, world_space_aabb.min);
+        scene_max = glm::max(scene_max, world_space_aabb.max);
         u32 instance_id = base_instance_id + instance_datas.size();
         instance_datas.emplace_back(mesh_indices.material_id + resources->materials_idx_offset,
                                     base_object_data_id + obj_datas.size());
         obj_datas.emplace_back(gfx::ObjectData{
-            .model = is_non_identity_root_node_transform ? transform * node.world_transform
-                                                         : node.world_transform,
-            .sphere_radius = vec4{new_bounds.origin, new_bounds.radius},
-            .extent = vec4{new_bounds.extents, 0.}});
+            .model = model,
+            .aabb_min = vec4(mesh.aabb.min, 0.),
+            .aabb_max = vec4(mesh.aabb.max, 0.),
+
+        });
         GPUDrawInfo draw{
             .index_cnt = mesh.index_count,
             .first_index = static_cast<u32>(resources->first_index + mesh.first_index),
@@ -1180,28 +1163,65 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
       for (const auto& mgr : draw_managers_) {
         if (mgr->should_draw()) {
           for (u32 i = 0; i < mgr->get_draw_passes().size(); i++) {
-            assert(i < cull_projection_matrices_.size());
-            if (i > cull_projection_matrices_.size()) break;
+            assert(i < cull_vp_matrices_.size());
+            if (i >= cull_vp_matrices_.size()) break;
             const auto& draw_pass = mgr->get_draw_passes()[i];
             // extract frustum planes
-            glm::mat4 transpose_proj = glm::transpose(cull_projection_matrices_[i]);
-            auto normalize_plane = [](const vec4& p) -> vec4 { return p / glm::length(vec3(p)); };
-            glm::vec4 frustum_x = normalize_plane(transpose_proj[3] + transpose_proj[0]);  // x+w <0
-            glm::vec4 frustum_y = normalize_plane(transpose_proj[3] + transpose_proj[1]);  // y+w <0
-            u32 flags{};
-            if (frustum_cull_enabled_) {
-              if (i == 0) {
-                flags |= FRUSTUM_CULL_ENABLED_BIT;
+            auto extract_planes_from_projmat = [](const mat4& mat, vec4& left, vec4& right,
+                                                  vec4& bottom, vec4& top, vec4& near, vec4& far) {
+              for (int i = 4; i--;) {
+                left[i] = mat[i][3] + mat[i][0];
               }
+              for (int i = 4; i--;) {
+                right[i] = mat[i][3] - mat[i][0];
+              }
+              for (int i = 4; i--;) {
+                bottom[i] = mat[i][3] + mat[i][1];
+              }
+              for (int i = 4; i--;) {
+                top[i] = mat[i][3] - mat[i][1];
+              }
+              for (int i = 4; i--;) {
+                near[i] = mat[i][3] + mat[i][2];
+              }
+              for (int i = 4; i--;) {
+                far[i] = mat[i][3] - mat[i][2];
+              }
+              auto normalize_plane = [](vec4& plane) { plane /= glm::length(vec3(plane)); };
+              normalize_plane(left);
+              normalize_plane(right);
+              normalize_plane(bottom);
+              normalize_plane(top);
+              normalize_plane(near);
+              normalize_plane(far);
+            };
+            vec4 left, right, bottom, top, near, far;
+            const auto& vp = cull_vp_matrices_[i];
+            extract_planes_from_projmat(vp, left, right, bottom, top, near, far);
+            // glm::vec4 left = normalize_plane(vp[3] + vp[0]);
+            // glm::vec4 right = normalize_plane(vp[3] - vp[0]);
+            // glm::vec4 bottom = normalize_plane(vp[3] + vp[1]);
+            // glm::vec4 top = normalize_plane(vp[3] - vp[1]);
+            // glm::vec4 near = normalize_plane(vp[3] + vp[2]);
+            // glm::vec4 far = normalize_plane(vp[3] - vp[2]);
+            u32 flags{};
+            if (frustum_cull_settings_.enabled) {
+              flags |= FRUSTUM_CULL_ENABLED_BIT;
             }
             CullObjectPushConstants pc{
+                left,
+                right,
+                bottom,
+                top,
+                near,
+                far,
                 curr_frame_2().scene_uniform_buf->device_addr(),
                 static_cast<u32>(draw_cnt_),
                 mgr->get_draw_info_buf()->resource_info_->handle,
                 draw_pass.get_frame_out_draw_cmd_buf()->resource_info_->handle,
                 static_object_data_buf_.get_buffer()->resource_info_->handle,
                 flags,
-                {frustum_x.x, frustum_x.z, frustum_y.y, frustum_y.z}};
+            };
             cmd.push_constants(sizeof(pc), &pc);
             cmd.dispatch((draw_cnt_ + 256) / 256, 1, 1);
           }
@@ -1573,13 +1593,15 @@ VkRender2::StaticMeshDrawManager::Handle VkRender2::StaticMeshDrawManager::add_d
     }
   }
 
+  LINFO("add draws {} {}", size, staging_offset);
   if (a.draw_cmd_slot.get_offset() + a.draw_cmd_slot.size >= curr_tot_draw_cmd_buf_size) {
     // draw cmd buf resize and copy
     auto new_buf = get_device().create_buffer_holder(BufferCreateInfo{
         .size = new_size,
-        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-                 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                 VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
     });
+    LINFO("new buf");
     VkRender2::get().copy_buffer(cmd, draw_cmds_buf, get_device().get_buffer(new_buf), 0, 0,
                                  curr_tot_draw_cmd_buf_size);
     state.queue_transfer_buffer(
@@ -1617,8 +1639,11 @@ VkRender2::StaticMeshDrawManager::Handle VkRender2::StaticMeshDrawManager::add_d
 VkRender2::StaticMeshDrawManager::StaticMeshDrawManager(std::string name,
                                                         size_t initial_max_draw_cnt)
     : name_(std::move(name)) {
-  draw_cmds_buf_.buffer = get_device().create_buffer_holder(
-      storage_buffer_create_info(initial_max_draw_cnt * sizeof(GPUDrawInfo)));
+  draw_cmds_buf_.buffer = get_device().create_buffer_holder({
+      .size = initial_max_draw_cnt * sizeof(GPUDrawInfo),
+      .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+               VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+  });
   draw_cmds_buf_.allocator.init(initial_max_draw_cnt * sizeof(GPUDrawInfo), sizeof(GPUDrawInfo),
                                 100);
 }

@@ -4,6 +4,7 @@
 #include <optional>
 #include <vector>
 
+#include "AABB.hpp"
 #include "Common.hpp"
 #include "Scene.hpp"
 #include "vk2/Texture.hpp"
@@ -12,8 +13,9 @@ namespace gfx {
 
 struct ObjectData {
   mat4 model;
-  vec4 sphere_radius;
-  vec4 extent;
+  // TODO: better padding
+  vec4 aabb_min;
+  vec4 aabb_max;
 };
 
 struct Vertex {
@@ -33,7 +35,7 @@ struct Material {
 };
 
 struct PrimitiveDrawInfo {
-  MeshBounds bounds;
+  AABB aabb;
   u32 first_index;
   u32 index_count;
   u32 first_vertex;

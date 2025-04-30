@@ -116,13 +116,13 @@ void App::run() {
 
   // VkRender2::get().load_scene(local_models_dir / "ABeautifulGame.glb", false,
   //                             glm::scale(mat4{1}, vec3{10}));
+  VkRender2::get().load_scene(local_models_dir / "Bistro_Godot.glb", false);
   // VkRender2::get().load_scene(
   //     "/home/tony/models/Models/MetalRoughSpheres/glTF-Binary/MetalRoughSpheres.glb");
   // VkRender2::get().load_scene(local_models_dir / "Cube/glTF/Cube.gltf", false);
   // VkRender2::get().load_scene(local_models_dir / "sponza.glb", false);
   // VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false);
   // VkRender2::get().load_scene(local_models_dir / "Bistro_Godot.glb", false);
-  VkRender2::get().load_scene(local_models_dir / "Bistro_Godot_opt.glb", false);
   // VkRender2::get().load_scene("/home/tony/models/Models/DamagedHelmet/glTF/DamagedHelmet.gltf",
   //                             false);
   // std::filesystem::path env_tex = local_models_dir / "quarry_04_puresky_4k.hdr";
@@ -139,9 +139,9 @@ void App::run() {
     last_time = curr_t;
     update(dt);
 
-    mat4 proj = glm::perspective(glm::radians(info_.fov_degrees), aspect_ratio(), 1000.f, .1f);
+    // mat4 proj = glm::perspective(glm::radians(info_.fov_degrees), aspect_ratio(), 1000.f, .1f);
     info_.view = cam_data.get_view();
-    info_.proj = proj;
+    // info_.proj = proj;
     info_.view_pos = cam_data.pos;
     info_.light_dir = glm::normalize(info_.light_dir);
     VkRender2::get().draw(info_);

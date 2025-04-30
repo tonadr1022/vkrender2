@@ -21,6 +21,7 @@ void CmdEncoder::push_constants(VkPipelineLayout layout, u32 size, void* data) {
   vkCmdPushConstants(cmd_, layout, VK_SHADER_STAGE_ALL, 0, size, data);
 }
 void CmdEncoder::push_constants(u32 size, void* data) {
+  assert(size <= 128);
   push_constants(default_pipeline_layout_, size, data);
 }
 void CmdEncoder::barrier(VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access,

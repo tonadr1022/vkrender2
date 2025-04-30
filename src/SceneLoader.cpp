@@ -45,37 +45,41 @@ namespace gfx {
 
 namespace {
 
-void calculate_mesh_bounds(MeshBounds& bounds, const void* vertices, size_t len, size_t stride,
-                           size_t offset) {
-  glm::vec3 min{std::numeric_limits<float>::max()};
-  glm::vec3 max{std::numeric_limits<float>::lowest()};
-
-  // get min and max coords
+void calc_aabb(AABB& aabb, const void* vertices, size_t len, size_t stride, size_t offset) {
+  aabb.min = vec3{std::numeric_limits<float>::max()};
+  aabb.max = vec3{std::numeric_limits<float>::lowest()};
   for (size_t i = 0; i < len; i++) {
     const glm::vec3& pos = *reinterpret_cast<const glm::vec3*>(static_cast<const char*>(vertices) +
                                                                (i * stride) + offset);
-    min = glm::min(min, pos);
-    max = glm::max(max, pos);
+    aabb.min = glm::min(aabb.min, pos);
+    aabb.max = glm::max(aabb.max, pos);
   }
-  bounds.extents = (max - min) / 2.f;
-  bounds.origin = (max + min) / 2.f;
-  float max_dist_sqaured = 0.0f;
-  for (size_t i = 0; i < len; i++) {
-    const glm::vec3& pos = *reinterpret_cast<const glm::vec3*>(static_cast<const char*>(vertices) +
-                                                               (i * stride) + offset);
-    glm::vec3 offset = pos - bounds.origin;
-    float distance_squared = glm::dot(offset, offset);
-    max_dist_sqaured = std::max(max_dist_sqaured, distance_squared);
-  }
-
-  bounds.radius = std::sqrt(max_dist_sqaured);
 }
 
-void calculate_mesh_bounds(MeshBounds& bounds, glm::vec3 min, glm::vec3 max) {
-  bounds.extents = (max - min) / 2.f;
-  bounds.origin = (max + min) / 2.f;
-  bounds.radius = glm::length(max - bounds.origin);
-}
+// void calculate_mesh_bounds(MeshBounds& bounds, const void* vertices, size_t len, size_t stride,
+//                            size_t offset) {
+//   AABB aabb;
+//   calc_aabb(aabb, vertices, len, stride, offset);
+//   bounds.extents = (aabb.max - aabb.min) / 2.f;
+//   bounds.origin = (aabb.max + aabb.min) / 2.f;
+//   float max_dist_sqaured = 0.0f;
+//   for (size_t i = 0; i < len; i++) {
+//     const glm::vec3& pos = *reinterpret_cast<const glm::vec3*>(static_cast<const char*>(vertices)
+//     +
+//                                                                (i * stride) + offset);
+//     glm::vec3 offset = pos - bounds.origin;
+//     float distance_squared = glm::dot(offset, offset);
+//     max_dist_sqaured = std::max(max_dist_sqaured, distance_squared);
+//   }
+//
+//   bounds.radius = std::sqrt(max_dist_sqaured);
+// }
+//
+// void calculate_mesh_bounds(MeshBounds& bounds, glm::vec3 min, glm::vec3 max) {
+//   bounds.extents = (max - min) / 2.f;
+//   bounds.origin = (max + min) / 2.f;
+//   bounds.radius = glm::length(max - bounds.origin);
+// }
 void load_tangents(const std::string& path, std::vector<Vertex>& vertices) {
   ZoneScoped;
   std::ifstream file(path, std::ios::binary);
@@ -932,13 +936,12 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
 
             // If min/max are available, calculate bounds directly
             if (has_min && has_max) {
-              calculate_mesh_bounds(mesh_draw_info.bounds, min, max);
+              mesh_draw_info.aabb = {.min = min, .max = max};
             } else {
               assert(0 && "why does this gltf not have bounds lmao noob");
               // calculate bounds from vertices if accessor min/max not set
-              calculate_mesh_bounds(
-                  mesh_draw_info.bounds, &result->vertices[mesh_draw_info.first_vertex],
-                  pos_accessor.count, sizeof(gfx::Vertex), offsetof(gfx::Vertex, pos));
+              calc_aabb(mesh_draw_info.aabb, &result->vertices[mesh_draw_info.first_vertex],
+                        pos_accessor.count, sizeof(gfx::Vertex), offsetof(gfx::Vertex, pos));
             }
 
             const auto* uv_attrib = primitive.findAttribute("TEXCOORD_0");

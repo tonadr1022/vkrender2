@@ -100,7 +100,6 @@ class FreeListAllocator {
 
   // returns true if success
   bool reserve(u32 size_bytes) {
-    LINFO("reserving space: old cap {}, new cap {}", capacity_, capacity_ + size_bytes);
     // top bit in the offset is reserved
     if (size_bytes >= UINT32_MAX / 2) {
       return false;
@@ -111,6 +110,9 @@ class FreeListAllocator {
     Slot empty_alloc{.offset = capacity_, .size = size_bytes - capacity_};
     empty_alloc.mark_free();
     allocs_.emplace_back(empty_alloc);
+    coalesce(--allocs_.end());
+    LINFO("reserving space: old cap {}, new cap {}", capacity_, size_bytes);
+    capacity_ = size_bytes;
     return true;
   }
 
@@ -118,6 +120,7 @@ class FreeListAllocator {
 
   [[nodiscard]] u32 capacity() const { return capacity_; }
   [[nodiscard]] Slot allocate(u32 size_bytes) {
+    LINFO("size req: {} capacity: {}", size_bytes, capacity_);
     // align the size
     size_bytes += (alignment_ - (size_bytes % alignment_)) % alignment_;
     auto smallest_free_alloc = allocs_.end();

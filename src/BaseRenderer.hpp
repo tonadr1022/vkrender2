@@ -82,7 +82,7 @@ struct QueueManager {
 
 struct SceneDrawInfo {
   mat4 view;
-  mat4 proj;
+  float fov_degees;
   vec3 view_pos;
   vec3 light_dir;
   vec3 light_color;
