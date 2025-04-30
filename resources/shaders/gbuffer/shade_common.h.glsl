@@ -3,7 +3,7 @@
 
 #include "../resources.h.glsl"
 
-VK2_DECLARE_ARGUMENTS(GBufferShadePushConstants){
+VK2_DECLARE_ARGUMENTS(DeferredShadePushConstants){
 mat4 inv_view_proj;
 uint gbuffer_a_tex;
 uint gbuffer_b_tex;

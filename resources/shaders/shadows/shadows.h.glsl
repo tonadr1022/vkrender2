@@ -4,8 +4,9 @@
 #include "../common.h.glsl"
 VK2_DECLARE_SAMPLED_IMAGES(texture2DArray);
 
+#define MAX_CASCADE_LEVELS 4
 struct ShadowData {
-    mat4 light_space_matrices[5];
+    mat4 light_space_matrices[MAX_CASCADE_LEVELS];
     vec4 biases; // min = x, max = y, pcf scale, z, z_far: w
     vec4 cascade_levels;
     uvec4 settings; // w if cascade_count

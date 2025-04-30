@@ -11,7 +11,9 @@
 #include <filesystem>
 #include <tracy/Tracy.hpp>
 #include <tracy/TracyVulkan.hpp>
+#include <utility>
 
+#include "BaseRenderer.hpp"
 #include "CommandEncoder.hpp"
 #include "Logger.hpp"
 #include "RenderGraph.hpp"
@@ -113,37 +115,6 @@ VkRender2::VkRender2(const InitInfo& info)
   main_set2_ = vk2::BindlessResourceAllocator::get().main_set2_;
 
   PrintTimerMS timer;
-  // auto& comp1 = rg_.add_pass("comp1", [this](CmdEncoder& cmd) {
-  //   // cmd.bind_compute_pipeline(PipelineManager::get().get(img_pipeline_)->pipeline);
-  //   // struct {
-  //   //   u32 img_idx;
-  //   //   float time;
-  //   // } pc{
-  //   //
-  //   // };
-  //   // cmd.dispatch((swapchain_.dims.x + 16) / 16, (swapchain_.dims.y + 16) / 16, 1);
-  //   LINFO("executing comp1");
-  // });
-  // comp1.add_color_output("computed1", {.format = Format::R32G32B32A32Sfloat});
-  //
-  // auto& comp2 = rg_.add_pass("comp2", [this](CmdEncoder& cmd) {
-  //   LINFO("executing comp2");
-  //   // cmd.bind_compute_pipeline(PipelineManager::get().get(img_pipeline_)->pipeline);
-  //   // cmd.dispatch((swapchain_.dims.x + 16) / 16, (swapchain_.dims.y + 16) / 16, 1);
-  // });
-  // comp2.add_texture_input("computed1");
-  // comp2.add_color_output("final_out", {.format = Format::R32G32B32A32Sfloat});
-
-  // auto& pp = rg_.add_pass("postprocess", [](CmdEncoder&) { LINFO("executing postprocess"); });
-  // pp.add_color_output("final_out", {.format = gfx::Format::R8G8B8A8Unorm});
-  // pp.add_texture_input("forward_output");
-
-  // auto& pp2 = rg_.add_pass("pp2", [](CmdEncoder&) {});
-  // pp2.add_texture_input("postprocessout");
-  // pp2.add_color_output("final_out", {.format = gfx::Format::R8G8B8A8Unorm});
-
-  // auto& imgui = rg_.add_pass("imgui", [](CmdEncoder&) {});
-  // imgui.add_color_output("final_out", {.format = gfx::Format::R8G8B8A8Unorm});
 
   imm_cmd_pool_ = vk2::get_device().create_command_pool(queues_.graphics_queue_idx);
   imm_cmd_buf_ = vk2::get_device().create_command_buffer(imm_cmd_pool_);
@@ -262,15 +233,11 @@ VkRender2::VkRender2(const InitInfo& info)
   static_object_data_buf_.allocator.init(max_static_draws * sizeof(ObjectData), sizeof(ObjectData),
                                          100);
 
-  static_opaque_draw_mgr_.emplace(100'000);
-  static_opaque_alpha_mask_draw_mgr_.emplace(100'000);
-  static_transparent_draw_mgr_.emplace(100'000);
-
   init_pipelines();
 
   csm_ = std::make_unique<CSM>(
       this,
-      [this](CmdEncoder& cmd, const mat4& vp, bool opaque_alpha) {
+      [this](CmdEncoder& cmd, const mat4& vp, bool opaque_alpha, u32 cascade_i) {
         const StaticMeshDrawManager* mgr{};
         if (opaque_alpha) {
           mgr = &static_opaque_alpha_mask_draw_mgr_.value();
@@ -290,16 +257,39 @@ VkRender2::VkRender2(const InitInfo& info)
         cmd.push_constants(sizeof(pc), &pc);
         vkCmdBindIndexBuffer(cmd.cmd(), static_index_buf_->buffer.buffer(), 0,
                              VK_INDEX_TYPE_UINT32);
-        execute_draw(cmd, *mgr->get_frame_unculled_output_buf());
+        execute_draw(cmd, *mgr->get_draw_passes()[1 + cascade_i].get_frame_out_draw_cmd_buf(),
+                     mgr->get_num_draw_cmds());
       },
       [this](RenderGraphPass& pass) {
         if (static_opaque_draw_mgr_->should_draw()) {
-          pass.add_proxy("static_opaque_unculled_draw_cmds", Access::IndirectRead);
+          for (u32 i = 0; i < csm_->get_num_cascade_levels(); i++) {
+            pass.add_proxy(static_opaque_draw_mgr_->get_draw_passes()[i + 1].name,
+                           Access::IndirectRead);
+          }
         }
+
         if (static_opaque_alpha_mask_draw_mgr_->should_draw()) {
-          pass.add_proxy("static_opaque_alpha_unculled_draw_cmds", Access::IndirectRead);
+          for (u32 i = 0; i < csm_->get_num_cascade_levels(); i++) {
+            pass.add_proxy(static_opaque_alpha_mask_draw_mgr_->get_draw_passes()[i + 1].name,
+                           Access::IndirectRead);
+          }
         }
       });
+
+  static_opaque_draw_mgr_.emplace("Opaque", 1000);
+  static_opaque_alpha_mask_draw_mgr_.emplace("Opaque Alpha Mask", 1000);
+  static_transparent_draw_mgr_.emplace("Transparent", 1000);
+  draw_managers_ = {&static_opaque_draw_mgr_.value(), &static_opaque_alpha_mask_draw_mgr_.value(),
+                    &static_transparent_draw_mgr_.value()};
+
+  static_opaque_draw_mgr_->add_draw_pass("main_view");
+  static_opaque_alpha_mask_draw_mgr_->add_draw_pass("main_view");
+  static_transparent_draw_mgr_->add_draw_pass("main_view");
+  main_mesh_pass_idx_ = 0;
+  for (u32 i = 0; i < csm_->get_num_cascade_levels(); i++) {
+    static_opaque_draw_mgr_->add_draw_pass("csm_" + std::to_string(i));
+    static_opaque_alpha_mask_draw_mgr_->add_draw_pass("csm_" + std::to_string(i));
+  }
 
   shadow_sampler_ = SamplerCache::get().get_or_create_sampler(
       SamplerCreateInfo{.min_filter = VK_FILTER_LINEAR,
@@ -432,6 +422,10 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
 
   csm_->prepare_frame(rg_, curr_frame_num(), info.view, info.light_dir, aspect_ratio(),
                       info.fov_degrees, scene_aabb_, info.view_pos);
+  cull_projection_matrices_.emplace_back(info.proj);
+  for (u32 cascade_level = 0; cascade_level < csm_->get_num_cascade_levels(); cascade_level++) {
+    cull_projection_matrices_.emplace_back(csm_->get_cascade_proj_mat(cascade_level));
+  }
   add_rendering_passes(rg_);
   auto res = rg_.bake();
   if (!res) {
@@ -439,24 +433,17 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
     exit(1);
   }
 
-  if (static_opaque_draw_mgr_->should_draw()) {
-    rg_.set_resource("static_opaque_culled_draw_cmds",
-                     static_opaque_draw_mgr_->get_frame_output_buf_handle());
-    rg_.set_resource("static_opaque_unculled_draw_cmds",
-                     static_opaque_draw_mgr_->get_frame_unculled_output_buf_handle());
-  }
-  if (static_opaque_alpha_mask_draw_mgr_->should_draw()) {
-    rg_.set_resource("static_opaque_alpha_culled_draw_cmds",
-                     static_opaque_alpha_mask_draw_mgr_->get_frame_output_buf_handle());
-    rg_.set_resource("static_opaque_alpha_unculled_draw_cmds",
-                     static_opaque_alpha_mask_draw_mgr_->get_frame_unculled_output_buf_handle());
-  }
-  if (static_transparent_draw_mgr_->should_draw()) {
-    rg_.set_resource("static_transparent_culled_draw_cmds",
-                     static_transparent_draw_mgr_->get_frame_output_buf_handle());
-    rg_.set_resource("static_transparent_unculled_draw_cmds",
-                     static_transparent_draw_mgr_->get_frame_unculled_output_buf_handle());
-  }
+  auto add_resources = [this](StaticMeshDrawManager& mgr) {
+    if (mgr.should_draw()) {
+      for (const auto& draw_pass : mgr.get_draw_passes()) {
+        rg_.set_resource(draw_pass.name, draw_pass.get_frame_out_draw_cmd_buf_handle());
+      }
+    }
+  };
+  add_resources(*static_opaque_draw_mgr_);
+  add_resources(*static_opaque_alpha_mask_draw_mgr_);
+  add_resources(*static_transparent_draw_mgr_);
+
   rg_.setup_attachments();
   rg_.execute(ctx);
 
@@ -505,22 +492,22 @@ void VkRender2::on_imgui() {
       ImGui::TreePop();
     }
 
-    auto static_mesh_mgr_gui = [](StaticMeshDrawManager& mgr, const char* name) {
-      if (ImGui::TreeNodeEx(name, ImGuiTreeNodeFlags_DefaultOpen)) {
+    auto static_mesh_mgr_gui = [](StaticMeshDrawManager& mgr) {
+      if (ImGui::TreeNodeEx(mgr.get_name().c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Checkbox("Enabled", &mgr.draw_enabled);
         ImGui::TreePop();
       }
     };
 
     if (ImGui::TreeNodeEx("Static Geo", ImGuiTreeNodeFlags_DefaultOpen)) {
-      static_mesh_mgr_gui(*static_opaque_draw_mgr_, "Opaque");
-      static_mesh_mgr_gui(*static_opaque_alpha_mask_draw_mgr_, "Opaque Alpha Mask");
-      static_mesh_mgr_gui(*static_transparent_draw_mgr_, "Transparent");
+      static_mesh_mgr_gui(*static_opaque_draw_mgr_);
+      static_mesh_mgr_gui(*static_opaque_alpha_mask_draw_mgr_);
+      static_mesh_mgr_gui(*static_transparent_draw_mgr_);
       ImGui::TreePop();
     }
 
     if (ImGui::TreeNode("CSM")) {
-      csm_->on_imgui(linear_sampler_->sampler);
+      csm_->on_imgui();
       ImGui::TreePop();
     }
 
@@ -613,7 +600,6 @@ void transform_mesh_bounds(const MeshBounds& untransformed_bounds, MeshBounds& n
 SceneHandle VkRender2::load_scene(const std::filesystem::path& path, bool dynamic,
                                   const mat4& transform) {
   ZoneScoped;
-  LINFO("loading scene");
   if (!dynamic) {
     ZoneScopedN("load_scene");
     auto copy_buffer = [](VkCommandBuffer cmd, const Buffer& src_buffer, const Buffer& dst_buffer,
@@ -1146,24 +1132,21 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
   ZoneScoped;
   {
     auto& clear_buff = rg.add_pass("clear_draw_cnt_buf");
-    if (static_opaque_draw_mgr_->should_draw()) {
-      clear_buff.add_proxy("static_opaque_culled_draw_cmds", Access::TransferWrite);
-      clear_buff.add_proxy("static_opaque_unculled_draw_cmds", Access::TransferWrite);
+
+    for (auto& mgr : draw_managers_) {
+      if (mgr->should_draw()) {
+        for (const auto& draw_pass : mgr->get_draw_passes()) {
+          clear_buff.add_proxy(draw_pass.name, Access::TransferWrite);
+        }
+      }
     }
-    if (static_opaque_alpha_mask_draw_mgr_->should_draw()) {
-      clear_buff.add_proxy("static_opaque_alpha_culled_draw_cmds", Access::TransferWrite);
-      clear_buff.add_proxy("static_opaque_alpha_unculled_draw_cmds", Access::TransferWrite);
-    }
-    if (static_transparent_draw_mgr_->should_draw()) {
-      clear_buff.add_proxy("static_transparent_culled_draw_cmds", Access::TransferWrite);
-      clear_buff.add_proxy("static_transparent_unculled_draw_cmds", Access::TransferWrite);
-    }
+
     clear_buff.set_execute_fn([this](CmdEncoder& cmd) {
       TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "clear_draw_cnt_buf");
-      auto clear_bufs = [this, &cmd](StaticMeshDrawManager& mgr) {
-        if (!mgr.should_draw()) return;
-        vk2::Buffer* bufs[] = {mgr.get_frame_output_buf(), mgr.get_frame_unculled_output_buf()};
-        for (auto* buf : bufs) {
+      for (auto& mgr : draw_managers_) {
+        if (!mgr->should_draw()) continue;
+        for (const auto& draw_pass : mgr->get_draw_passes()) {
+          vk2::Buffer* buf = draw_pass.get_frame_out_draw_cmd_buf();
           assert(buf);
           if (!buf) {
             continue;
@@ -1178,81 +1161,68 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
             vkCmdFillBuffer(cmd.cmd(), buf->buffer(), 0, sizeof(u32), 0);
           }
         }
-      };
-      clear_bufs(*static_opaque_draw_mgr_);
-      clear_bufs(*static_opaque_alpha_mask_draw_mgr_);
-      clear_bufs(*static_transparent_draw_mgr_);
+      }
     });
   }
 
   {
     auto& cull = rg.add_pass("cull");
-    if (static_opaque_draw_mgr_->should_draw()) {
-      cull.add_proxy("static_opaque_culled_draw_cmds", Access::ComputeRW);
-      cull.add_proxy("static_opaque_unculled_draw_cmds", Access::ComputeRW);
-    }
-    if (static_opaque_alpha_mask_draw_mgr_->should_draw()) {
-      cull.add_proxy("static_opaque_alpha_culled_draw_cmds", Access::ComputeRW);
-      cull.add_proxy("static_opaque_alpha_unculled_draw_cmds", Access::ComputeRW);
-    }
-    if (static_transparent_draw_mgr_->should_draw()) {
-      cull.add_proxy("static_transparent_culled_draw_cmds", Access::ComputeRW);
-      cull.add_proxy("static_transparent_unculled_draw_cmds", Access::ComputeRW);
+    for (const auto& mgr : draw_managers_) {
+      if (mgr->should_draw()) {
+        for (const auto& draw_pass : mgr->get_draw_passes()) {
+          cull.add_proxy(draw_pass.name, Access::ComputeRW);
+        }
+      }
     }
     cull.set_execute_fn([this](CmdEncoder& cmd) {
       TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "cull");
       PipelineManager::get().bind_compute(cmd.cmd(), cull_objs_pipeline_);
-
-      auto dispatch_cull = [this](CmdEncoder& cmd, bool enabled, vk2::Buffer* draw_info_buf,
-                                  vk2::Buffer* out_draw_cmd_buf, const mat4& mat = {}) mutable {
-        glm::mat4 transpose_proj = glm::transpose(mat);
-        auto normalize_plane = [](const vec4& p) -> vec4 { return p / glm::length(vec3(p)); };
-        glm::vec4 frustum_x = normalize_plane(transpose_proj[3] + transpose_proj[0]);  // x+w <0
-        glm::vec4 frustum_y = normalize_plane(transpose_proj[3] + transpose_proj[1]);  // y+w <0
-        u32 flags{};
-        u32 new_flags = flags;
-        if (enabled) {
-          new_flags |= FRUSTUM_CULL_ENABLED_BIT;
+      for (const auto& mgr : draw_managers_) {
+        if (mgr->should_draw()) {
+          for (u32 i = 0; i < mgr->get_draw_passes().size(); i++) {
+            assert(i < cull_projection_matrices_.size());
+            if (i > cull_projection_matrices_.size()) break;
+            const auto& draw_pass = mgr->get_draw_passes()[i];
+            // extract frustum planes
+            glm::mat4 transpose_proj = glm::transpose(cull_projection_matrices_[i]);
+            auto normalize_plane = [](const vec4& p) -> vec4 { return p / glm::length(vec3(p)); };
+            glm::vec4 frustum_x = normalize_plane(transpose_proj[3] + transpose_proj[0]);  // x+w <0
+            glm::vec4 frustum_y = normalize_plane(transpose_proj[3] + transpose_proj[1]);  // y+w <0
+            u32 flags{};
+            if (frustum_cull_enabled_) {
+              if (i == 0) {
+                flags |= FRUSTUM_CULL_ENABLED_BIT;
+              }
+            }
+            CullObjectPushConstants pc{
+                curr_frame_2().scene_uniform_buf->device_addr(),
+                static_cast<u32>(draw_cnt_),
+                mgr->get_draw_info_buf()->resource_info_->handle,
+                draw_pass.get_frame_out_draw_cmd_buf()->resource_info_->handle,
+                static_object_data_buf_.get_buffer()->resource_info_->handle,
+                flags,
+                {frustum_x.x, frustum_x.z, frustum_y.y, frustum_y.z}};
+            cmd.push_constants(sizeof(pc), &pc);
+            cmd.dispatch((draw_cnt_ + 256) / 256, 1, 1);
+          }
         }
-        CullObjectPushConstants pc{curr_frame_2().scene_uniform_buf->device_addr(),
-                                   static_cast<u32>(draw_cnt_),
-                                   draw_info_buf->resource_info_->handle,
-                                   out_draw_cmd_buf->resource_info_->handle,
-                                   static_object_data_buf_.get_buffer()->resource_info_->handle,
-                                   new_flags,
-                                   {frustum_x.x, frustum_x.z, frustum_y.y, frustum_y.z}};
-        cmd.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-        cmd.dispatch((draw_cnt_ + 256) / 256, 1, 1);
-      };
-      auto dispatch_mesh_cull = [this, &dispatch_cull, &cmd](StaticMeshDrawManager& mgr) {
-        if (!mgr.should_draw()) return;
-        dispatch_cull(cmd, frustum_cull_enabled_, mgr.get_draw_info_buf(),
-                      mgr.get_frame_output_buf(), scene_uniform_cpu_data_.proj);
-        dispatch_cull(cmd, false, mgr.get_draw_info_buf(), mgr.get_frame_unculled_output_buf());
-      };
-      dispatch_mesh_cull(*static_opaque_draw_mgr_);
-      dispatch_mesh_cull(*static_opaque_alpha_mask_draw_mgr_);
-      dispatch_mesh_cull(*static_transparent_draw_mgr_);
+      }
     });
   }
 
   if (csm_enabled.get()) {
     csm_->add_pass(rg);
+    csm_->debug_shadow_pass(rg, linear_sampler_.value());
   }
 
   if (!deferred_enabled_) {
     auto& forward = rg.add_pass("forward");
     auto final_out_handle =
         forward.add("draw_out", {.format = draw_img_format_}, Access::ColorWrite);
-    // TODO: make an indirect drawer class that adds the buffers it needs to the render graph pass
-    if (static_opaque_draw_mgr_->should_draw()) {
-      forward.add_proxy("static_opaque_culled_draw_cmds", Access::IndirectRead);
-    }
-    if (static_opaque_alpha_mask_draw_mgr_->should_draw()) {
-      forward.add_proxy("static_opaque_alpha_culled_draw_cmds", Access::IndirectRead);
-    }
-    if (static_transparent_draw_mgr_->should_draw()) {
-      forward.add_proxy("static_transparent_culled_draw_cmds", Access::IndirectRead);
+    for (const auto& mgr : draw_managers_) {
+      if (mgr->should_draw()) {
+        forward.add_proxy(mgr->get_draw_passes()[main_mesh_pass_idx_].name, Access::IndirectRead);
+      }
     }
     if (csm_enabled.get()) {
       forward.add_proxy("shadow_data_buf", Access::FragmentRead);
@@ -1329,11 +1299,15 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
           gbuffer.add("gbuffer_b", {.format = gbuffer_b_format_}, Access::ColorWrite);
       auto rg_gbuffer_c =
           gbuffer.add("gbuffer_c", {.format = gbuffer_c_format_}, Access::ColorWrite);
+
       if (static_opaque_draw_mgr_->should_draw()) {
-        gbuffer.add_proxy("static_opaque_culled_draw_cmds", Access::IndirectRead);
+        gbuffer.add_proxy(static_opaque_draw_mgr_->get_draw_passes()[main_mesh_pass_idx_].name,
+                          Access::IndirectRead);
       }
       if (static_opaque_alpha_mask_draw_mgr_->should_draw()) {
-        gbuffer.add_proxy("static_opaque_alpha_culled_draw_cmds", Access::IndirectRead);
+        gbuffer.add_proxy(
+            static_opaque_alpha_mask_draw_mgr_->get_draw_passes()[main_mesh_pass_idx_].name,
+            Access::IndirectRead);
       }
       auto depth_out_handle =
           gbuffer.add("depth", {.format = depth_img_format_}, Access::DepthStencilWrite);
@@ -1391,7 +1365,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
       auto rg_gbuffer_c =
           shade.add("gbuffer_c", {.format = gbuffer_c_format_}, Access::ComputeRead);
       if (csm_enabled.get()) {
-        shade.add("shadow_map_img", csm_->get_shadow_map_att_info(), Access::FragmentRead);
+        shade.add("shadow_map_img", Access::FragmentRead);
         shade.add_proxy("shadow_data_buf", Access::ComputeRead);
       }
       auto depth_handle = shade.add("depth", {.format = depth_img_format_}, Access::ComputeSample);
@@ -1409,7 +1383,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
         if (!gbuffer_a || !gbuffer_b || !gbuffer_c || !shade_out_tex || !depth_img) {
           return;
         }
-        GBufferShadePushConstants pc{
+        DeferredShadePushConstants pc{
             glm::inverse(scene_uniform_cpu_data_.view_proj),
             gbuffer_a->view().storage_img_resource().handle,
             gbuffer_b->view().storage_img_resource().handle,
@@ -1514,9 +1488,21 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
   }
   if (draw_imgui) {
     auto& imgui_p = rg.add_pass("imgui");
+    RenderResourceHandle csm_debug_img_handle{UINT32_MAX};
+    if (csm_enabled.get() && csm_->get_debug_render_enabled()) {
+      csm_debug_img_handle = imgui_p.add("shadow_map_debug_img", Access::FragmentRead);
+    }
     auto handle = imgui_p.add("final_out", swapchain_att_info_, Access::ColorRW);
-    imgui_p.set_execute_fn([this, handle, &rg](CmdEncoder& cmd) {
+    imgui_p.set_execute_fn([this, handle, &rg, csm_debug_img_handle](CmdEncoder& cmd) {
       TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "imgui");
+      if (csm_enabled.get() && csm_->get_debug_render_enabled()) {
+        assert(csm_debug_img_handle != UINT32_MAX);
+        auto* csm_debug_img = rg.get_texture(csm_debug_img_handle);
+        assert(csm_debug_img);
+        if (csm_debug_img) {
+          csm_->imgui_pass(cmd, *linear_sampler_, *csm_debug_img);
+        }
+      }
       auto* tex = rg.get_texture(handle);
       render_imgui(cmd.cmd(), {tex->extent_2d().width, tex->extent_2d().height},
                    tex->view().view());
@@ -1524,15 +1510,15 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
   }
 }
 
-void VkRender2::execute_draw(CmdEncoder& cmd, const vk2::Buffer& buffer) const {
+void VkRender2::execute_draw(CmdEncoder& cmd, const vk2::Buffer& buffer, u32 draw_count) const {
   VkBuffer draw_cmd_buf = buffer.buffer();
   constexpr u32 draw_cmd_offset{sizeof(u32)};
   if (portable_) {
-    vkCmdDrawIndexedIndirect(cmd.cmd(), draw_cmd_buf, draw_cmd_offset, draw_cnt_,
+    vkCmdDrawIndexedIndirect(cmd.cmd(), draw_cmd_buf, draw_cmd_offset, draw_count,
                              sizeof(VkDrawIndexedIndirectCommand));
   } else {
     vkCmdDrawIndexedIndirectCount(cmd.cmd(), draw_cmd_buf, draw_cmd_offset, draw_cmd_buf, 0,
-                                  max_draws, sizeof(VkDrawIndexedIndirectCommand));
+                                  draw_count, sizeof(VkDrawIndexedIndirectCommand));
   }
 }
 
@@ -1563,27 +1549,64 @@ VkRender2::StaticMeshDrawManager::Handle VkRender2::StaticMeshDrawManager::add_d
   assert(size > 0);
   Alloc a;
   a.draw_cmd_slot = draw_cmds_buf_.allocator.allocate(size);
-  auto* buf = draw_cmds_buf_.get_buffer();
-  assert(buf);
-  if (!buf) {
+  auto* draw_cmds_buf = draw_cmds_buf_.get_buffer();
+  assert(draw_cmds_buf);
+  if (!draw_cmds_buf) {
     return {};
   }
 
-  if (a.draw_cmd_slot.get_offset() >= buf->size()) {
+  // resize draw cmd bufs
+  size_t curr_tot_draw_cmd_buf_size = draw_cmds_buf->size();
+  auto new_size = glm::max<size_t>(curr_tot_draw_cmd_buf_size * 2,
+                                   (a.draw_cmd_slot.get_offset() + a.draw_cmd_slot.size));
+  for (auto& draw_pass : draw_passes_) {
+    // resize output draw cmd buffers
+    if (auto* buf = get_device().get_buffer(draw_pass.out_draw_cmds_buf[0].handle);
+        a.draw_cmd_slot.get_offset() + a.draw_cmd_slot.size + sizeof(u32) >= buf->size()) {
+      for (u32 i = 0; i < VkRender2::get().frames_in_flight_; i++) {
+        draw_pass.out_draw_cmds_buf[i] = get_device().create_buffer_holder(BufferCreateInfo{
+            .size = new_size + sizeof(u32),
+            .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+                     VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        });
+      }
+    }
+  }
+
+  if (a.draw_cmd_slot.get_offset() + a.draw_cmd_slot.size >= curr_tot_draw_cmd_buf_size) {
+    // draw cmd buf resize and copy
+    auto new_buf = get_device().create_buffer_holder(BufferCreateInfo{
+        .size = new_size,
+        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+                 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+    });
+    VkRender2::get().copy_buffer(cmd, draw_cmds_buf, get_device().get_buffer(new_buf), 0, 0,
+                                 curr_tot_draw_cmd_buf_size);
+    state.queue_transfer_buffer(
+        VkRender2::get().state_,
+        VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+        VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT,
+        get_device().get_buffer(new_buf)->buffer(), VkRender2::get().queues_.transfer_queue_idx,
+        VkRender2::get().queues_.graphics_queue_idx, 0, curr_tot_draw_cmd_buf_size);
+    draw_cmds_buf_.buffer = std::move(new_buf);
+    draw_cmds_buf = draw_cmds_buf_.get_buffer();
+  }
+
+  if (a.draw_cmd_slot.get_offset() >= draw_cmds_buf->size()) {
     LINFO("unimplemented: need to resize Static mesh draw cmd buffer");
     exit(1);
   }
   VkBufferCopy2KHR copy = init::buffer_copy(staging_offset, a.draw_cmd_slot.offset, size);
   VkCopyBufferInfo2KHR buf_copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
                                      .srcBuffer = staging.buffer(),
-                                     .dstBuffer = buf->buffer(),
+                                     .dstBuffer = draw_cmds_buf->buffer(),
                                      .regionCount = 1,
                                      .pRegions = &copy};
   vkCmdCopyBuffer2KHR(cmd, &buf_copy_info);
   state.queue_transfer_buffer(
       VkRender2::get().state_,
       VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-      VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT, buf->buffer(),
+      VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT, draw_cmds_buf->buffer(),
       VkRender2::get().queues_.transfer_queue_idx, VkRender2::get().queues_.graphics_queue_idx,
       a.draw_cmd_slot.get_offset(), size);
 
@@ -1591,60 +1614,76 @@ VkRender2::StaticMeshDrawManager::Handle VkRender2::StaticMeshDrawManager::add_d
   return allocs_.alloc(a);
 }
 
-VkRender2::StaticMeshDrawManager::StaticMeshDrawManager(size_t initial_max_draw_cnt) {
-  draw_cmds_buf_.buffer = get_device().create_buffer_holder(BufferCreateInfo{
-      .size = (initial_max_draw_cnt * sizeof(GPUDrawInfo)),
-      .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-  });
+VkRender2::StaticMeshDrawManager::StaticMeshDrawManager(std::string name,
+                                                        size_t initial_max_draw_cnt)
+    : name_(std::move(name)) {
+  draw_cmds_buf_.buffer = get_device().create_buffer_holder(
+      storage_buffer_create_info(initial_max_draw_cnt * sizeof(GPUDrawInfo)));
   draw_cmds_buf_.allocator.init(initial_max_draw_cnt * sizeof(GPUDrawInfo), sizeof(GPUDrawInfo),
                                 100);
-
-  for (u32 i = 0; i < VkRender2::get().get_num_frames_in_flight(); i++) {
-    out_draw_cmds_buf_unculled_[i] = get_device().create_buffer_holder(BufferCreateInfo{
-        .size = (initial_max_draw_cnt * sizeof(VkDrawIndexedIndirectCommand)) + sizeof(u32),
-        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-                 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-    });
-    out_draw_cmds_buf_[i] = get_device().create_buffer_holder(BufferCreateInfo{
-        .size = (initial_max_draw_cnt * sizeof(VkDrawIndexedIndirectCommand)) + sizeof(u32),
-        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-                 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-    });
-  }
 }
 
 vk2::Buffer* VkRender2::StaticMeshDrawManager::get_draw_info_buf() const {
   return draw_cmds_buf_.get_buffer();
 }
 
-vk2::Buffer* VkRender2::StaticMeshDrawManager::get_frame_unculled_output_buf() const {
-  return get_device().get_buffer(
-      out_draw_cmds_buf_unculled_[VkRender2::get().curr_frame_in_flight_num()]);
-}
-
-vk2::Buffer* VkRender2::StaticMeshDrawManager::get_frame_output_buf() const {
-  return get_device().get_buffer(out_draw_cmds_buf_[VkRender2::get().curr_frame_in_flight_num()]);
-}
-
 vk2::BufferHandle VkRender2::StaticMeshDrawManager::get_draw_info_buf_handle() const {
   return draw_cmds_buf_.buffer.handle;
-}
-
-vk2::BufferHandle VkRender2::StaticMeshDrawManager::get_frame_output_buf_handle() const {
-  return out_draw_cmds_buf_[VkRender2::get().curr_frame_in_flight_num()].handle;
-}
-
-vk2::BufferHandle VkRender2::StaticMeshDrawManager::get_frame_unculled_output_buf_handle() const {
-  return out_draw_cmds_buf_unculled_[VkRender2::get().curr_frame_in_flight_num()].handle;
 }
 
 void VkRender2::execute_static_geo_draws(CmdEncoder& cmd) {
   vkCmdBindIndexBuffer(cmd.cmd(), static_index_buf_->buffer.buffer(), 0, VK_INDEX_TYPE_UINT32);
   if (static_opaque_draw_mgr_->should_draw()) {
-    execute_draw(cmd, *static_opaque_draw_mgr_->get_frame_output_buf());
+    execute_draw(cmd,
+                 *static_opaque_draw_mgr_->get_draw_passes()[main_mesh_pass_idx_]
+                      .get_frame_out_draw_cmd_buf(),
+                 static_opaque_draw_mgr_->get_num_draw_cmds());
   }
   if (static_opaque_alpha_mask_draw_mgr_->should_draw()) {
-    execute_draw(cmd, *static_opaque_alpha_mask_draw_mgr_->get_frame_output_buf());
+    execute_draw(cmd,
+                 *static_opaque_alpha_mask_draw_mgr_->get_draw_passes()[main_mesh_pass_idx_]
+                      .get_frame_out_draw_cmd_buf(),
+                 static_opaque_alpha_mask_draw_mgr_->get_num_draw_cmds());
   }
+}
+
+VkRender2::StaticMeshDrawManager::DrawPass::DrawPass(std::string name, u32 count)
+    : name(std::move(name)) {
+  for (u32 i = 0; i < VkRender2::get().frames_in_flight_; i++) {
+    out_draw_cmds_buf[i] = get_device().create_buffer_holder(BufferCreateInfo{
+        .size = (count * sizeof(VkDrawIndexedIndirectCommand)) + sizeof(u32),
+        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+                 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+    });
+  }
+}
+
+void VkRender2::StaticMeshDrawManager::add_draw_pass(const std::string& name) {
+  draw_passes_.emplace_back(name_ + "_" + name, num_draw_cmds_);
+}
+
+vk2::BufferHandle VkRender2::StaticMeshDrawManager::DrawPass::get_frame_out_draw_cmd_buf_handle()
+    const {
+  return out_draw_cmds_buf[VkRender2::get().curr_frame_in_flight_num()].handle;
+}
+
+vk2::Buffer* VkRender2::StaticMeshDrawManager::DrawPass::get_frame_out_draw_cmd_buf() const {
+  return get_device().get_buffer(out_draw_cmds_buf[VkRender2::get().curr_frame_in_flight_num()]);
+}
+
+void VkRender2::copy_buffer(VkCommandBuffer cmd, vk2::Buffer* src, vk2::Buffer* dst,
+                            size_t src_offset, size_t dst_offset, size_t size) {
+  VkBufferCopy2KHR copy = init::buffer_copy(src_offset, dst_offset, size);
+  VkCopyBufferInfo2KHR buf_copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+                                     .srcBuffer = src->buffer(),
+                                     .dstBuffer = dst->buffer(),
+                                     .regionCount = 1,
+                                     .pRegions = &copy};
+  vkCmdCopyBuffer2KHR(cmd, &buf_copy_info);
+}
+void VkRender2::copy_buffer(VkCommandBuffer cmd, vk2::BufferHandle src, vk2::BufferHandle dst,
+                            size_t src_offset, size_t dst_offset, size_t size) {
+  copy_buffer(cmd, get_device().get_buffer(src), get_device().get_buffer(dst), src_offset,
+              dst_offset, size);
 }
 }  // namespace gfx

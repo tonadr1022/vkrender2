@@ -189,7 +189,7 @@ struct VkRender2 final : public BaseRenderer {
   struct StaticMeshDrawManager {
     using Handle = GenerationalHandle<struct Alloc>;
 
-    explicit StaticMeshDrawManager(size_t initial_max_draw_cnt);
+    explicit StaticMeshDrawManager(std::string name, size_t initial_max_draw_cnt);
     StaticMeshDrawManager(const StaticMeshDrawManager&) = delete;
     StaticMeshDrawManager(StaticMeshDrawManager&&) = delete;
     StaticMeshDrawManager& operator=(const StaticMeshDrawManager&) = delete;
@@ -199,29 +199,44 @@ struct VkRender2 final : public BaseRenderer {
       util::FreeListAllocator::Slot draw_cmd_slot;
     };
 
+    struct DrawPass {
+      explicit DrawPass(std::string name, u32 count);
+      std::string name;
+      vk2::Holder<vk2::BufferHandle> out_draw_cmds_buf[max_frames_in_flight];
+      [[nodiscard]] vk2::BufferHandle get_frame_out_draw_cmd_buf_handle() const;
+      [[nodiscard]] vk2::Buffer* get_frame_out_draw_cmd_buf() const;
+      bool enabled{true};
+    };
+    void add_draw_pass(const std::string& name);
+
     Handle add_draws(StateTracker& state, VkCommandBuffer cmd, size_t size, size_t staging_offset,
                      vk2::Buffer& staging);
     void remove_draws(StateTracker& state, VkCommandBuffer cmd, Handle handle);
 
+    [[nodiscard]] const std::string& get_name() const { return name_; }
     [[nodiscard]] u32 get_num_draw_cmds() const { return num_draw_cmds_; }
     [[nodiscard]] vk2::BufferHandle get_draw_info_buf_handle() const;
-    [[nodiscard]] vk2::BufferHandle get_frame_output_buf_handle() const;
-    [[nodiscard]] vk2::BufferHandle get_frame_unculled_output_buf_handle() const;
+    // [[nodiscard]] vk2::BufferHandle get_frame_output_buf_handle() const;
+    // [[nodiscard]] vk2::BufferHandle get_frame_unculled_output_buf_handle() const;
     [[nodiscard]] vk2::Buffer* get_draw_info_buf() const;
-    [[nodiscard]] vk2::Buffer* get_frame_output_buf() const;
-    [[nodiscard]] vk2::Buffer* get_frame_unculled_output_buf() const;
+    // [[nodiscard]] vk2::Buffer* get_frame_output_buf() const;
+    // [[nodiscard]] vk2::Buffer* get_frame_unculled_output_buf() const;
 
     bool draw_enabled{true};
     [[nodiscard]] bool should_draw() const { return draw_enabled && get_num_draw_cmds() > 0; }
 
+    [[nodiscard]] const std::vector<DrawPass>& get_draw_passes() const { return draw_passes_; }
+
    private:
+    std::vector<DrawPass> draw_passes_;
+    std::string name_;
     Pool<Handle, Alloc> allocs_;
     FreeListBuffer draw_cmds_buf_;
-    vk2::Holder<vk2::BufferHandle>
-        out_draw_cmds_buf_unculled_[max_frames_in_flight];  // [draw
-                                                            // cnt][VkDrawIndexedIndirectCommand[]]
-    vk2::Holder<vk2::BufferHandle>
-        out_draw_cmds_buf_[max_frames_in_flight];  // [draw cnt][VkDrawIndexedIndirectCommand[]]
+    // vk2::Holder<vk2::BufferHandle>
+    //     out_draw_cmds_buf_unculled_[max_frames_in_flight];  // [draw
+    // cnt][VkDrawIndexedIndirectCommand[]]
+    // vk2::Holder<vk2::BufferHandle>
+    //     out_draw_cmds_buf_[max_frames_in_flight];  // [draw cnt][VkDrawIndexedIndirectCommand[]]
     u32 num_draw_cmds_{};
   };
 
@@ -261,13 +276,17 @@ struct VkRender2 final : public BaseRenderer {
   std::optional<StaticMeshDrawManager> static_opaque_draw_mgr_;
   std::optional<StaticMeshDrawManager> static_opaque_alpha_mask_draw_mgr_;
   std::optional<StaticMeshDrawManager> static_transparent_draw_mgr_;
+  std::vector<mat4> cull_projection_matrices_;
+  std::array<StaticMeshDrawManager*, 3> draw_managers_;
+  u32 main_mesh_pass_idx_{0};
+
   bool should_draw(const StaticMeshDrawManager& mgr) const;
 
   // StaticGPUDrawData unculled_draw_data_;
   // StaticGPUDrawData main_culled_draw_data_;
 
   void execute_static_geo_draws(CmdEncoder& cmd);
-  void execute_draw(CmdEncoder& cmd, const vk2::Buffer& buffer) const;
+  void execute_draw(CmdEncoder& cmd, const vk2::Buffer& buffer, u32 draw_count) const;
 
   // void draw_opaque(CmdEncoder& cmd, const StaticGPUDrawData& draw_buf);
 
@@ -347,6 +366,10 @@ struct VkRender2 final : public BaseRenderer {
   // u64 cube_indices_gpu_offset_{};
 
   void add_rendering_passes(RenderGraph& rg);
+  void copy_buffer(VkCommandBuffer cmd, vk2::BufferHandle src, vk2::BufferHandle dst,
+                   size_t src_offset, size_t dst_offset, size_t size);
+  void copy_buffer(VkCommandBuffer cmd, vk2::Buffer* src, vk2::Buffer* dst, size_t src_offset,
+                   size_t dst_offset, size_t size);
   AttachmentInfo swapchain_att_info_;
 // TODO: fix
 #ifdef __APPLE__

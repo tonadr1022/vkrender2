@@ -116,6 +116,7 @@ class FreeListAllocator {
 
   [[nodiscard]] constexpr u32 alloc_size() const { return sizeof(Slot); }
 
+  [[nodiscard]] u32 capacity() const { return capacity_; }
   [[nodiscard]] Slot allocate(u32 size_bytes) {
     // align the size
     size_bytes += (alignment_ - (size_bytes % alignment_)) % alignment_;

@@ -116,6 +116,7 @@ using RenderResourceHandle = uint32_t;
 struct RenderGraphPass {
   enum class Type : uint8_t { Compute, Graphics };
   explicit RenderGraphPass(std::string name, RenderGraph& graph, uint32_t idx, Type type);
+  RenderResourceHandle add(const std::string& name, Access access);
   void add(const std::string& name, vk2::BufferHandle buffer, Access access);
   void add(const std::string& name, const vk2::Holder<vk2::BufferHandle>& buffer, Access access);
   // void add(const std::string& name, vk2::ImageHandle image, Access access);
@@ -199,6 +200,7 @@ struct RenderGraph {
 
  private:
   // TODO: integrate swapchain more closely?
+  friend struct RenderGraphPass;
   RenderGraphSwapchainInfo swapchain_info_{};
   std::string name_;
   std::vector<RenderGraphPass> passes_;
@@ -294,6 +296,7 @@ struct RenderGraph {
   };
   std::vector<ResourceState2> resource_states_;
   u64 all_submitted_pass_name_hash_{};
+  bool log_ = true;
 };
 
 }  // namespace gfx

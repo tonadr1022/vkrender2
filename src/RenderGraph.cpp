@@ -135,16 +135,6 @@ RenderGraphPass::UsageAndHandle RenderGraphPass::init_usage_and_handle(Access ac
   return res_usage;
 }
 
-// void RenderGraphPass::add(const std::string& name, vk2::ImageHandle image, Access access) {
-//   uint32_t handle = graph_.get_or_add_texture_resource(name);
-//   RenderResource& res = *graph_.get_resource(handle);
-//   res.access = static_cast<Access>(res.access | access);
-//   res.image_usage |= get_image_usage(access);
-//   // TODO: this lmao!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-//   res.img_handle = image;
-//   init_usage_and_handle(access, handle, res);
-// }
-
 void RenderGraphPass::add_proxy(const std::string& name, Access access) {
   uint32_t handle = graph_.get_or_add_buffer_resource(name);
   RenderResource& res = *graph_.get_resource(handle);
@@ -160,6 +150,22 @@ RenderResourceHandle RenderGraphPass::add(const std::string& name, const Attachm
   res.access = static_cast<Access>(res.access | access);
   res.image_usage |= get_image_usage(access);
   res.info = info;
+
+  if (name == graph_.get_backbuffer_img_name()) {
+    swapchain_write_idx_ = resources_.size();
+  }
+  init_usage_and_handle(access, handle, res);
+  return handle;
+}
+
+RenderResourceHandle RenderGraphPass::add(const std::string& name, Access access) {
+  if (!graph_.resource_to_idx_map_.contains(name)) {
+    return UINT32_MAX;
+  }
+  uint32_t handle = graph_.get_or_add_texture_resource(name);
+  RenderResource& res = *graph_.get_resource(handle);
+  res.access = static_cast<Access>(res.access | access);
+  res.image_usage |= get_image_usage(access);
 
   if (name == graph_.get_backbuffer_img_name()) {
     swapchain_write_idx_ = resources_.size();
@@ -184,7 +190,7 @@ void RenderGraphPass::add(const std::string& name, vk2::BufferHandle buffer, Acc
 RenderGraphPass::RenderGraphPass(std::string name, RenderGraph& graph, uint32_t idx, Type type)
     : name_(std::move(name)), graph_(graph), idx_(idx), type_(type) {}
 
-RenderGraph::RenderGraph(std::string name) : name_(std::move(name)) {}
+RenderGraph::RenderGraph(std::string name) : name_(std::move(name)) { log_ = false; }
 
 RenderGraphPass& RenderGraph::add_pass(const std::string& name, RenderGraphPass::Type type) {
   auto idx = passes_.size();
@@ -204,7 +210,6 @@ VoidResult RenderGraph::validate() {
 
 VoidResult RenderGraph::bake() {
   ZoneScoped;
-  bool log = false;
   // validate
   // go through each input and make sure it's an output of a previous pass if it needs to read from
   // it for (auto& pass : passes_) {
@@ -225,7 +230,7 @@ VoidResult RenderGraph::bake() {
     return ok;
   }
 
-  if (log) {
+  if (log_) {
     for (const auto& resource : resources_) {
       for (const auto& b : resource.get_read_passes()) {
         LINFO("{}: read in {}", resource.name, passes_[b].get_name());
@@ -278,7 +283,7 @@ VoidResult RenderGraph::bake() {
     // only execute a pass once
     prune_duplicates(pass_stack_);
 
-    if (log) {
+    if (log_) {
       LINFO("pass order: ");
       for (const auto& s : pass_stack_) {
         LINFO("{}", passes_[s].get_name());
@@ -288,7 +293,7 @@ VoidResult RenderGraph::bake() {
 
   build_physical_resource_reqs();
 
-  if (log) {
+  if (log_) {
     for (auto& res : resources_) {
       if (res.get_type() == ResourceType::Texture) {
         LINFO("{} {}", res.name, res.physical_idx);
@@ -324,7 +329,7 @@ VoidResult RenderGraph::bake() {
     }
   }
 
-  if (log) {
+  if (log_) {
     LINFO("\nphysical passes\n");
     for (auto& pass : physical_passes_) {
       LINFO("phys pass: {}", pass.name);
@@ -364,7 +369,9 @@ VoidResult RenderGraph::bake() {
 
     resource_states_.clear();
     resource_states_.reserve(physical_resource_dims_.size());
-    for (auto& phys_pass : physical_passes_) {
+    for (auto pass_i : pass_stack_) {
+      // auto& pass = passes_[pass_i];
+      auto& phys_pass = physical_passes_[pass_i];
       resource_states_.clear();
       resource_states_.resize(physical_resource_dims_.size());
       for (auto& invalidate : phys_pass.invalidate_barriers) {
@@ -444,7 +451,7 @@ VoidResult RenderGraph::bake() {
       }
     }
 
-    if (log) {
+    if (log_) {
       for (auto& phys_pass : physical_passes_) {
         for (auto& flush : phys_pass.flush_barriers) {
           LINFO("flush barrier {} {} {}", string_VkAccessFlags2(flush.access),
@@ -475,7 +482,7 @@ void RenderGraph::execute(CmdEncoder& cmd) {
       p.reset();
     }
     ZoneScopedN("setup barriers");
-    for (u32 pass_i = 0; pass_i < physical_passes_.size(); pass_i++) {
+    for (auto pass_i : pass_stack_) {
       physical_pass_setup_barriers(pass_i);
     }
   }
@@ -492,19 +499,35 @@ void RenderGraph::execute(CmdEncoder& cmd) {
       info.pBufferMemoryBarriers = submission_state.buffer_barriers.data();
       info.imageMemoryBarrierCount = submission_state.image_barriers.size();
       info.pImageMemoryBarriers = submission_state.image_barriers.data();
-      // static size_t i = 0;
-      // if (i++ < passes_.size()) {
-      //   LINFO("barriers: {}", pass.get_name());
-      //   LINFO("buffers");
-      //   for (auto& b : submission_state.buffer_barriers) {
-      //     print_barrier(b);
-      //   }
-      //   LINFO("images");
-      //   for (auto& b : submission_state.image_barriers) {
-      //     print_barrier(b);
-      //   }
-      //   LINFO("");
-      // }
+
+      if (log_) {
+        LINFO("barriers: {}", pass.get_name());
+        LINFO("buffers");
+        for (auto& b : submission_state.buffer_barriers) {
+          print_barrier(b);
+        }
+        LINFO("images");
+        for (auto& b : submission_state.image_barriers) {
+          u32 idx = UINT32_MAX;
+          for (u32 k = 0; k < physical_image_attachments_.size(); k++) {
+            auto& img = physical_image_attachments_[k];
+            if (!img.is_valid()) continue;
+            auto* i = vk2::get_device().get_image(img);
+            if (i && i->image() == b.image) {
+              idx = k;
+              break;
+            }
+          }
+          for (auto& resource : resources_) {
+            if (resource.get_type() == ResourceType::Texture && resource.physical_idx == idx) {
+              std::print("resource barrier: {}\t", resource.name);
+            }
+          }
+          print_barrier(b);
+        }
+        LINFO("");
+      }
+
       vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
 
       // LINFO("pre executed");
@@ -632,10 +655,11 @@ VoidResult RenderGraph::traverse_dependencies_recursive(uint32_t pass_i, uint32_
 
     // find outputs that write to this input
     if (passes_writing_to_resource.empty()) {
+      LINFO("resource: {}", resources_[read_i].name);
       return std::unexpected("no pass exists which writes to resource");
     }
 
-    if (stack_size > passes_.size() * 2) {
+    if (stack_size > passes_.size() * 100) {
       LERROR("cycle");
       return std::unexpected("cycle detected");
     }
@@ -1018,7 +1042,6 @@ void RenderGraph::physical_pass_setup_barriers(u32 pass_i) {
     assert(barrier.resource_idx < physical_image_attachments_.size());
     assert(barrier.resource_idx < physical_buffers_.size());
     const auto& phys_dims = physical_resource_dims_[barrier.resource_idx];
-
     auto* pstate = get_resource_pipeline_state(barrier.resource_idx);
     assert(pstate);
     auto& resource_state = *pstate;
@@ -1059,7 +1082,7 @@ void RenderGraph::physical_pass_setup_barriers(u32 pass_i) {
         state.image_barriers.push_back(b);
       }
 
-      resource_state.layout = barrier.layout;
+      resource_state.layout = b.newLayout;
 
     } else {
       VkBufferMemoryBarrier2 b{.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2};
@@ -1091,9 +1114,7 @@ void RenderGraph::physical_pass_setup_barriers(u32 pass_i) {
   }
 
   for (const auto& barrier : pass.flush_barriers) {
-    auto* pstate = get_resource_pipeline_state(barrier.resource_idx);
-    assert(pstate);
-    auto& resource_state = *pstate;
+    auto& resource_state = *get_resource_pipeline_state(barrier.resource_idx);
     auto& res_dims = physical_resource_dims_[barrier.resource_idx];
 
     // set the image layout transition for the pass
@@ -1102,6 +1123,7 @@ void RenderGraph::physical_pass_setup_barriers(u32 pass_i) {
           vk2::get_device().get_image(physical_image_attachments_[barrier.resource_idx]);
       assert(image);
       if (!image) continue;
+      assert(resource_state.layout == barrier.layout);
       resource_state.layout = barrier.layout;
     }
     // mark pending writes from this pass
@@ -1127,9 +1149,10 @@ vk2::Image* RenderGraph::get_texture(RenderResource* resource) {
 
 void RenderGraph::print_barrier(const VkImageMemoryBarrier2& barrier) const {
   LINFO(
-      "oldLayout: {}, newLayout: {}\nsrcAccess: {}, dstAccess: {}\nsrcStage: {}, "
+      "oldLayout: {}, newLayout: {}, aspect {}\nsrcAccess: {}, dstAccess: {}\nsrcStage: {}, "
       "dstStage: {}",
       string_VkImageLayout(barrier.oldLayout), string_VkImageLayout(barrier.newLayout),
+      string_VkImageAspectFlags(barrier.subresourceRange.aspectMask),
       string_VkAccessFlags2(barrier.srcAccessMask), string_VkAccessFlags2(barrier.dstAccessMask),
       string_VkPipelineStageFlags2(barrier.srcStageMask),
       string_VkPipelineStageFlags2(barrier.dstStageMask));
