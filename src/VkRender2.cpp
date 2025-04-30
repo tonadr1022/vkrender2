@@ -204,31 +204,37 @@ VkRender2::VkRender2(const InitInfo& info)
     per_frame_data_2_.resize(frames_in_flight_);
     for (u32 i = 0; i < frames_in_flight_; i++) {
       auto& d = per_frame_data_2_[i];
-      d.scene_uniform_buf = vk2::Buffer{vk2::BufferCreateInfo{
-          .size = sizeof(SceneUniforms),
-          .usage = VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT,
-          .alloc_flags = VMA_ALLOCATION_CREATE_MAPPED_BIT |
-                         VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT}};
+      d.scene_uniform_buf =
+          vk2::Buffer{BufferCreateInfo{.size = sizeof(SceneUniforms),
+                                       .usage = BufferUsage_Storage,
+                                       .flags = vk2::BufferCreateFlags_HostVisible}};
+
+      // d.line_buffer = get_device().create_buffer_holder(
+      //     BufferCreateInfo2{.size = sizeof(Line) * 1000,
+      //                       .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+      //                       .storage = vk2::BufferStorage_HostVisible});
     }
   }
 
-  static_vertex_buf_ = LinearBuffer{create_storage_buffer(10'000'000 * sizeof(gfx::Vertex))};
+  static_vertex_buf_ = LinearBuffer{
+      BufferCreateInfo{.size = 10'000'000 * sizeof(gfx::Vertex), .usage = BufferUsage_Storage}};
   static_index_buf_ = LinearBuffer{BufferCreateInfo{
       .size = 10'000'000 * sizeof(u32),
-      .usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+      .usage = BufferUsage_Index,
   }};
-  static_materials_buf_ = LinearBuffer{create_storage_buffer(10'000 * sizeof(gfx::Material))};
+  static_materials_buf_ = LinearBuffer{
+      BufferCreateInfo{.size = 10'000 * sizeof(gfx::Material), .usage = BufferUsage_Storage}};
   // TODO: tune and/or resizable buffers
   u64 max_static_draws = 100'000;
   static_instance_data_buf_.buffer = get_device().create_buffer_holder(BufferCreateInfo{
       .size = max_static_draws * sizeof(InstanceData),
-      .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+      .usage = BufferUsage_Storage,
   });
   static_instance_data_buf_.allocator.init(max_static_draws * sizeof(InstanceData),
                                            sizeof(InstanceData), 100);
   static_object_data_buf_.buffer = get_device().create_buffer_holder(BufferCreateInfo{
       .size = max_static_draws * sizeof(ObjectData),
-      .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+      .usage = BufferUsage_Storage,
   });
   static_object_data_buf_.allocator.init(max_static_draws * sizeof(ObjectData), sizeof(ObjectData),
                                          100);
@@ -1586,8 +1592,7 @@ VkRender2::StaticMeshDrawManager::Handle VkRender2::StaticMeshDrawManager::add_d
       for (u32 i = 0; i < VkRender2::get().frames_in_flight_; i++) {
         draw_pass.out_draw_cmds_buf[i] = get_device().create_buffer_holder(BufferCreateInfo{
             .size = new_size + sizeof(u32),
-            .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-                     VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            .usage = BufferUsage_Indirect | BufferUsage_Storage,
         });
       }
     }
@@ -1598,8 +1603,7 @@ VkRender2::StaticMeshDrawManager::Handle VkRender2::StaticMeshDrawManager::add_d
     // draw cmd buf resize and copy
     auto new_buf = get_device().create_buffer_holder(BufferCreateInfo{
         .size = new_size,
-        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                 VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        .usage = BufferUsage_Storage,
     });
     LINFO("new buf");
     VkRender2::get().copy_buffer(cmd, draw_cmds_buf, get_device().get_buffer(new_buf), 0, 0,
@@ -1639,10 +1643,9 @@ VkRender2::StaticMeshDrawManager::Handle VkRender2::StaticMeshDrawManager::add_d
 VkRender2::StaticMeshDrawManager::StaticMeshDrawManager(std::string name,
                                                         size_t initial_max_draw_cnt)
     : name_(std::move(name)) {
-  draw_cmds_buf_.buffer = get_device().create_buffer_holder({
+  draw_cmds_buf_.buffer = get_device().create_buffer_holder(BufferCreateInfo{
       .size = initial_max_draw_cnt * sizeof(GPUDrawInfo),
-      .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-               VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+      .usage = BufferUsage_Storage,
   });
   draw_cmds_buf_.allocator.init(initial_max_draw_cnt * sizeof(GPUDrawInfo), sizeof(GPUDrawInfo),
                                 100);
@@ -1677,8 +1680,7 @@ VkRender2::StaticMeshDrawManager::DrawPass::DrawPass(std::string name, u32 count
   for (u32 i = 0; i < VkRender2::get().frames_in_flight_; i++) {
     out_draw_cmds_buf[i] = get_device().create_buffer_holder(BufferCreateInfo{
         .size = (count * sizeof(VkDrawIndexedIndirectCommand)) + sizeof(u32),
-        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-                 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        .usage = BufferUsage_Indirect | BufferUsage_Storage,
     });
   }
 }

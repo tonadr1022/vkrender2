@@ -10,19 +10,28 @@
 #include "vk2/Resource.hpp"
 namespace gfx::vk2 {
 
+using BufferUsageFlags = u8;
+enum BufferUsage : u8 {
+  BufferUsage_None = 0,
+  BufferUsage_Storage = 1 << 0,
+  BufferUsage_Indirect = 1 << 1,
+  BufferUsage_Vertex = 1 << 2,
+  BufferUsage_Index = 1 << 3,
+  BufferUsage_Uniform = 1 << 4,
+};
+
+enum BufferCreateFlags : u8 {
+  BufferCreateFlags_HostVisible = 1 << 0,
+  // use in tandem with host visible. if host visible but not random, access will be sequential
+  BufferCreateFlags_HostAccessRandom = 1 << 1,
+};
+
 struct BufferCreateInfo {
   u64 size{};
-  VkBufferUsageFlags usage{};
-  VmaMemoryUsage mem_usage{VMA_MEMORY_USAGE_AUTO};
-  VmaAllocationCreateFlags alloc_flags{};
-  // bool buffer_device_address{false};
+  BufferUsageFlags usage{};
+  BufferCreateFlags flags{};
+  const char *debug_name{};
 };
-inline BufferCreateInfo storage_buffer_create_info(u64 size) {
-  return {
-      .size = size,
-      .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-  };
-}
 
 class Buffer {
  public:
@@ -37,14 +46,14 @@ class Buffer {
 
   [[nodiscard]] VkBuffer buffer() const { return buffer_; }
   [[nodiscard]] VkDeviceAddress device_addr() const { return buffer_address_; }
-  [[nodiscard]] u64 size() const { return cinfo_.size; }
+  [[nodiscard]] u64 size() const { return size_; }
   [[nodiscard]] const std::string &name() const { return name_; }
-  [[nodiscard]] const BufferCreateInfo &create_info() const { return cinfo_; }
 
  private:
-  BufferCreateInfo cinfo_;
-  std::string name_;
   VmaAllocationInfo info_;
+  std::string name_;
+  BufferUsageFlags usage_{};
+  u64 size_{};
   VkBuffer buffer_{};
   VkDeviceAddress buffer_address_{};
   VmaAllocation allocation_{};
@@ -59,8 +68,5 @@ struct BufferDeleteInfo {
   VmaAllocation allocation{};
   std::optional<BindlessResourceInfo> resource_info;
 };
-
-Buffer create_staging_buffer(u64 size);
-Buffer create_storage_buffer(u64 size);
 
 }  // namespace gfx::vk2

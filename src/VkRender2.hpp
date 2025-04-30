@@ -75,6 +75,10 @@ struct FreeListBuffer {
   util::FreeListAllocator allocator;
   [[nodiscard]] vk2::Buffer* get_buffer() const { return vk2::get_device().get_buffer(buffer); }
 };
+struct Line {
+  vec3 p1, p2;
+  vec4 color;
+};
 
 struct VkRender2 final : public BaseRenderer {
   static VkRender2& get();
@@ -126,7 +130,7 @@ struct VkRender2 final : public BaseRenderer {
  private:
   struct FrameData {
     std::optional<vk2::Buffer> scene_uniform_buf;
-    // vk2::Holder<vk2::BufferHandle> line_buffer;
+    vk2::Holder<vk2::BufferHandle> line_buffer;
     // vk2::Holder<vk2::BufferHandle> draw_cnt_buf;
     // vk2::Holder<vk2::BufferHandle> final_draw_cmd_buf;
   };
@@ -161,19 +165,6 @@ struct VkRender2 final : public BaseRenderer {
     vk2::Buffer buffer;
     LinearAllocator allocator;
     u64 alloc(u64 size) { return allocator.alloc(size); }
-  };
-
-  template <typename T>
-  struct SlotBuffer {
-    explicit SlotBuffer(const vk2::BufferCreateInfo& info)
-        : buffer(info), allocator(info.size / sizeof(T)) {}
-
-    explicit SlotBuffer(vk2::Buffer buffer)
-        : buffer(std::move(buffer)), allocator(this->buffer.size() / sizeof(T)) {}
-
-    vk2::Buffer buffer;
-    util::SlotAllocator<T> allocator;
-    u64 alloc() { return allocator.alloc(); }
   };
 
   u64 draw_cnt_{};

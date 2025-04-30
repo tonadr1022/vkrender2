@@ -119,8 +119,11 @@ class Device {
   Pool<ImageViewHandle, ImageView> img_view_pool_;
   Pool<BufferHandle, Buffer> buffer_pool_;
 
-  BufferHandle create_buffer(const BufferCreateInfo& info);
-  Holder<BufferHandle> create_buffer_holder(const BufferCreateInfo& info);
+  // TODO: better args
+  BufferHandle create_buffer(const BufferCreateInfo& info) { return buffer_pool_.alloc(info); }
+  Holder<BufferHandle> create_buffer_holder(const BufferCreateInfo& info) {
+    return Holder<BufferHandle>{this, buffer_pool_.alloc(info)};
+  }
   ImageViewHandle create_image_view(const Image& image, const ImageViewCreateInfo& info);
   ImageHandle create_image(const ImageCreateInfo& info);
   Holder<ImageHandle> create_image_holder(const ImageCreateInfo& info);

@@ -116,11 +116,11 @@ void App::run() {
 
   // VkRender2::get().load_scene(local_models_dir / "ABeautifulGame.glb", false,
   //                             glm::scale(mat4{1}, vec3{10}));
-  VkRender2::get().load_scene(local_models_dir / "Bistro_Godot.glb", false);
+  // VkRender2::get().load_scene(local_models_dir / "Bistro_Godot.glb", false);
   // VkRender2::get().load_scene(
   //     "/home/tony/models/Models/MetalRoughSpheres/glTF-Binary/MetalRoughSpheres.glb");
   // VkRender2::get().load_scene(local_models_dir / "Cube/glTF/Cube.gltf", false);
-  // VkRender2::get().load_scene(local_models_dir / "sponza.glb", false);
+  VkRender2::get().load_scene(local_models_dir / "sponza.glb", false);
   // VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false);
   // VkRender2::get().load_scene(local_models_dir / "Bistro_Godot.glb", false);
   // VkRender2::get().load_scene("/home/tony/models/Models/DamagedHelmet/glTF/DamagedHelmet.gltf",

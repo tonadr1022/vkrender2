@@ -266,14 +266,6 @@ void Device::destroy_resources() {
   buffer_pool_.clear();
 }
 
-BufferHandle Device::create_buffer(const BufferCreateInfo& info) {
-  return buffer_pool_.alloc(info);
-}
-
-Holder<BufferHandle> Device::create_buffer_holder(const BufferCreateInfo& info) {
-  return Holder<BufferHandle>{this, buffer_pool_.alloc(info)};
-}
-
 void Device::on_imgui() const {
   auto pool_stats = [](const char* pool_name, const auto& pool) {
     ImGui::Text("%s: \nActive: %u\nCreated: %zu\nDestroyed: %zu", pool_name, pool.size(),

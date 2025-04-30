@@ -11,7 +11,7 @@ compile_shader() {
 	local debug="$2"
 	local spv_file="${file%.*}.spv"
 
-	echo "Compiling: $file"
+	# echo "Compiling: $file"
 
 	local flags="-V"
 	if [ "$debug" = true ]; then

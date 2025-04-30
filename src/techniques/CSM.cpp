@@ -167,7 +167,7 @@ CSM::CSM(BaseRenderer* renderer, DrawFunc draw_fn, AddRenderDependenciesFunc add
   for (auto& b : shadow_data_bufs_) {
     b = get_device().create_buffer_holder(BufferCreateInfo{
         .size = sizeof(ShadowData),
-        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        .usage = BufferUsage_Storage,
     });
   }
   ZoneScoped;

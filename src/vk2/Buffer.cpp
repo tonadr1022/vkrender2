@@ -11,36 +11,65 @@
 
 namespace gfx::vk2 {
 
-// https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/usage_patterns.html
 Buffer::Buffer(const BufferCreateInfo &cinfo, std::string name) : name_(std::move(name)) {
-  auto usage = cinfo.usage;
-  bool buffer_device_address = true;
-  auto alloc_flags = cinfo.alloc_flags;
-  if (buffer_device_address) {
-    usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-    alloc_flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+  if (cinfo.size == 0) {
+    return;
   }
+  // https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/usage_patterns.html
+  VmaAllocationCreateInfo alloc_info{.usage = VMA_MEMORY_USAGE_AUTO};
+  VkBufferUsageFlags usage{};
+  // if no usage, it's 99% chance a staging buffer
+  if (cinfo.usage == 0) {
+    usage |= VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+  }
+  if (cinfo.flags & BufferCreateFlags_HostVisible) {
+    alloc_info.flags |= VMA_ALLOCATION_CREATE_MAPPED_BIT |
+                        ((cinfo.flags & BufferCreateFlags_HostAccessRandom)
+                             ? VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT
+                             : VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+  } else {
+    // device
+    usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+  }
+  if (cinfo.usage & BufferUsage_Index) {
+    usage |= VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+  }
+  if (cinfo.usage & BufferUsage_Vertex) {
+    usage |= VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+  }
+  if (cinfo.usage & BufferUsage_Storage) {
+    usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+  }
+  if (cinfo.usage & BufferUsage_Indirect) {
+    usage |= VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+  }
+
   VkBufferCreateInfo buffer_create_info{
       .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = cinfo.size, .usage = usage};
-  VmaAllocationCreateInfo alloc_info{.flags = alloc_flags, .usage = cinfo.mem_usage};
-  vk2::get_device().create_buffer(&buffer_create_info, &alloc_info, buffer_, allocation_, info_);
-  assert(info_.size);
-  if (cinfo.usage & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) {
+  get_device().create_buffer(&buffer_create_info, &alloc_info, buffer_, allocation_, info_);
+  if (info_.size == 0) {
+    return;
+  }
+  if (cinfo.usage & BufferUsage_Storage) {
     resource_info_ = BindlessResourceAllocator::get().allocate_storage_buffer_descriptor(buffer_);
   }
-  if (buffer_device_address) {
+  if (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) {
     VkBufferDeviceAddressInfo info{.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
                                    .buffer = buffer_};
     buffer_address_ = vkGetBufferDeviceAddress(vk2::get_device().device(), &info);
     assert(buffer_address_);
   }
-  cinfo_ = cinfo;
+
+  size_ = cinfo.size;
+  usage_ = cinfo.usage;
 }
 
 Buffer::Buffer(Buffer &&other) noexcept
-    : cinfo_(std::exchange(other.cinfo_, {})),
+    : info_(std::exchange(other.info_, {})),
       name_(std::move(other.name_)),
-      info_(std::exchange(other.info_, {})),
+      usage_(std::exchange(other.usage_, BufferUsage_None)),
+      size_(std::exchange(other.size_, 0)),
       buffer_(std::exchange(other.buffer_, nullptr)),
       buffer_address_(std::exchange(other.buffer_address_, 0ll)),
       allocation_(std::exchange(other.allocation_, nullptr)),
@@ -52,7 +81,6 @@ Buffer &Buffer::operator=(Buffer &&other) noexcept {
   }
   this->~Buffer();
   info_ = std::exchange(other.info_, {});
-  cinfo_ = std::exchange(other.cinfo_, {});
   name_ = std::move(other.name_);
   buffer_address_ = std::exchange(other.buffer_address_, 0ll);
   buffer_ = std::exchange(other.buffer_, nullptr);
@@ -70,18 +98,4 @@ Buffer::~Buffer() {
   }
 }
 
-Buffer create_staging_buffer(u64 size) {
-  return Buffer{
-      BufferCreateInfo{.size = size,
-                       .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                       .alloc_flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
-                                      VMA_ALLOCATION_CREATE_MAPPED_BIT}};
-}
-
-Buffer create_storage_buffer(u64 size) {
-  return Buffer{BufferCreateInfo{
-      .size = size,
-      .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-  }};
-}
 }  // namespace gfx::vk2
