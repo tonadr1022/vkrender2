@@ -6,6 +6,9 @@
 
 #include "Common.hpp"
 
+template <typename HandleT>
+struct GenerationalHandle;
+
 namespace gfx {
 
 enum class Format {
@@ -347,4 +350,13 @@ struct AttachmentInfo {
   u32 levels{1};
 };
 
+namespace vk2 {
+class ImageView;
+class Image;
+class Buffer;
+}  // namespace vk2
+
+using ImageViewHandle = GenerationalHandle<class ::gfx::vk2::ImageView>;
+using ImageHandle = GenerationalHandle<class ::gfx::vk2::Image>;
+using BufferHandle = GenerationalHandle<class ::gfx::vk2::Buffer>;
 }  // namespace gfx

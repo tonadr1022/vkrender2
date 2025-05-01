@@ -114,7 +114,7 @@ VkImageUsageFlags get_image_usage(Access access) {
 
 }  // namespace
 
-void RenderGraphPass::add(const std::string& name, const vk2::Holder<vk2::BufferHandle>& buffer,
+void RenderGraphPass::add(const std::string& name, const Holder<BufferHandle>& buffer,
                           Access access) {
   add(name, buffer.handle, access);
 }
@@ -174,7 +174,7 @@ RenderResourceHandle RenderGraphPass::add(const std::string& name, Access access
   return handle;
 }
 
-void RenderGraphPass::add(const std::string& name, vk2::BufferHandle buffer, Access access) {
+void RenderGraphPass::add(const std::string& name, BufferHandle buffer, Access access) {
   uint32_t handle = graph_.get_or_add_buffer_resource(name);
   RenderResource& res = *graph_.get_resource(handle);
   auto* buf = vk2::get_device().get_buffer(buffer);
@@ -1133,12 +1133,12 @@ void RenderGraph::physical_pass_setup_barriers(u32 pass_i) {
   }
 }
 
-vk2::ImageHandle RenderGraph::get_texture_handle(RenderResource* resource) {
+ImageHandle RenderGraph::get_texture_handle(RenderResource* resource) {
   if (!resource) return {};
   return physical_image_attachments_[resource->physical_idx];
 }
 
-vk2::ImageHandle RenderGraph::get_texture_handle(RenderResourceHandle resource) {
+ImageHandle RenderGraph::get_texture_handle(RenderResourceHandle resource) {
   return get_texture_handle(get_resource(resource));
 }
 vk2::Image* RenderGraph::get_texture(uint32_t idx) { return get_texture(get_resource(idx)); }
@@ -1187,7 +1187,7 @@ void RenderGraph::reset() {
   physical_buffers_.clear();
 }
 
-void RenderGraph::set_resource(const std::string& name, vk2::BufferHandle handle) {
+void RenderGraph::set_resource(const std::string& name, BufferHandle handle) {
   buffer_bindings_[std::hash<std::string>{}(name)] = handle;
 }
 

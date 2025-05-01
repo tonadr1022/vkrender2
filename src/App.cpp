@@ -123,7 +123,7 @@ void App::run() {
   // VkRender2::get().load_scene(local_models_dir / "Cube/glTF/Cube.gltf", false);
   // ren.load_scene(local_models_dir / "sponza.glb", false);
   // VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false);
-  // VkRender2::get().load_scene(local_models_dir / "Bistro_Godot.glb", false);
+  VkRender2::get().load_model(local_models_dir / "Bistro_Godot.glb", false);
   // VkRender2::get().load_scene("/home/tony/models/Models/DamagedHelmet/glTF/DamagedHelmet.gltf",
   //                             false);
   // std::filesystem::path env_tex = local_models_dir / "quarry_04_puresky_4k.hdr";
@@ -144,12 +144,16 @@ void App::run() {
 
     ren.draw_line({0, 1, 0}, {0, 0, 0}, {1, 1, 1, 1});
     int n1{3}, n2{1};
+    static float t{};
     if (ImGui::Begin("lines")) {
       ImGui::DragInt("n1", &n1);
       ImGui::DragInt("n2", &n2);
+      ImGui::DragFloat("dist", &t, .1);
       ImGui::End();
     }
-    ren.draw_plane({}, {0, 0, 1}, {1, 0, 1}, 1, 1, n1, n2, {1, 1, 1, 1});
+
+    ren.draw_box(glm::translate(mat4{1}, vec3{0, t, 0}), vec3{1}, vec4{1.f});
+    // ren.draw_plane({}, {0, 0, 1}, {1, 0, 1}, 1, 1, n1, n2, {1, 1, 1, 1});
     info_.view = cam_data.get_view();
     info_.view_pos = cam_data.pos;
     info_.light_dir = glm::normalize(info_.light_dir);
@@ -248,7 +252,7 @@ void App::on_imgui() {
 
   if (ImGui::Button("add sponza")) {
     static int offset = 1;
-    VkRender2::get().load_scene(local_models_dir / "sponza.glb", false,
+    VkRender2::get().load_model(local_models_dir / "sponza.glb", false,
                                 glm::translate(mat4{1}, vec3{0, 0, offset * 40}));
     offset++;
   }

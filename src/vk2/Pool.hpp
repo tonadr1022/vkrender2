@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 #include "vk2/Hash.hpp"
@@ -89,20 +90,20 @@ struct Pool {
   size_t num_destroyed_{};
 };
 
-template <typename HandleT>
-struct Handle {
-  using HandleIdxT = uint32_t;
-  Handle() = default;
-  explicit Handle(HandleIdxT idx) : idx_(idx) {}
-  friend bool operator==(const HandleT& a, const HandleT& b) { return a.idx_ == b.idx_; }
-
-  [[nodiscard]] bool is_valid() const { return idx_ != null_handle; }
-  [[nodiscard]] HandleIdxT idx() const { return idx_; }
-  constexpr static HandleIdxT null_handle{UINT32_MAX};
-
- private:
-  HandleIdxT idx_{null_handle};
-};
+// template <typename HandleT>
+// struct Handle {
+//   using HandleIdxT = uint32_t;
+//   Handle() = default;
+//   explicit Handle(HandleIdxT idx) : idx_(idx) {}
+//   friend bool operator==(const HandleT& a, const HandleT& b) { return a.idx_ == b.idx_; }
+//
+//   [[nodiscard]] bool is_valid() const { return idx_ != null_handle; }
+//   [[nodiscard]] HandleIdxT idx() const { return idx_; }
+//   constexpr static HandleIdxT null_handle{UINT32_MAX};
+//
+//  private:
+//   HandleIdxT idx_{null_handle};
+// };
 
 template <typename HandleT>
 struct GenerationalHandle {
@@ -128,7 +129,6 @@ struct GenerationalHandle {
   uint32_t idx_{};
   uint32_t gen_{};
 };
-
 namespace std {
 template <typename HandleT>
 struct hash<GenerationalHandle<HandleT>> {
@@ -137,5 +137,31 @@ struct hash<GenerationalHandle<HandleT>> {
     return gfx::vk2::detail::hashing::hash<decltype(h)>{}(h);
   }
 };
-
 }  // namespace std
+
+template <typename T>
+void destroy(T data);
+
+template <typename T>
+struct Holder {
+  Holder() = default;
+  explicit Holder(T&& data) : handle(std::move(data)) {}
+
+  Holder(const Holder& other) = delete;
+  Holder& operator=(const Holder& other) = delete;
+
+  Holder(Holder&& other) noexcept : handle(std::exchange(other.handle, T{})) {}
+
+  Holder& operator=(Holder&& other) noexcept {
+    if (&other == this) {
+      return *this;
+    }
+    destroy(handle);
+    handle = std::move(std::exchange(other.handle, T{}));
+    return *this;
+  }
+
+  ~Holder() { destroy(handle); }
+
+  T handle{};
+};

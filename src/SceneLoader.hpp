@@ -7,7 +7,8 @@
 #include "AABB.hpp"
 #include "Common.hpp"
 #include "Scene.hpp"
-#include "vk2/Texture.hpp"
+#include "Types.hpp"
+#include "vk2/Pool.hpp"
 
 namespace gfx {
 
@@ -32,6 +33,7 @@ struct Material {
   vec4 pbr_factors;
   uvec4 ids1;  // albedo, normal, metal_rough, emissive
   uvec4 ids2;  // ao
+  [[nodiscard]] PassFlags get_pass_flags() const;
 };
 
 struct PrimitiveDrawInfo {
@@ -46,7 +48,7 @@ struct PrimitiveDrawInfo {
 struct LoadedSceneData {
   SceneLoadData scene_graph_data;
   std::vector<Material> materials;
-  std::vector<vk2::Image> textures;
+  std::vector<Holder<ImageHandle>> textures;
   std::vector<PrimitiveDrawInfo> mesh_draw_infos;
   std::vector<Vertex> vertices;
   std::vector<u32> indices;
@@ -57,7 +59,7 @@ struct LoadedSceneBaseData {
   std::vector<PrimitiveDrawInfo> mesh_draw_infos;
   std::vector<Vertex> vertices;
   std::vector<u32> indices;
-  std::vector<vk2::Image> textures;
+  std::vector<Holder<ImageHandle>> textures;
   std::vector<Material> materials;
 };
 struct DefaultMaterialData {

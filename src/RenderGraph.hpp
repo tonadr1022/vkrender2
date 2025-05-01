@@ -4,6 +4,7 @@
 
 #include <expected>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -11,7 +12,7 @@
 
 #include "FixedVector.hpp"
 #include "Types.hpp"
-#include "vk2/Device.hpp"
+#include "vk2/Pool.hpp"
 
 namespace gfx {
 
@@ -21,7 +22,7 @@ struct CmdEncoder;
 using ExecuteFn = std::function<void(CmdEncoder& cmd)>;
 
 struct BufferInfo {
-  vk2::BufferHandle handle;
+  BufferHandle handle;
   size_t size{};
   u64 proxy_hash{};
 };
@@ -88,7 +89,7 @@ struct RenderResource {
   VkImageUsageFlags image_usage{};
   Access access{};
   BufferInfo buffer_info{};
-  vk2::ImageHandle img_handle;
+  ImageHandle img_handle;
 
  private:
   ResourceType type_;
@@ -117,9 +118,9 @@ struct RenderGraphPass {
   enum class Type : uint8_t { Compute, Graphics };
   explicit RenderGraphPass(std::string name, RenderGraph& graph, uint32_t idx, Type type);
   RenderResourceHandle add(const std::string& name, Access access);
-  void add(const std::string& name, vk2::BufferHandle buffer, Access access);
-  void add(const std::string& name, const vk2::Holder<vk2::BufferHandle>& buffer, Access access);
-  // void add(const std::string& name, vk2::ImageHandle image, Access access);
+  void add(const std::string& name, BufferHandle buffer, Access access);
+  void add(const std::string& name, const Holder<BufferHandle>& buffer, Access access);
+  // void add(const std::string& name, ImageHandle image, Access access);
   void add_proxy(const std::string& name, Access access);
   RenderResourceHandle add(const std::string& name, const AttachmentInfo& info, Access access,
                            const std::string& input = "");
@@ -194,9 +195,9 @@ struct RenderGraph {
   RenderResource* get_resource(RenderResourceHandle idx);
   vk2::Image* get_texture(RenderResourceHandle idx);
   vk2::Image* get_texture(RenderResource* resource);
-  vk2::ImageHandle get_texture_handle(RenderResource* resource);
-  vk2::ImageHandle get_texture_handle(RenderResourceHandle resource);
-  void set_resource(const std::string& name, vk2::BufferHandle handle);
+  ImageHandle get_texture_handle(RenderResource* resource);
+  ImageHandle get_texture_handle(RenderResourceHandle resource);
+  void set_resource(const std::string& name, BufferHandle handle);
 
  private:
   // TODO: integrate swapchain more closely?
@@ -251,8 +252,8 @@ struct RenderGraph {
   // TODO: pool
   std::vector<RenderResource> resources_;
   std::vector<ResourceDimensions> physical_resource_dims_;
-  std::unordered_map<vk2::ImageHandle, ResourceState> image_pipeline_states_;
-  std::unordered_map<vk2::BufferHandle, ResourceState> buffer_pipeline_states_;
+  std::unordered_map<ImageHandle, ResourceState> image_pipeline_states_;
+  std::unordered_map<BufferHandle, ResourceState> buffer_pipeline_states_;
   ResourceState* get_resource_pipeline_state(u32 physical_idx);
   // std::vector<ResourceState> resource_pipeline_states_;
   std::unordered_map<std::string, uint32_t> resource_to_idx_map_;
@@ -266,15 +267,14 @@ struct RenderGraph {
   std::unordered_set<uint32_t> dup_prune_set_;
 
   // owns images
-  std::unordered_multimap<ResourceDimensions, vk2::Holder<vk2::ImageHandle>,
-                          ResourceDimensionsHasher>
+  std::unordered_multimap<ResourceDimensions, Holder<ImageHandle>, ResourceDimensionsHasher>
       img_cache_;
-  std::vector<std::pair<ResourceDimensions, vk2::Holder<vk2::ImageHandle>>> img_cache_used_;
-  // std::unordered_map<ResourceDimensions, vk2::Holder<vk2::ImageHandle>, ResourceDimensionsHasher>
+  std::vector<std::pair<ResourceDimensions, Holder<ImageHandle>>> img_cache_used_;
+  // std::unordered_map<ResourceDimensions, vk2::Holder<ImageHandle>, ResourceDimensionsHasher>
   //     img_cache_used_;
 
-  std::vector<vk2::ImageHandle> physical_image_attachments_;
-  std::vector<vk2::BufferHandle> physical_buffers_;
+  std::vector<ImageHandle> physical_image_attachments_;
+  std::vector<BufferHandle> physical_buffers_;
 
   [[nodiscard]] ResourceDimensions get_resource_dims(const RenderResource& resource) const;
   void build_physical_resource_reqs();
@@ -284,7 +284,7 @@ struct RenderGraph {
   void print_barrier(const VkBufferMemoryBarrier2& barrier) const;
   VoidResult validate();
 
-  std::unordered_map<u64, vk2::BufferHandle> buffer_bindings_;
+  std::unordered_map<u64, BufferHandle> buffer_bindings_;
 
   struct ResourceState2 {
     VkImageLayout initial_layout{};

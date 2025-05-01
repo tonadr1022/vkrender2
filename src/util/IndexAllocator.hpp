@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "Common.hpp"
@@ -72,17 +73,34 @@ struct SlotAllocator {
 class FreeListAllocator {
  public:
   FreeListAllocator() = default;
+  FreeListAllocator(const FreeListAllocator&) = delete;
+  FreeListAllocator(FreeListAllocator&&) = delete;
+  FreeListAllocator& operator=(const FreeListAllocator&) = delete;
+  FreeListAllocator& operator=(FreeListAllocator&&) = delete;
+  // ~FreeListAllocator() { assert(size_ == 0); }
   struct Slot {
-    u32 offset{};
-    u32 size{};
-    [[nodiscard]] bool valid() const { return size != 0; }
-    [[nodiscard]] bool is_free() const { return valid() && (offset & 0x80000000) != 0; }
-    void mark_free() { offset |= 0x80000000; }
-    void mark_used() { offset &= 0x7FFFFFFF; }
-    [[nodiscard]] u32 get_offset() const { return offset & 0x7FFFFFFF; }
+    friend class FreeListAllocator;
+    Slot() = default;
+
+   private:
+    Slot(u32 offset, u32 size);
+    u32 offset_{};
+    u32 size_{};
+
+   public:
+    Slot(const Slot&) = delete;
+    Slot(Slot&& other) noexcept : offset_(other.offset_), size_(std::exchange(other.size_, 0)) {}
+    Slot& operator=(const Slot&) = delete;
+    Slot& operator=(Slot&& other) noexcept;
+    [[nodiscard]] bool valid() const { return size_ != 0; }
+    [[nodiscard]] bool is_free() const { return valid() && (offset_ & 0x80000000) != 0; }
+    void mark_free() { offset_ |= 0x80000000; }
+    void mark_used() { offset_ &= 0x7FFFFFFF; }
+    [[nodiscard]] u32 get_offset() const { return offset_ & 0x7FFFFFFF; }
+    [[nodiscard]] u32 get_size() const { return size_; }
   };
 
-  void init(u32 size_bytes, u32 alignment, u32 element_reserve_count);
+  void init(u32 size_bytes, u32 alignment, u32 element_reserve_count = 100);
 
   // returns true if success
   bool reserve(u32 size_bytes);
@@ -99,6 +117,7 @@ class FreeListAllocator {
   [[nodiscard]] u32 max_seen_active_allocs() const { return max_seen_active_allocs_; }
 
  private:
+  u32 size_{};
   u32 alignment_{0};
   u32 num_active_allocs_{0};
   u32 max_seen_active_allocs_{0};

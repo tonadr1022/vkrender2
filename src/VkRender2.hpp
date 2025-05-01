@@ -71,7 +71,7 @@ struct LinearStagingBuffer {
 };
 
 struct FreeListBuffer {
-  vk2::Holder<vk2::BufferHandle> buffer;
+  Holder<BufferHandle> buffer;
   util::FreeListAllocator allocator;
   [[nodiscard]] vk2::Buffer* get_buffer() const { return vk2::get_device().get_buffer(buffer); }
 };
@@ -87,7 +87,7 @@ struct VkRender2 final : public BaseRenderer {
   explicit VkRender2(const InitInfo& info);
   ~VkRender2() override;
 
-  SceneHandle load_scene(const std::filesystem::path& path, bool dynamic = false,
+  SceneHandle load_model(const std::filesystem::path& path, bool dynamic = false,
                          const mat4& transform = mat4{1});
   void submit_static(SceneHandle scene, mat4 transform = mat4{1});
 
@@ -96,6 +96,7 @@ struct VkRender2 final : public BaseRenderer {
   void immediate_submit(std::function<void(CmdEncoder& cmd)>&& function);
   void transfer_submit(std::function<void(VkCommandBuffer cmd, VkFence fence,
                                           std::queue<InFlightResource<vk2::Buffer*>>&)>&& function);
+  void enqueue_transfer();
   [[nodiscard]] const QueueFamilies& get_queues() const { return queues_; }
   void set_env_map(const std::filesystem::path& path);
   void bind_bindless_descriptors(CmdEncoder& ctx);
@@ -130,7 +131,7 @@ struct VkRender2 final : public BaseRenderer {
  private:
   struct FrameData {
     std::optional<vk2::Buffer> scene_uniform_buf;
-    vk2::Holder<vk2::BufferHandle> line_draw_buf;
+    Holder<BufferHandle> line_draw_buf;
     // vk2::Holder<vk2::BufferHandle> draw_cnt_buf;
     // vk2::Holder<vk2::BufferHandle> final_draw_cmd_buf;
   };
@@ -167,14 +168,11 @@ struct VkRender2 final : public BaseRenderer {
     u64 alloc(u64 size) { return allocator.alloc(size); }
   };
 
-  u64 draw_cnt_{};
-  u64 obj_data_cnt_{};
   struct DrawStats {
     u64 total_vertices;
     u64 total_indices;
     u32 vertices;
     u32 indices;
-    u32 draw_cmds;
     u32 textures;
     u32 materials;
   };
@@ -195,8 +193,8 @@ struct VkRender2 final : public BaseRenderer {
     struct DrawPass {
       explicit DrawPass(std::string name, u32 count);
       std::string name;
-      vk2::Holder<vk2::BufferHandle> out_draw_cmds_buf[max_frames_in_flight];
-      [[nodiscard]] vk2::BufferHandle get_frame_out_draw_cmd_buf_handle() const;
+      Holder<BufferHandle> out_draw_cmds_buf[max_frames_in_flight];
+      [[nodiscard]] BufferHandle get_frame_out_draw_cmd_buf_handle() const;
       [[nodiscard]] vk2::Buffer* get_frame_out_draw_cmd_buf() const;
       bool enabled{true};
     };
@@ -208,12 +206,8 @@ struct VkRender2 final : public BaseRenderer {
 
     [[nodiscard]] const std::string& get_name() const { return name_; }
     [[nodiscard]] u32 get_num_draw_cmds() const { return num_draw_cmds_; }
-    [[nodiscard]] vk2::BufferHandle get_draw_info_buf_handle() const;
-    // [[nodiscard]] vk2::BufferHandle get_frame_output_buf_handle() const;
-    // [[nodiscard]] vk2::BufferHandle get_frame_unculled_output_buf_handle() const;
+    [[nodiscard]] BufferHandle get_draw_info_buf_handle() const;
     [[nodiscard]] vk2::Buffer* get_draw_info_buf() const;
-    // [[nodiscard]] vk2::Buffer* get_frame_output_buf() const;
-    // [[nodiscard]] vk2::Buffer* get_frame_unculled_output_buf() const;
 
     bool draw_enabled{true};
     [[nodiscard]] bool should_draw() const { return draw_enabled && get_num_draw_cmds() > 0; }
@@ -225,30 +219,75 @@ struct VkRender2 final : public BaseRenderer {
     std::string name_;
     Pool<Handle, Alloc> allocs_;
     FreeListBuffer draw_cmds_buf_;
-    // vk2::Holder<vk2::BufferHandle>
-    //     out_draw_cmds_buf_unculled_[max_frames_in_flight];  // [draw
-    // cnt][VkDrawIndexedIndirectCommand[]]
-    // vk2::Holder<vk2::BufferHandle>
-    //     out_draw_cmds_buf_[max_frames_in_flight];  // [draw cnt][VkDrawIndexedIndirectCommand[]]
     u32 num_draw_cmds_{};
   };
 
-  struct StaticSceneGPUResources {
+  struct StaticModelGPUResources {
+    StaticModelGPUResources() = default;
+    StaticModelGPUResources(SceneLoadData scene_graph_data,
+                            std::vector<gfx::PrimitiveDrawInfo> mesh_draw_infos,
+                            util::FreeListAllocator::Slot materials_slot,
+                            util::FreeListAllocator::Slot vertices_slot,
+                            util::FreeListAllocator::Slot indices_slot,
+                            std::vector<Holder<ImageHandle>> textures, u64 first_vertex,
+                            u64 first_index, u64 num_vertices, u64 num_indices, std::string name,
+                            u32 ref_count)
+        : scene_graph_data(std::move(scene_graph_data)),
+          mesh_draw_infos(std::move(mesh_draw_infos)),
+          materials_slot(std::move(materials_slot)),
+          vertices_slot(std::move(vertices_slot)),
+          indices_slot(std::move(indices_slot)),
+          textures(std::move(textures)),
+          first_vertex(first_vertex),
+          first_index(first_index),
+          num_vertices(num_vertices),
+          num_indices(num_indices),
+          name(std::move(name)),
+          ref_count(ref_count) {}
+    StaticModelGPUResources(const StaticModelGPUResources&) = delete;
+    StaticModelGPUResources(StaticModelGPUResources&&) = default;
+    StaticModelGPUResources& operator=(const StaticModelGPUResources&) = delete;
+    StaticModelGPUResources& operator=(StaticModelGPUResources&&) = default;
+    ~StaticModelGPUResources();
+
     SceneLoadData scene_graph_data;
-    std::vector<gfx::Material> materials;
     std::vector<gfx::PrimitiveDrawInfo> mesh_draw_infos;
-    std::vector<util::SlotAllocator<gfx::ObjectData>::Slot> object_data_slots;
+    util::FreeListAllocator::Slot materials_slot;
+    util::FreeListAllocator::Slot vertices_slot;
+    util::FreeListAllocator::Slot indices_slot;
+    std::vector<Holder<ImageHandle>> textures;
+    u64 first_vertex;
+    u64 first_index;
+    u64 num_vertices;
+    u64 num_indices;
+    std::string name;
+    u32 ref_count;
+  };
+
+  using StaticModelGPUResourcesHandle = GenerationalHandle<StaticModelGPUResources>;
+  Pool<StaticModelGPUResourcesHandle, StaticModelGPUResources> static_models_pool_;
+  std::unordered_map<std::string, StaticModelGPUResourcesHandle> static_model_name_to_handle_;
+
+  struct StaticModelInstanceResources {
+    std::vector<ObjectData> object_datas;
     StaticMeshDrawManager::Handle opaque_draws_handle;
     StaticMeshDrawManager::Handle opaque_alpha_draws_handle;
     StaticMeshDrawManager::Handle transparent_draws_handle;
     util::FreeListAllocator::Slot instance_data_slot;
     util::FreeListAllocator::Slot object_data_slot;
-    u64 first_vertex;
-    u64 first_index;
-    u64 num_vertices;
-    u64 num_indices;
-    u64 materials_idx_offset;
+    StaticModelGPUResourcesHandle model_resources_handle;
+    // owned by gpu resource
+    const char* name;
   };
+
+  std::vector<StaticModelInstanceResources> to_delete_static_model_instances_;
+  using StaticModelInstanceResourcesHandle = GenerationalHandle<StaticModelInstanceResources>;
+  Pool<StaticModelInstanceResourcesHandle, StaticModelInstanceResources>
+      static_model_instance_pool_;
+  std::vector<StaticModelInstanceResourcesHandle> loaded_model_instance_resources_;
+  void free(StaticModelInstanceResources& instance);
+  void free(CmdEncoder& cmd, StaticModelInstanceResources& instance);
+
   struct GPUDrawInfo {
     u32 index_cnt;
     u32 first_index;
@@ -256,14 +295,12 @@ struct VkRender2 final : public BaseRenderer {
     u32 instance_id;
   };
 
-  std::unordered_map<std::string, StaticSceneGPUResources> static_scenes_;
-
   gfx::RenderGraph rg_;
   DrawStats static_draw_stats_{};
 
   struct StaticGPUDrawData {
-    vk2::Holder<vk2::BufferHandle> output_draw_cmd_buf[max_frames_in_flight];
-    vk2::Holder<vk2::BufferHandle> alpha_mask_output_draw_cmd_buf[max_frames_in_flight];
+    Holder<BufferHandle> output_draw_cmd_buf[max_frames_in_flight];
+    Holder<BufferHandle> alpha_mask_output_draw_cmd_buf[max_frames_in_flight];
   };
 
   std::optional<StaticMeshDrawManager> static_opaque_draw_mgr_;
@@ -275,25 +312,19 @@ struct VkRender2 final : public BaseRenderer {
 
   bool should_draw(const StaticMeshDrawManager& mgr) const;
 
-  // StaticGPUDrawData unculled_draw_data_;
-  // StaticGPUDrawData main_culled_draw_data_;
-
   void execute_static_geo_draws(CmdEncoder& cmd);
   void execute_draw(CmdEncoder& cmd, const vk2::Buffer& buffer, u32 draw_count) const;
 
-  // void draw_opaque(CmdEncoder& cmd, const StaticGPUDrawData& draw_buf);
-
  public:
-  // TODO: remove this this is awful
-  std::optional<LinearBuffer> static_vertex_buf_;
+  // TODO: refactor IBL so it doesn't need this to draw a cube (needs this for push constants)
+  FreeListBuffer static_vertex_buf_;
 
  private:
-  std::optional<LinearBuffer> static_index_buf_;
+  FreeListBuffer static_index_buf_;
   FreeListBuffer static_instance_data_buf_;
   FreeListBuffer static_object_data_buf_;
-  std::optional<LinearBuffer> static_materials_buf_;
+  FreeListBuffer static_materials_buf_;
 
-  std::vector<vk2::Image> static_textures_;
   AABB scene_aabb_{};
 
   StateTracker state_;
@@ -333,6 +364,7 @@ struct VkRender2 final : public BaseRenderer {
   Format depth_img_format_{Format::D32Sfloat};
   // TODO: make more robust settings
   bool deferred_enabled_{true};
+  bool draw_debug_aabbs_{false};
   VkPipelineLayout default_pipeline_layout_{};
   std::queue<InFlightResource<vk2::Buffer*>> pending_buffer_transfers_;
 
@@ -355,12 +387,11 @@ struct VkRender2 final : public BaseRenderer {
   void make_cubemap_views_all_mips(const vk2::Image& texture,
                                    std::vector<std::optional<vk2::ImageView>>& views);
   void generate_mipmaps(StateTracker& state, VkCommandBuffer cmd, vk2::Image& tex);
-  u64 cube_vertices_gpu_offset_{};
-  // u64 cube_indices_gpu_offset_{};
+  util::FreeListAllocator::Slot cube_vertices_slot_;
 
   void add_rendering_passes(RenderGraph& rg);
-  void copy_buffer(VkCommandBuffer cmd, vk2::BufferHandle src, vk2::BufferHandle dst,
-                   size_t src_offset, size_t dst_offset, size_t size);
+  void copy_buffer(VkCommandBuffer cmd, BufferHandle src, BufferHandle dst, size_t src_offset,
+                   size_t dst_offset, size_t size);
   void copy_buffer(VkCommandBuffer cmd, vk2::Buffer* src, vk2::Buffer* dst, size_t src_offset,
                    size_t dst_offset, size_t size);
   AttachmentInfo swapchain_att_info_;
@@ -384,9 +415,9 @@ struct VkRender2 final : public BaseRenderer {
   };
   std::vector<LineVertex> line_draw_vertices_;
   void draw_skybox(CmdEncoder& cmd);
-  void draw_cube(VkCommandBuffer cmd) const;
 
  public:
+  void draw_cube(VkCommandBuffer cmd) const;
   std::optional<vk2::Image> load_hdr_img(CmdEncoder& ctx, const std::filesystem::path& path,
                                          bool flip = false);
   void generate_mipmaps(CmdEncoder& ctx, vk2::Image& tex);
@@ -411,6 +442,9 @@ struct VkRender2 final : public BaseRenderer {
    */
   void draw_plane(const vec3& o, const vec3& v1, const vec3& v2, float s1, float s2, u32 n1 = 1,
                   u32 n2 = 1, const vec4& color = vec4{1.f}, const vec4& outline_color = vec4{1.f});
+
+  void draw_box(const mat4& model, const vec3& size, const vec4& color = vec4{1.f});
+  void draw_box(const mat4& model, const AABB& aabb, const vec4& color = vec4{1.f});
 };
 
 }  // namespace gfx

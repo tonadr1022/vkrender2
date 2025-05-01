@@ -40,10 +40,10 @@ void FreeListAllocator::init(u32 size_bytes, u32 alignment, u32 element_reserve_
 
   // create one large free block
   Slot empty_alloc{};
-  empty_alloc.size = size_bytes;
-  empty_alloc.offset = 0;
+  empty_alloc.size_ = size_bytes;
+  empty_alloc.offset_ = 0;
   empty_alloc.mark_free();
-  allocs_.push_back(empty_alloc);
+  allocs_.push_back(std::move(empty_alloc));
 }
 bool FreeListAllocator::reserve(u32 size_bytes) {
   // top bit in the offset is reserved
@@ -53,16 +53,13 @@ bool FreeListAllocator::reserve(u32 size_bytes) {
   if (size_bytes <= capacity_) {
     return true;
   }
-  Slot empty_alloc{.offset = capacity_, .size = size_bytes - capacity_};
-  empty_alloc.mark_free();
-  allocs_.emplace_back(empty_alloc);
+  allocs_.emplace_back(Slot{capacity_, size_bytes - capacity_});
   coalesce(--allocs_.end());
   LINFO("reserving space: old cap {}, new cap {}", capacity_, size_bytes);
   capacity_ = size_bytes;
   return true;
 }
 FreeListAllocator::Slot FreeListAllocator::allocate(u32 size_bytes) {
-  LINFO("size req: {} capacity: {}", size_bytes, capacity_);
   // align the size
   size_bytes += (alignment_ - (size_bytes % alignment_)) % alignment_;
   auto smallest_free_alloc = allocs_.end();
@@ -70,9 +67,10 @@ FreeListAllocator::Slot FreeListAllocator::allocate(u32 size_bytes) {
     // find the smallest free allocation that is large enough
     for (auto it = allocs_.begin(); it != allocs_.end(); it++) {
       // adequate if free and size fits
-      if (it->is_free() && it->size >= size_bytes) {
+      if (it->is_free() && it->get_size() >= size_bytes) {
         // if it's the first or it's smaller, set it to the new smallest free alloc
-        if (smallest_free_alloc == allocs_.end() || it->size < smallest_free_alloc->size) {
+        if (smallest_free_alloc == allocs_.end() ||
+            it->get_size() < smallest_free_alloc->get_size()) {
           smallest_free_alloc = it;
         }
       }
@@ -89,27 +87,31 @@ FreeListAllocator::Slot FreeListAllocator::allocate(u32 size_bytes) {
 
   u32 real_offset = smallest_free_alloc->get_offset();
 
-  Slot new_alloc{};
-  new_alloc.offset = real_offset;
-  new_alloc.size = size_bytes;
+  Slot new_alloc{real_offset, size_bytes};
   new_alloc.mark_used();
 
   // update free allocation
-  smallest_free_alloc->size -= size_bytes;
-  smallest_free_alloc->offset = (real_offset + size_bytes) | 0x80000000;
-
-  if (smallest_free_alloc->size == 0) {
-    *smallest_free_alloc = new_alloc;
-  } else {
-    allocs_.insert(smallest_free_alloc, new_alloc);
-  }
+  smallest_free_alloc->size_ -= size_bytes;
+  smallest_free_alloc->offset_ = (real_offset + size_bytes) | 0x80000000;
 
   ++num_active_allocs_;
   max_seen_active_allocs_ = std::max<u32>(max_seen_active_allocs_, num_active_allocs_);
-  return new_alloc;
+  size_ += size_bytes;
+
+  if (smallest_free_alloc->size_ == 0) {
+    *smallest_free_alloc = std::move(new_alloc);
+    Slot s{smallest_free_alloc->get_offset(), smallest_free_alloc->size_};
+    s.mark_used();
+    return s;
+  }
+  auto res = allocs_.insert(smallest_free_alloc, std::move(new_alloc));
+  Slot s{res->get_offset(), res->size_};
+  s.mark_used();
+  return s;
 }
+
 u32 FreeListAllocator::free(Slot slot) {
-  if (slot.size == 0) return 0;
+  if (slot.size_ == 0) return 0;
   auto it = allocs_.end();
   u32 real_offset = slot.get_offset();
 
@@ -118,11 +120,12 @@ u32 FreeListAllocator::free(Slot slot) {
   }
 
   if (it == allocs_.end()) {
-    LINFO("alloc not found offset: {} size: {}", real_offset, slot.size);
+    LINFO("alloc not found offset: {} size: {}", real_offset, slot.size_);
     return 0;
   }
 
-  u32 ret = it->size;
+  size_ -= slot.size_;
+  u32 ret = it->size_;
   it->mark_free();
   coalesce(it);
   --num_active_allocs_;
@@ -137,7 +140,7 @@ void FreeListAllocator::coalesce(Iterator& it) {
   if (it != allocs_.end() - 1) {
     auto next = it + 1;
     if (next->is_free()) {
-      it->size += next->size;
+      it->size_ += next->size_;
       remove_next = true;
     }
   }
@@ -146,7 +149,7 @@ void FreeListAllocator::coalesce(Iterator& it) {
   if (it != allocs_.begin()) {
     auto prev = it - 1;
     if (prev->is_free()) {
-      prev->size += it->size;
+      prev->size_ += it->size_;
       remove_it = true;
     }
   }
@@ -160,4 +163,14 @@ void FreeListAllocator::coalesce(Iterator& it) {
     allocs_.erase(it + 1);  // only next
   }
 }
+FreeListAllocator::Slot& FreeListAllocator::Slot::operator=(Slot&& other) noexcept {
+  if (&other != this) {
+    offset_ = other.offset_;
+    size_ = std::exchange(other.size_, 0);
+  }
+  return *this;
+}
+
+FreeListAllocator::Slot::Slot(u32 offset, u32 size) : offset_(offset | 0x80000000), size_(size) {}
+
 }  // namespace util

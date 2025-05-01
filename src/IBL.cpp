@@ -208,7 +208,6 @@ void IBL::equirect_to_cube(CmdEncoder& ctx) {
 
 void IBL::convolute_cube(CmdEncoder& ctx) {
   auto* cmd = ctx.cmd();
-
   {
     transition_image(cmd, *env_cubemap_tex_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     transition_image(cmd, *irradiance_cubemap_tex_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
@@ -226,7 +225,7 @@ void IBL::convolute_cube(CmdEncoder& ctx) {
         u32 in_tex_idx, sampler_idx, vertex_buffer_idx;
       } pc{PROJ * VIEW_MATRICES[i], env_cubemap_tex_->view().sampled_img_resource().handle,
            SamplerCache::get().get_linear_sampler().resource_info.handle,
-           VkRender2::get().static_vertex_buf_->buffer.resource_info_->handle};
+           VkRender2::get().static_vertex_buf_.get_buffer()->resource_info_->handle};
       ctx.push_constants(sizeof(pc), &pc);
       VkRender2::get().draw_cube(cmd);
       vkCmdEndRenderingKHR(cmd);
@@ -295,7 +294,7 @@ void IBL::prefilter_env_map(CmdEncoder& ctx) {
                      .address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
                  })
                  .resource_info.handle,
-             VkRender2::get().static_vertex_buf_->buffer.resource_info_->handle,
+             VkRender2::get().static_vertex_buf_.get_buffer()->resource_info_->handle,
              static_cast<float>(env_cubemap_tex_->extent_2d().width)};
         ctx.push_constants(sizeof(pc), &pc);
         VkRender2::get().draw_cube(cmd);

@@ -23,6 +23,7 @@
 #include "Timer.hpp"
 #include "VkRender2.hpp"
 #include "shaders/common.h.glsl"
+#include "vk2/Device.hpp"
 #include "vk2/StagingBufferPool.hpp"
 
 // #include "ThreadPool.hpp"
@@ -289,8 +290,10 @@ void update_node_transforms(std::vector<NodeData>& nodes, std::vector<u32>& root
   }
 }
 
-void load_scene_graph_data(SceneLoadData& result, fastgltf::Asset& gltf, u32 default_mat_idx) {
+void load_scene_graph_data(LoadedSceneBaseData& result, fastgltf::Asset& gltf,
+                           u32 default_mat_idx) {
   ZoneScoped;
+  auto& scene_graph_data = result.scene_graph_data;
   // aggregate nodes
   std::vector<u32> prim_offsets_of_meshes(gltf.meshes.size());
   {
@@ -300,7 +303,7 @@ void load_scene_graph_data(SceneLoadData& result, fastgltf::Asset& gltf, u32 def
       offset += gltf.meshes[mesh_idx].primitives.size();
     }
   }
-  result.node_datas.reserve(gltf.nodes.size());
+  result.scene_graph_data.node_datas.reserve(gltf.nodes.size());
   std::vector<u32> camera_node_indices;
   for (u32 node_idx = 0; node_idx < gltf.nodes.size(); node_idx++) {
     fastgltf::Node& gltf_node = gltf.nodes[node_idx];
@@ -310,10 +313,13 @@ void load_scene_graph_data(SceneLoadData& result, fastgltf::Asset& gltf, u32 def
       u32 prim_idx = 0;
       for (const auto& primitive : gltf.meshes[mesh_idx].primitives) {
         new_node.meshes.emplace_back(NodeData::MeshData{
-            .material_id = static_cast<u32>(primitive.materialIndex.value_or(default_mat_idx)),
-            .mesh_idx = prim_offsets_of_meshes[mesh_idx] + prim_idx++});
+            .mesh_idx = prim_offsets_of_meshes[mesh_idx] + prim_idx++,
+            .material_id = static_cast<u16>(primitive.materialIndex.value_or(default_mat_idx)),
+        });
+        auto& mat = result.materials[new_node.meshes.back().material_id];
+        new_node.meshes.back().pass_flags = mat.get_pass_flags();
       }
-      result.mesh_node_indices.emplace_back(node_idx);
+      result.scene_graph_data.mesh_node_indices.emplace_back(node_idx);
     }
     if (auto cam_idx = gltf_node.cameraIndex.value_or(NodeData::null_idx);
         cam_idx != NodeData::null_idx) {
@@ -321,29 +327,29 @@ void load_scene_graph_data(SceneLoadData& result, fastgltf::Asset& gltf, u32 def
     }
     new_node.name = gltf_node.name;
     set_node_transform_from_gltf_node(new_node, gltf_node);
-    result.node_datas.emplace_back(new_node);
+    result.scene_graph_data.node_datas.emplace_back(new_node);
   }
 
   // link children/parents
   for (u64 node_idx = 0; node_idx < gltf.nodes.size(); node_idx++) {
     auto& gltf_node = gltf.nodes[node_idx];
-    auto& scene_node = result.node_datas[node_idx];
+    auto& scene_node = result.scene_graph_data.node_datas[node_idx];
     scene_node.children_indices.reserve(gltf_node.children.size());
     for (auto child_idx : gltf_node.children) {
       scene_node.children_indices.emplace_back(child_idx);
-      result.node_datas[child_idx].parent_idx = node_idx;
+      result.scene_graph_data.node_datas[child_idx].parent_idx = node_idx;
     }
   }
 
   // assign root nodes
-  for (u64 node_idx = 0; node_idx < result.node_datas.size(); node_idx++) {
-    auto& node = result.node_datas[node_idx];
+  for (u64 node_idx = 0; node_idx < scene_graph_data.node_datas.size(); node_idx++) {
+    auto& node = scene_graph_data.node_datas[node_idx];
     if (node.parent_idx == NodeData::null_idx) {
-      result.root_node_indices.emplace_back(node_idx);
+      scene_graph_data.root_node_indices.emplace_back(node_idx);
     }
   }
-  update_node_transforms(result.node_datas, result.root_node_indices);
-  for (u32 i = 0; i < result.node_datas.size(); i++) {
+  update_node_transforms(scene_graph_data.node_datas, scene_graph_data.root_node_indices);
+  for (u32 i = 0; i < scene_graph_data.node_datas.size(); i++) {
     // result.node_datas[i].meshes
     // result.node_mesh_bounds[i]
   }
@@ -622,8 +628,12 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
                           .img_idx = static_cast<u32>(result->textures.size())});
         staging_offset += size;
       }
-      result->textures.emplace_back(vk2::create_texture_2d_mip(
-          img.format, {img.w, img.h, 1}, vk2::ImageUsage::ReadOnly, ktx->numLevels));
+      result->textures.emplace_back(vk2::get_device().create_image_holder(
+          vk2::ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
+                               .format = img.format,
+                               .extent = VkExtent3D{img.w, img.h, 1},
+                               .mip_levels = ktx->numLevels,
+                               .usage = vk2::ImageUsage::ReadOnly}));
 
       assert(tot == ktx->dataSize);
       (void)tot;
@@ -639,8 +649,12 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
                         .staging_offset = staging_offset,
                         .level = 0,
                         .img_idx = static_cast<u32>(result->textures.size())});
-      result->textures.emplace_back(
-          vk2::create_texture_2d_mip(img.format, {img.w, img.h, 1}, vk2::ImageUsage::ReadOnly, 1));
+      result->textures.emplace_back(vk2::get_device().create_image_holder(
+          vk2::ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
+                               .format = img.format,
+                               .extent = VkExtent3D{img.w, img.h, 1},
+                               .mip_levels = 1,
+                               .usage = vk2::ImageUsage::ReadOnly}));
       staging_offset += size;
     }
   }
@@ -667,57 +681,59 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
         }
       }
       futures.clear();
-      VkRender2::get().transfer_submit(
-          [start_copy_idx, end_copy_idx = img_i - 1, &img_upload_infos, &result, &state,
-           curr_staging_offset, &img_staging_buf,
-           batch_upload_size](VkCommandBuffer cmd, VkFence fence,
-                              std::queue<InFlightResource<vk2::Buffer*>>& transfers) {
-            state.reset(cmd);
-            for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
-              const auto& img_upload = img_upload_infos[i];
-              state.transition(result->textures[img_upload.img_idx].image(),
-                               VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-            }
-            state.flush_barriers();
+      VkRender2::get().transfer_submit([start_copy_idx, end_copy_idx = img_i - 1, &img_upload_infos,
+                                        &result, &state, curr_staging_offset, &img_staging_buf,
+                                        batch_upload_size](
+                                           VkCommandBuffer cmd, VkFence fence,
+                                           std::queue<InFlightResource<vk2::Buffer*>>& transfers) {
+        state.reset(cmd);
+        for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
+          const auto& img_upload = img_upload_infos[i];
+          state.transition(
+              vk2::get_device().get_image(result->textures[img_upload.img_idx])->image(),
+              VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        }
+        state.flush_barriers();
 
-            for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
-              const auto& img_upload = img_upload_infos[i];
-              const auto& texture = result->textures[img_upload.img_idx];
-              VkBufferImageCopy2 img_copy{
-                  .sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
-                  .bufferOffset = img_upload.staging_offset - curr_staging_offset,
-                  // .bufferRowLength = (img_upload.extent.x + 3) & ~3,  // Align to BC7
-                  // 4x4 blocks .bufferImageHeight = (img_upload.extent.y + 3) & ~3,
-                  .bufferRowLength = 0,
-                  .bufferImageHeight = 0,
-                  .imageSubresource =
-                      {
-                          .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                          .mipLevel = img_upload.level,
-                          .layerCount = 1,
-                      },
-                  .imageExtent = VkExtent3D{img_upload.extent.x, img_upload.extent.y, 1}};
-              VkCopyBufferToImageInfo2 img_copy_info{
-                  .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2_KHR,
-                  .srcBuffer = img_staging_buf->buffer(),
-                  .dstImage = texture.image(),
-                  .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                  .regionCount = 1,
-                  .pRegions = &img_copy,
-              };
-              vkCmdCopyBufferToImage2KHR(cmd, &img_copy_info);
-            }
-            for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
-              state.transition(result->textures[img_upload_infos[i].img_idx].image(),
-                               VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                               VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
-                               VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
-            }
-            state.flush_barriers();
-            transfers.emplace(img_staging_buf, fence);
-            img_staging_buf = vk2::StagingBufferPool::get().acquire(batch_upload_size);
-          });
+        for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
+          const auto& img_upload = img_upload_infos[i];
+          const auto& texture = *vk2::get_device().get_image(result->textures[img_upload.img_idx]);
+          VkBufferImageCopy2 img_copy{
+              .sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
+              .bufferOffset = img_upload.staging_offset - curr_staging_offset,
+              // .bufferRowLength = (img_upload.extent.x + 3) & ~3,  // Align to BC7
+              // 4x4 blocks .bufferImageHeight = (img_upload.extent.y + 3) & ~3,
+              .bufferRowLength = 0,
+              .bufferImageHeight = 0,
+              .imageSubresource =
+                  {
+                      .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                      .mipLevel = img_upload.level,
+                      .layerCount = 1,
+                  },
+              .imageExtent = VkExtent3D{img_upload.extent.x, img_upload.extent.y, 1}};
+          VkCopyBufferToImageInfo2 img_copy_info{
+              .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2_KHR,
+              .srcBuffer = img_staging_buf->buffer(),
+              .dstImage = texture.image(),
+              .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+              .regionCount = 1,
+              .pRegions = &img_copy,
+          };
+          vkCmdCopyBufferToImage2KHR(cmd, &img_copy_info);
+        }
+        for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
+          state.transition(
+              vk2::get_device().get_image(result->textures[img_upload_infos[i].img_idx])->image(),
+              VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+              VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+              VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
+        }
+        state.flush_barriers();
+        transfers.emplace(img_staging_buf, fence);
+        img_staging_buf = vk2::StagingBufferPool::get().acquire(batch_upload_size);
+      });
 
       curr_staging_offset += max_batch_upload_size;
       start_copy_idx = img_i;
@@ -778,7 +794,11 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
         const auto& tex = gltf.textures[info.textureIndex];
         auto gltf_idx = tex.basisuImageIndex.value_or(tex.imageIndex.value_or(UINT32_MAX));
         if (gltf_idx != UINT32_MAX) {
-          return result->textures[gltf_idx].view().sampled_img_resource().handle;
+          return vk2::get_device()
+              .get_image(result->textures[gltf_idx])
+              ->view()
+              .sampled_img_resource()
+              .handle;
         }
         LERROR("uh oh, no texture for gltf material");
         return default_mat.white_img_handle;
@@ -998,7 +1018,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
     }
   }
 
-  load_scene_graph_data(result->scene_graph_data, gltf, 0);
+  load_scene_graph_data(*result, gltf, 0);
 
   return result;
 }
@@ -1053,4 +1073,17 @@ void free_hdr(CPUHDRImageData& img_data) {
 }
 
 }  // namespace loader
+
+PassFlags Material::get_pass_flags() const {
+  PassFlags flags{};
+  if (ids2.w & MATERIAL_ALPHA_MODE_MASK_BIT) {
+    flags |= PassFlags_OpaqueAlpha;
+  } else if (ids2.w & MATERIAL_TRANSPARENT_BIT) {
+    flags |= PassFlags_Transparent;
+  } else {
+    flags |= PassFlags_Opaque;
+  }
+  return flags;
+}
+
 }  // namespace gfx

@@ -11,6 +11,13 @@ struct MeshBounds {
   glm::vec3 extents;
 };
 
+using PassFlags = u8;
+enum PassFlagBits : PassFlags {
+  PassFlags_Opaque = 1 << 0,
+  PassFlags_OpaqueAlpha = 1 << 1,
+  PassFlags_Transparent = 1 << 2,
+};
+
 struct NodeData {
   static constexpr u32 null_idx = UINT32_MAX;
   mat4 local_transform{mat4{1}};
@@ -20,8 +27,9 @@ struct NodeData {
   vec3 scale;
   std::vector<u64> children_indices;
   struct MeshData {
-    u32 material_id;
     u32 mesh_idx;
+    u16 material_id;
+    PassFlags pass_flags{};
   };
   std::vector<MeshData> meshes;
   std::string name;
@@ -30,7 +38,7 @@ struct NodeData {
 
 struct SceneLoadData {
   std::vector<NodeData> node_datas;
-  std::vector<MeshBounds> node_mesh_bounds;
+  // std::vector<MeshBounds> node_mesh_bounds;
   std::vector<u32> mesh_node_indices;
   std::vector<u32> root_node_indices;
 };

@@ -4,82 +4,23 @@
 #include <vulkan/vulkan_core.h>
 
 #include <span>
-#include <utility>
 
 #include "Common.hpp"
+#include "Types.hpp"
 #include "VkBootstrap.h"
 #include "vk2/Buffer.hpp"
 #include "vk2/DeletionQueue.hpp"
 #include "vk2/Pool.hpp"
 #include "vk2/Texture.hpp"
 
+template <>
+void destroy(gfx::ImageHandle data);
+template <>
+void destroy(gfx::BufferHandle data);
+template <>
+void destroy(gfx::ImageViewHandle data);
+
 namespace gfx::vk2 {
-
-class Device;  // forward declaration
-
-template <typename T>
-void destroy(T data);
-
-Device& get_device();  // forward declaration
-
-template <typename T>
-struct Holder {
-  Holder() = default;
-  explicit Holder(Device* device, T&& data) : handle(std::move(data)), device_(device) {}
-
-  Holder(const Holder& other) = delete;
-  Holder& operator=(const Holder& other) = delete;
-
-  Holder(Holder&& other) noexcept
-      : handle(std::exchange(other.handle, T{})), device_(std::exchange(other.device_, nullptr)) {}
-
-  Holder& operator=(Holder&& other) noexcept {
-    if (&other == this) {
-      return *this;
-    }
-    gfx::vk2::destroy(handle);
-    handle = std::move(std::exchange(other.handle, T{}));
-    device_ = std::exchange(other.device_, nullptr);
-    return *this;
-  }
-
-  ~Holder() { gfx::vk2::destroy(handle); }
-
-  T handle{};
-
- private:
-  Device* device_{};
-};
-
-// struct ImageView2 {
-//   ImageView2() = default;
-//   ImageView2()
-//   VkImageView view;
-//   ImageViewCreateInfo create_info;
-//   std::optional<BindlessResourceInfo> storage_image_resource_info;
-//   std::optional<BindlessResourceInfo> sampled_image_resource_info;
-// };
-
-using ImageViewHandle = GenerationalHandle<class ::gfx::vk2::ImageView>;
-// struct Image2 {
-//   explicit Image2(const ImageCreateInfo& info);
-//   Image2() = default;
-//
-//   Image2(Image2&&) noexcept;
-//   Image2& operator=(Image2&&) noexcept;
-//
-//   Image2(const Image2&) = delete;
-//   Image2& operator=(const Image2&) = delete;
-//   ~Image2();
-//   ImageCreateInfo create_info;
-//   VkImage image{};
-//   VkImageUsageFlags usage{};
-//   Holder<ImageViewHandle> default_view;
-//   VmaAllocation allocation{};
-// };
-
-using ImageHandle = GenerationalHandle<class ::gfx::vk2::Image>;
-using BufferHandle = GenerationalHandle<class ::gfx::vk2::Buffer>;
 
 class Device {
  public:
@@ -120,10 +61,8 @@ class Device {
   Pool<BufferHandle, Buffer> buffer_pool_;
 
   // TODO: better args
-  BufferHandle create_buffer(const BufferCreateInfo& info) { return buffer_pool_.alloc(info); }
-  Holder<BufferHandle> create_buffer_holder(const BufferCreateInfo& info) {
-    return Holder<BufferHandle>{this, buffer_pool_.alloc(info)};
-  }
+  BufferHandle create_buffer(const BufferCreateInfo& info);
+  Holder<BufferHandle> create_buffer_holder(const BufferCreateInfo& info);
   ImageViewHandle create_image_view(const Image& image, const ImageViewCreateInfo& info);
   ImageHandle create_image(const ImageCreateInfo& info);
   Holder<ImageHandle> create_image_holder(const ImageCreateInfo& info);
@@ -158,9 +97,6 @@ class Device {
   VmaAllocator allocator_;
 };
 
-template <typename T>
-void destroy(T data) {
-  get_device().destroy(data);
-}
+Device& get_device();  // forward declaration
 
 }  // namespace gfx::vk2

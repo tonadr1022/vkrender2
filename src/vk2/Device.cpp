@@ -12,6 +12,22 @@
 #include "VkCommon.hpp"
 #include "imgui.h"
 
+template <>
+void destroy(gfx::ImageHandle data) {
+  gfx::vk2::get_device().destroy(data);
+}
+
+template <>
+void destroy(gfx::BufferHandle data) {
+  gfx::vk2::get_device().destroy(data);
+}
+
+template <>
+void destroy(gfx::ImageViewHandle data) {
+  gfx::vk2::get_device().destroy(data);
+}
+namespace gfx {}  // namespace gfx
+
 namespace gfx::vk2 {
 namespace {
 Device* g_device{};
@@ -253,11 +269,11 @@ void Device::destroy(ImageViewHandle handle) { img_view_pool_.destroy(handle); }
 void Device::destroy(BufferHandle handle) { buffer_pool_.destroy(handle); }
 
 Holder<ImageHandle> Device::create_image_holder(const ImageCreateInfo& info) {
-  return Holder<ImageHandle>{this, create_image(info)};
+  return Holder<ImageHandle>{create_image(info)};
 }
 Holder<ImageViewHandle> Device::create_image_view_holder(const Image& image,
                                                          const ImageViewCreateInfo& info) {
-  return Holder<ImageViewHandle>{this, create_image_view(image, info)};
+  return Holder<ImageViewHandle>{create_image_view(image, info)};
 }
 
 void Device::destroy_resources() {
@@ -276,4 +292,10 @@ void Device::on_imgui() const {
   pool_stats("Buffers", buffer_pool_);
 }
 
+Holder<BufferHandle> Device::create_buffer_holder(const BufferCreateInfo& info) {
+  return Holder<BufferHandle>{buffer_pool_.alloc(info)};
+}
+BufferHandle Device::create_buffer(const BufferCreateInfo& info) {
+  return buffer_pool_.alloc(info);
+}
 }  // namespace gfx::vk2

@@ -4,8 +4,8 @@
 
 #include "CommandEncoder.hpp"
 #include "Types.hpp"
-#include "vk2/Device.hpp"
 #include "vk2/PipelineManager.hpp"
+#include "vk2/Pool.hpp"
 #include "vk2/SamplerCache.hpp"
 #include "vk2/Texture.hpp"
 
@@ -43,14 +43,14 @@ class CSM {
   void on_imgui();
 
   // [[nodiscard]] const vk2::Image& get_debug_img() const { return shadow_map_debug_img_; }
-  [[nodiscard]] vk2::BufferHandle get_shadow_data_buffer(u32 frame_num) const {
+  [[nodiscard]] BufferHandle get_shadow_data_buffer(u32 frame_num) const {
     return shadow_data_bufs_[frame_num % shadow_data_bufs_.size()].handle;
   }
   [[nodiscard]] const AttachmentInfo& get_shadow_map_att_info() const {
     return shadow_map_img_att_info_;
   }
 
-  [[nodiscard]] vk2::ImageHandle get_shadow_map_img() const { return shadow_map_img_; }
+  [[nodiscard]] ImageHandle get_shadow_map_img() const { return shadow_map_img_; }
 
   [[nodiscard]] u32 get_num_cascade_levels() const { return cascade_count_; }
   void imgui_pass(CmdEncoder& cmd, const vk2::Sampler& sampler, const vk2::Image& tex);
@@ -61,7 +61,7 @@ class CSM {
   [[nodiscard]] const LightMatrixArray& get_light_matrices() const { return light_matrices_; }
 
  private:
-  vk2::ImageHandle shadow_map_img_;
+  ImageHandle shadow_map_img_;
   ShadowData data_{};
   std::array<mat4, max_cascade_levels> light_proj_matrices_;
   DrawFunc draw_fn_;
@@ -72,15 +72,15 @@ class CSM {
   vk2::PipelineHandle depth_debug_pipeline_;
   uvec2 shadow_map_res_{};
   u32 cascade_count_{4};
-  std::array<vk2::Holder<vk2::BufferHandle>, 2> shadow_data_bufs_;
+  std::array<Holder<BufferHandle>, 2> shadow_data_bufs_;
   Format debug_shadow_img_format_{Format::R16G16B16A16Sfloat};
 
   VkDescriptorSet imgui_set_{};
   VkImage curr_debug_img_{};
   uvec2 curr_debug_img_size_{};
   LightMatrixArray light_matrices_;
-  vk2::ImageHandle curr_shadow_map_img_;
-  std::array<vk2::Holder<vk2::ImageViewHandle>, max_cascade_levels> shadow_map_img_views_;
+  ImageHandle curr_shadow_map_img_;
+  std::array<Holder<ImageViewHandle>, max_cascade_levels> shadow_map_img_views_;
   BaseRenderer* renderer_{};
   i32 debug_cascade_idx_{0};
   float shadow_z_near_{.1};
