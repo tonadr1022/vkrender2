@@ -27,6 +27,7 @@
 #include "shaders/debug/basic_common.h.glsl"
 #include "shaders/gbuffer/gbuffer_common.h.glsl"
 #include "shaders/gbuffer/shade_common.h.glsl"
+#include "shaders/lines/draw_line_common.h.glsl"
 #include "shaders/shadow_depth_common.h.glsl"
 #include "util/CVar.hpp"
 #include "util/IndexAllocator.hpp"
@@ -209,10 +210,10 @@ VkRender2::VkRender2(const InitInfo& info)
                                        .usage = BufferUsage_Storage,
                                        .flags = vk2::BufferCreateFlags_HostVisible}};
 
-      // d.line_buffer = get_device().create_buffer_holder(
-      //     BufferCreateInfo2{.size = sizeof(Line) * 1000,
-      //                       .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-      //                       .storage = vk2::BufferStorage_HostVisible});
+      d.line_draw_buf = get_device().create_buffer_holder(
+          BufferCreateInfo{.size = sizeof(LineVertex) * 1000,
+                           .usage = BufferUsage_Storage,
+                           .flags = BufferCreateFlags_HostVisible});
     }
   }
 
@@ -478,6 +479,8 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
                                              std::span(wait_semaphores.data(), next_wait_sem_idx),
                                              SPAN1(signal_info));
   VK_CHECK(vkQueueSubmit2KHR(queues_.graphics_queue, 1, &submit, curr_frame().render_fence));
+
+  line_draw_vertices_.clear();
 }
 
 void VkRender2::on_imgui() {
@@ -918,6 +921,15 @@ void VkRender2::init_pipelines() {
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
   });
   deferred_shade_pipeline_ = PipelineManager::get().load_compute_pipeline({"gbuffer/shade.comp"});
+  line_draw_pipeline_ = PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
+      .vertex_path = "lines/draw_line.vert",
+      .fragment_path = "lines/draw_line.frag",
+      .topology = PrimitiveTopology::LineList,
+      .rendering = {.color_formats = {swapchain_.format},
+                    .depth_format = to_vkformat(depth_img_format_)},
+      .rasterization = {.cull_mode = CullMode::None},
+      .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(false, CompareOp::GreaterOrEqual),
+  });
 }
 
 std::optional<vk2::Image> VkRender2::load_hdr_img(CmdEncoder& ctx,
@@ -1113,9 +1125,6 @@ void VkRender2::generate_mipmaps(CmdEncoder& ctx, vk2::Image& tex) {
   }
   transition_image(cmd, tex, VK_IMAGE_LAYOUT_GENERAL);
 }
-void VkRender2::draw_cube(VkCommandBuffer cmd) const {
-  vkCmdDraw(cmd, 36, 1, cube_vertices_gpu_offset_ / sizeof(gfx::Vertex), 0);
-}
 
 void VkRender2::add_rendering_passes(RenderGraph& rg) {
   ZoneScoped;
@@ -1293,27 +1302,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
       cmd.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
       PipelineManager::get().bind_graphics(cmd.cmd(), draw_pipeline_);
       execute_static_geo_draws(cmd);
-
-      {
-        PipelineManager::get().bind_graphics(cmd.cmd(), skybox_pipeline_);
-        u32 skybox_handle{};
-        if (render_prefilter_mip_skybox_) {
-          assert(ibl_->prefiltered_env_tex_views_.size() > (size_t)prefilter_mip_skybox_level_);
-          skybox_handle = ibl_->prefiltered_env_tex_views_[prefilter_mip_skybox_level_]
-                              ->sampled_img_resource()
-                              .handle;
-        } else {
-          skybox_handle = convoluted_skybox.get()
-                              ? ibl_->irradiance_cubemap_tex_->view().sampled_img_resource().handle
-                              : ibl_->env_cubemap_tex_->view().sampled_img_resource().handle;
-        }
-        struct {
-          u32 scene_buffer, tex_idx, sampler_idx;
-        } pc{curr_frame_2().scene_uniform_buf->resource_info_->handle, skybox_handle,
-             linear_sampler_->resource_info.handle};
-        cmd.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-        vkCmdDraw(cmd.cmd(), 36, 1, 0, 0);
-      }
+      draw_skybox(cmd);
       vkCmdEndRenderingKHR(cmd.cmd());
     });
   } else {
@@ -1458,25 +1447,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
         vkCmdBeginRenderingKHR(cmd.cmd(), &render_info);
         set_viewport_and_scissor(cmd.cmd(), render_extent);
 
-        PipelineManager::get().bind_graphics(cmd.cmd(), skybox_pipeline_);
-        u32 skybox_handle{};
-        if (render_prefilter_mip_skybox_) {
-          assert(ibl_->prefiltered_env_tex_views_.size() > (size_t)prefilter_mip_skybox_level_);
-          skybox_handle = ibl_->prefiltered_env_tex_views_[prefilter_mip_skybox_level_]
-                              ->sampled_img_resource()
-                              .handle;
-        } else {
-          skybox_handle = convoluted_skybox.get()
-                              ? ibl_->irradiance_cubemap_tex_->view().sampled_img_resource().handle
-                              : ibl_->env_cubemap_tex_->view().sampled_img_resource().handle;
-        }
-        struct {
-          u32 scene_buffer, tex_idx, sampler_idx;
-        } pc{curr_frame_2().scene_uniform_buf->resource_info_->handle, skybox_handle,
-             linear_sampler_->resource_info.handle};
-        cmd.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-        vkCmdDraw(cmd.cmd(), 36, 1, 0, 0);
-
+        draw_skybox(cmd);
         vkCmdEndRenderingKHR(cmd.cmd());
       });
     }
@@ -1512,14 +1483,31 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
       }
     });
   }
+
+  if (line_draw_vertices_.size()) {
+    vk2::Buffer* line_draw_buf = get_device().get_buffer(curr_frame_2().line_draw_buf);
+    assert(line_draw_buf);
+    size_t required_size = line_draw_vertices_.size() * sizeof(LineVertex);
+    if (required_size > line_draw_buf->size()) {
+      curr_frame_2().line_draw_buf = get_device().create_buffer_holder(
+          BufferCreateInfo{.size = glm::max(line_draw_buf->size() * 2, required_size),
+                           .usage = BufferUsage_Storage,
+                           .flags = BufferCreateFlags_HostVisible});
+      line_draw_buf = get_device().get_buffer(curr_frame_2().line_draw_buf);
+    }
+    memcpy(line_draw_buf->mapped_data(), line_draw_vertices_.data(), required_size);
+  }
+
   if (draw_imgui) {
-    auto& imgui_p = rg.add_pass("imgui");
+    auto& imgui_p = rg.add_pass("ui");
     RenderResourceHandle csm_debug_img_handle{UINT32_MAX};
     if (csm_enabled.get() && csm_->get_debug_render_enabled()) {
       csm_debug_img_handle = imgui_p.add("shadow_map_debug_img", Access::FragmentRead);
     }
-    auto handle = imgui_p.add("final_out", swapchain_att_info_, Access::ColorRW);
-    imgui_p.set_execute_fn([this, handle, &rg, csm_debug_img_handle](CmdEncoder& cmd) {
+    auto color_handle = imgui_p.add("final_out", swapchain_att_info_, Access::ColorRW);
+    auto depth_handle = imgui_p.add("depth", Access::DepthStencilRead);
+    imgui_p.set_execute_fn([this, color_handle, &rg, csm_debug_img_handle,
+                            depth_handle](CmdEncoder& cmd) {
       TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "imgui");
       if (csm_enabled.get() && csm_->get_debug_render_enabled()) {
         assert(csm_debug_img_handle != UINT32_MAX);
@@ -1529,9 +1517,26 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
           csm_->imgui_pass(cmd, *linear_sampler_, *csm_debug_img);
         }
       }
-      auto* tex = rg.get_texture(handle);
-      render_imgui(cmd.cmd(), {tex->extent_2d().width, tex->extent_2d().height},
-                   tex->view().view());
+      auto* color_tex = rg.get_texture(color_handle);
+      auto* depth_tex = rg.get_texture(depth_handle);
+      if (line_draw_vertices_.size()) {
+        auto color_att = init::rendering_attachment_info(color_tex->view().view(),
+                                                         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        auto depth_att = init::rendering_attachment_info(depth_tex->view().view(),
+                                                         VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+        auto rendering_info = init::rendering_info(color_tex->extent_2d(), &color_att, &depth_att);
+        vkCmdBeginRenderingKHR(cmd.cmd(), &rendering_info);
+        PipelineManager::get().bind_graphics(cmd.cmd(), line_draw_pipeline_);
+        vk2::Buffer* line_draw_buf = get_device().get_buffer(curr_frame_2().line_draw_buf);
+        LinesRenderPushConstants pc{
+            .vtx = line_draw_buf->device_addr(),
+            .scene_buffer = curr_frame_2().scene_uniform_buf->device_addr()};
+        cmd.push_constants(sizeof(pc), &pc);
+        vkCmdDraw(cmd.cmd(), line_draw_vertices_.size(), 1, 0, 0);
+        vkCmdEndRenderingKHR(cmd.cmd());
+      }
+      render_imgui(cmd.cmd(), {color_tex->extent_2d().width, color_tex->extent_2d().height},
+                   color_tex->view().view());
     });
   }
 }
@@ -1713,4 +1718,60 @@ void VkRender2::copy_buffer(VkCommandBuffer cmd, vk2::BufferHandle src, vk2::Buf
   copy_buffer(cmd, get_device().get_buffer(src), get_device().get_buffer(dst), src_offset,
               dst_offset, size);
 }
+
+void VkRender2::draw_line(const vec3& p1, const vec3& p2, const vec4& color) {
+  line_draw_vertices_.emplace_back(vec4{p1, 0.}, color);
+  line_draw_vertices_.emplace_back(vec4{p2, 0.}, color);
+}
+
+void VkRender2::draw_cube(VkCommandBuffer cmd) const {
+  vkCmdDraw(cmd, 36, 1, cube_vertices_gpu_offset_ / sizeof(gfx::Vertex), 0);
+}
+
+void VkRender2::draw_skybox(CmdEncoder& cmd) {
+  PipelineManager::get().bind_graphics(cmd.cmd(), skybox_pipeline_);
+  u32 skybox_handle{};
+  if (render_prefilter_mip_skybox_) {
+    assert(ibl_->prefiltered_env_tex_views_.size() > (size_t)prefilter_mip_skybox_level_);
+    skybox_handle = ibl_->prefiltered_env_tex_views_[prefilter_mip_skybox_level_]
+                        ->sampled_img_resource()
+                        .handle;
+  } else {
+    skybox_handle = convoluted_skybox.get()
+                        ? ibl_->irradiance_cubemap_tex_->view().sampled_img_resource().handle
+                        : ibl_->env_cubemap_tex_->view().sampled_img_resource().handle;
+  }
+  struct {
+    u32 scene_buffer, tex_idx, sampler_idx;
+  } pc{curr_frame_2().scene_uniform_buf->resource_info_->handle, skybox_handle,
+       linear_sampler_->resource_info.handle};
+  cmd.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
+  vkCmdDraw(cmd.cmd(), 36, 1, 0, 0);
+}
+
+void VkRender2::draw_plane(const vec3& o, const vec3& v1, const vec3& v2, float s1, float s2,
+                           u32 n1, u32 n2, const vec4& color, const vec4& outline_color) {
+  vec3 bot_left = o - .5f * s1 * v1 - .5f * s2 * v2;
+  vec3 top_left = o - .5f * s1 * v1 + .5f * s2 * v2;
+  vec3 top_right = o + .5f * s1 * v1 + .5f * s2 * v2;
+  vec3 bot_right = o + .5f * s1 * v1 - .5f * s2 * v2;
+  draw_line(bot_left, top_left, outline_color);
+  draw_line(top_left, top_right, outline_color);
+  draw_line(top_right, bot_right, outline_color);
+  draw_line(bot_right, bot_left, outline_color);
+  // draw n1 horizontal and n2 vertical lines
+  n1++;
+  n2++;
+  for (u32 i = 1; i < n1; i++) {
+    float t = ((float)i - (float)n1 / 2.0f) * s1 / (float)n1;
+    const vec3 o1 = o + t * v1;
+    draw_line(o1 - s2 / 2.0f * v2, o1 + s2 / 2.0f * v2, color);
+  }
+  for (u32 i = 1; i < n2; i++) {
+    const float t = ((float)i - (float)n2 / 2.0f) * s2 / (float)n2;
+    const vec3 o2 = o + t * v2;
+    draw_line(o2 - s1 / 2.0f * v1, o2 + s1 / 2.0f * v1, color);
+  }
+}
+
 }  // namespace gfx

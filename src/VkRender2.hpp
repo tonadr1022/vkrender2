@@ -75,12 +75,12 @@ struct FreeListBuffer {
   util::FreeListAllocator allocator;
   [[nodiscard]] vk2::Buffer* get_buffer() const { return vk2::get_device().get_buffer(buffer); }
 };
-struct Line {
-  vec3 p1, p2;
-  vec4 color;
-};
 
 struct VkRender2 final : public BaseRenderer {
+  struct Line {
+    vec3 p1, p2;
+    vec4 color;
+  };
   static VkRender2& get();
   static void init(const InitInfo& info);
   static void shutdown();
@@ -130,7 +130,7 @@ struct VkRender2 final : public BaseRenderer {
  private:
   struct FrameData {
     std::optional<vk2::Buffer> scene_uniform_buf;
-    vk2::Holder<vk2::BufferHandle> line_buffer;
+    vk2::Holder<vk2::BufferHandle> line_draw_buf;
     // vk2::Holder<vk2::BufferHandle> draw_cnt_buf;
     // vk2::Holder<vk2::BufferHandle> final_draw_cmd_buf;
   };
@@ -325,6 +325,7 @@ struct VkRender2 final : public BaseRenderer {
   vk2::PipelineHandle postprocess_pipeline_;
   vk2::PipelineHandle gbuffer_pipeline_;
   vk2::PipelineHandle deferred_shade_pipeline_;
+  vk2::PipelineHandle line_draw_pipeline_;
   Format gbuffer_a_format_{Format::R32G32B32A32Sfloat};
   Format gbuffer_b_format_{Format::R32G32B32A32Sfloat};
   Format gbuffer_c_format_{Format::R32G32B32A32Sfloat};
@@ -377,12 +378,39 @@ struct VkRender2 final : public BaseRenderer {
   } frustum_cull_settings_;
   vec2 near_far_z_{.1, 1000.f};
 
+  struct LineVertex {
+    vec4 pos;
+    vec4 color;
+  };
+  std::vector<LineVertex> line_draw_vertices_;
+  void draw_skybox(CmdEncoder& cmd);
+  void draw_cube(VkCommandBuffer cmd) const;
+
  public:
   std::optional<vk2::Image> load_hdr_img(CmdEncoder& ctx, const std::filesystem::path& path,
                                          bool flip = false);
-  void draw_cube(VkCommandBuffer cmd) const;
   void generate_mipmaps(CmdEncoder& ctx, vk2::Image& tex);
+
+  // TODO: make resource manager load this data on startup
   [[nodiscard]] const DefaultData& get_default_data() const { return default_data_; }
+
+  void draw_line(const vec3& p1, const vec3& p2, const vec4& color);
+
+  /**
+   * @brief draws a plane
+   *
+   * @param o  origin
+   * @param v1 first vector the plane lies on
+   * @param v2 second vector the plane lies on
+   * @param s1 half length horizontal
+   * @param s2 half length vertical
+   * @param n1 num internal lines horizontal
+   * @param n2 num internal lines vertical
+   * @param color
+   * @param outline_color [TODO:parameter]
+   */
+  void draw_plane(const vec3& o, const vec3& v1, const vec3& v2, float s1, float s2, u32 n1 = 1,
+                  u32 n2 = 1, const vec4& color = vec4{1.f}, const vec4& outline_color = vec4{1.f});
 };
 
 }  // namespace gfx

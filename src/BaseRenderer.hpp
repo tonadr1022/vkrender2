@@ -110,6 +110,7 @@ class BaseRenderer {
   virtual ~BaseRenderer();
 
   void draw(const SceneDrawInfo& info);
+  void new_frame();
 
   bool draw_imgui{true};
 

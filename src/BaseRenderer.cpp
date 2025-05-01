@@ -295,10 +295,6 @@ void BaseRenderer::on_imgui() {}
 void BaseRenderer::on_update() {}
 
 void BaseRenderer::draw(const SceneDrawInfo& info) {
-  ImGui_ImplVulkan_NewFrame();
-  ImGui_ImplGlfw_NewFrame();
-  ImGui::NewFrame();
-
   if (on_gui_callback_) on_gui_callback_();
   on_imgui();
   ImGuiIO& io = ImGui::GetIO();
@@ -446,4 +442,11 @@ float BaseRenderer::aspect_ratio() const {
   auto dims = window_dims();
   return (float)dims.x / (float)dims.y;
 }
+
+void BaseRenderer::new_frame() {
+  ImGui_ImplVulkan_NewFrame();
+  ImGui_ImplGlfw_NewFrame();
+  ImGui::NewFrame();
+}
+
 }  // namespace gfx

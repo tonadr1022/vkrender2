@@ -109,6 +109,7 @@ void load_cam(Camera& cam) {
 void App::run() {
   load_cam(cam_data);
   float last_time{};
+  auto& ren = VkRender2::get();
   // VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false);
   // VkRender2::get().load_scene("/home/tony/models/Models/Sponza/glTF/Sponza.gltf", false);
   // VkRender2::get().load_scene("/users/tony/Bistro_Godot_opt.glb", false,
@@ -120,7 +121,7 @@ void App::run() {
   // VkRender2::get().load_scene(
   //     "/home/tony/models/Models/MetalRoughSpheres/glTF-Binary/MetalRoughSpheres.glb");
   // VkRender2::get().load_scene(local_models_dir / "Cube/glTF/Cube.gltf", false);
-  VkRender2::get().load_scene(local_models_dir / "sponza.glb", false);
+  // ren.load_scene(local_models_dir / "sponza.glb", false);
   // VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false);
   // VkRender2::get().load_scene(local_models_dir / "Bistro_Godot.glb", false);
   // VkRender2::get().load_scene("/home/tony/models/Models/DamagedHelmet/glTF/DamagedHelmet.gltf",
@@ -137,14 +138,22 @@ void App::run() {
     float curr_t = glfwGetTime();
     dt = curr_t - last_time;
     last_time = curr_t;
+
+    ren.new_frame();
     update(dt);
 
-    // mat4 proj = glm::perspective(glm::radians(info_.fov_degrees), aspect_ratio(), 1000.f, .1f);
+    ren.draw_line({0, 1, 0}, {0, 0, 0}, {1, 1, 1, 1});
+    int n1{3}, n2{1};
+    if (ImGui::Begin("lines")) {
+      ImGui::DragInt("n1", &n1);
+      ImGui::DragInt("n2", &n2);
+      ImGui::End();
+    }
+    ren.draw_plane({}, {0, 0, 1}, {1, 0, 1}, 1, 1, n1, n2, {1, 1, 1, 1});
     info_.view = cam_data.get_view();
-    // info_.proj = proj;
     info_.view_pos = cam_data.pos;
     info_.light_dir = glm::normalize(info_.light_dir);
-    VkRender2::get().draw(info_);
+    ren.draw(info_);
   }
 
   save_cam(cam_data);
