@@ -695,7 +695,6 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         }
         state.flush_barriers();
-
         for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
           const auto& img_upload = img_upload_infos[i];
           const auto& texture = *vk2::get_device().get_image(result->textures[img_upload.img_idx]);

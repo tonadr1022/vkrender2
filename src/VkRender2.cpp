@@ -423,6 +423,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
       FencePool::get().free(f.fence);
       pending_buffer_transfers_.pop();
     } else {
+      LINFO("NOT READ");
       break;
     }
   }
@@ -692,8 +693,7 @@ SceneHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
       static_draw_stats_.materials += res.materials.size();
       auto materials_gpu_slot = static_materials_buf_.allocator.allocate(material_data_size);
 
-      transfer_submit([&, this](VkCommandBuffer cmd, VkFence fence,
-                                std::queue<InFlightResource<vk2::Buffer*>>& transfers) {
+      immediate_submit([&, this](VkCommandBuffer cmd) {
         copy_buffer(
             cmd, *staging.get_buffer(), *get_device().get_buffer(static_materials_buf_.buffer),
             material_data_staging_offset, materials_gpu_slot.get_offset(), material_data_size);
@@ -701,21 +701,15 @@ SceneHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
                     vertices_staging_offset, vertices_gpu_slot.get_offset(), vertices_size);
         copy_buffer(cmd, *staging.get_buffer(), *static_index_buf_.get_buffer(),
                     indices_staging_offset, indices_gpu_slot.get_offset(), indices_size);
-        transfer_q_state_.reset(cmd)
-            .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
-                                   VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT,
-                                   static_vertex_buf_.get_buffer()->buffer(),
-                                   queues_.transfer_queue_idx, queues_.graphics_queue_idx)
-            .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT,
-                                   VK_ACCESS_2_INDEX_READ_BIT,
-                                   static_index_buf_.get_buffer()->buffer(),
-                                   queues_.transfer_queue_idx, queues_.graphics_queue_idx)
-            .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
-                                   VK_ACCESS_2_SHADER_READ_BIT,
-                                   static_materials_buf_.get_buffer()->buffer(),
-                                   queues_.transfer_queue_idx, queues_.graphics_queue_idx)
+        state_
+            .buffer_barrier(static_vertex_buf_.get_buffer()->buffer(),
+                            VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
+                            VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT)
+            .buffer_barrier(static_index_buf_.get_buffer()->buffer(),
+                            VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT, VK_ACCESS_2_INDEX_READ_BIT)
+            .buffer_barrier(static_materials_buf_.get_buffer()->buffer(),
+                            VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT)
             .flush_barriers();
-        transfers.emplace(staging.get_buffer(), fence);
       });
       resources_handle = static_models_pool_.alloc(
           std::move(res.scene_graph_data), std::move(res.mesh_draw_infos),
@@ -843,25 +837,23 @@ SceneHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
         staging.copy(instance_resources->object_datas.data(), obj_datas_size);
     u64 instance_datas_staging_offset = staging.copy(instance_datas.data(), instance_datas_size);
 
-    transfer_submit([&, this](VkCommandBuffer cmd, VkFence fence,
-                              std::queue<InFlightResource<vk2::Buffer*>>& transfers) {
+    immediate_submit([&, this](VkCommandBuffer cmd) {
       assert(obj_datas_size && instance_datas_size);
       // TODO: track the handles
-      transfer_q_state_.reset(cmd);
+      state_.reset(cmd);
       if (opaque_cmds_size) {
-        instance_resources->opaque_draws_handle =
-            static_opaque_draw_mgr_->add_draws(transfer_q_state_, cmd, opaque_cmds_size,
-                                               opaque_cmds_staging_offset, *staging.get_buffer());
+        instance_resources->opaque_draws_handle = static_opaque_draw_mgr_->add_draws(
+            state_, cmd, opaque_cmds_size, opaque_cmds_staging_offset, *staging.get_buffer());
       }
       if (opaque_alpha_cmds_size) {
         instance_resources->opaque_alpha_draws_handle =
-            static_opaque_alpha_mask_draw_mgr_->add_draws(
-                transfer_q_state_, cmd, opaque_alpha_cmds_size, opaque_alpha_cmds_staging_offset,
-                *staging.get_buffer());
+            static_opaque_alpha_mask_draw_mgr_->add_draws(state_, cmd, opaque_alpha_cmds_size,
+                                                          opaque_alpha_cmds_staging_offset,
+                                                          *staging.get_buffer());
       }
       if (transparent_cmds_size) {
         instance_resources->transparent_draws_handle = static_transparent_draw_mgr_->add_draws(
-            transfer_q_state_, cmd, transparent_cmds_size, transparent_cmds_staging_offset,
+            state_, cmd, transparent_cmds_size, transparent_cmds_staging_offset,
             *staging.get_buffer());
       }
       copy_buffer(cmd, *staging.get_buffer(), *static_object_data_buf_.get_buffer(),
@@ -871,18 +863,25 @@ SceneHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
                   instance_datas_staging_offset,
                   instance_resources->instance_data_slot.get_offset(), instance_datas_size);
 
-      transfer_q_state_
-          .queue_transfer_buffer(
-              state_,
+      state_
+          .buffer_barrier(
+              static_object_data_buf_.get_buffer()->buffer(),
               VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
-              VK_ACCESS_2_SHADER_READ_BIT, static_object_data_buf_.get_buffer()->buffer(),
-              queues_.transfer_queue_idx, queues_.graphics_queue_idx)
-          .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
-                                 VK_ACCESS_2_SHADER_READ_BIT,
-                                 static_instance_data_buf_.get_buffer()->buffer(),
-                                 queues_.transfer_queue_idx, queues_.graphics_queue_idx)
+              VK_ACCESS_2_SHADER_READ_BIT)
+          .buffer_barrier(static_instance_data_buf_.get_buffer()->buffer(),
+                          VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT)
           .flush_barriers();
-      transfers.emplace(staging.get_buffer(), fence);
+      // state_
+      //     .queue_transfer_buffer(
+      //         state_,
+      //         VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+      //         VK_ACCESS_2_SHADER_READ_BIT, static_object_data_buf_.get_buffer()->buffer(),
+      //         queues_.transfer_queue_idx, queues_.graphics_queue_idx)
+      //     .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+      //                            VK_ACCESS_2_SHADER_READ_BIT,
+      //                            static_instance_data_buf_.get_buffer()->buffer(),
+      //                            queues_.transfer_queue_idx, queues_.graphics_queue_idx)
+      //     .flush_barriers();
     });
 
     return {};
@@ -1674,12 +1673,10 @@ VkRender2::StaticMeshDrawManager::Handle VkRender2::StaticMeshDrawManager::add_d
     });
     VkRender2::get().copy_buffer(cmd, draw_cmds_buf, get_device().get_buffer(new_buf), 0, 0,
                                  curr_tot_draw_cmd_buf_size);
-    state.queue_transfer_buffer(
-        VkRender2::get().state_,
-        VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-        VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT,
-        get_device().get_buffer(new_buf)->buffer(), VkRender2::get().queues_.transfer_queue_idx,
-        VkRender2::get().queues_.graphics_queue_idx, 0, curr_tot_draw_cmd_buf_size);
+    state
+        .buffer_barrier(get_device().get_buffer(new_buf)->buffer(),
+                        VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
+        .flush_barriers();
     draw_cmds_buf_.buffer = std::move(new_buf);
     draw_cmds_buf = draw_cmds_buf_.get_buffer();
   }
@@ -1688,6 +1685,10 @@ VkRender2::StaticMeshDrawManager::Handle VkRender2::StaticMeshDrawManager::add_d
     LINFO("unimplemented: need to resize Static mesh draw cmd buffer");
     exit(1);
   }
+  state
+      .buffer_barrier(draw_cmds_buf->buffer(), VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                      VK_ACCESS_2_TRANSFER_WRITE_BIT)
+      .flush_barriers();
   VkBufferCopy2KHR copy = init::buffer_copy(staging_offset, a.draw_cmd_slot.get_offset(), size);
   VkCopyBufferInfo2KHR buf_copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
                                      .srcBuffer = staging.buffer(),
@@ -1695,12 +1696,12 @@ VkRender2::StaticMeshDrawManager::Handle VkRender2::StaticMeshDrawManager::add_d
                                      .regionCount = 1,
                                      .pRegions = &copy};
   vkCmdCopyBuffer2KHR(cmd, &buf_copy_info);
-  state.queue_transfer_buffer(
-      VkRender2::get().state_,
-      VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-      VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT, draw_cmds_buf->buffer(),
-      VkRender2::get().queues_.transfer_queue_idx, VkRender2::get().queues_.graphics_queue_idx,
-      a.draw_cmd_slot.get_offset(), size);
+  state
+      .buffer_barrier(
+          draw_cmds_buf->buffer(),
+          VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+          VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT)
+      .flush_barriers();
 
   num_draw_cmds_ += size / sizeof(GPUDrawInfo);
   return allocs_.alloc(std::move(a));
