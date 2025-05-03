@@ -3,6 +3,7 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan_core.h>
 
+#include <mutex>
 #include <span>
 
 #include "Common.hpp"
@@ -11,8 +12,13 @@
 #include "vk2/Buffer.hpp"
 #include "vk2/DeletionQueue.hpp"
 #include "vk2/Pool.hpp"
+#include "vk2/Swapchain.hpp"
 #include "vk2/Texture.hpp"
 
+#ifndef NDEBUG
+#define VALIDATION_LAYERS_ENABLED 1
+#define DEBUG_CALLBACK_ENABLED 1
+#endif
 template <>
 void destroy(gfx::ImageHandle data);
 template <>
@@ -20,27 +26,65 @@ void destroy(gfx::BufferHandle data);
 template <>
 void destroy(gfx::ImageViewHandle data);
 
+struct GLFWwindow;
 namespace gfx::vk2 {
+
+struct CopyAllocator {
+  struct CopyCmd {
+    VkCommandPool transfer_cmd_pool{};
+    VkCommandBuffer transfer_cmd_buf{};
+    VkFence fence{};
+    BufferHandle staging_buffer;
+    [[nodiscard]] bool is_valid() const { return transfer_cmd_buf != VK_NULL_HANDLE; }
+  };
+  CopyCmd allocate(u64 size);
+  void submit(CopyCmd cmd);
+  void destroy();
+
+ private:
+  std::mutex free_list_mtx_;
+  std::vector<CopyCmd> free_copy_cmds_;
+};
+
+enum class QueueType : u8 {
+  Graphics,
+  Compute,
+  Transfer,
+  Count,
+};
 
 class Device {
  public:
   struct CreateInfo {
-    vkb::Instance instance;
-    VkSurfaceKHR surface;
+    const char* app_name;
+    GLFWwindow* window;
+    bool vsync{true};
+  };
+  struct Queue {
+    VkQueue queue{};
+    u32 family_idx{};
   };
   static void init(const CreateInfo& info);
   static Device& get();
   static void destroy();
   void on_imgui() const;
+  void queue_submit(QueueType type, std::span<VkSubmitInfo2> submits, VkFence fence);
 
   [[nodiscard]] VkDevice device() const { return vkb_device_.device; }
-  [[nodiscard]] VkPhysicalDevice phys_device() const { return vkb_phys_device_.physical_device; }
+  [[nodiscard]] VkPhysicalDevice get_physical_device() const {
+    return vkb_phys_device_.physical_device;
+  }
   [[nodiscard]] const vkb::Device& vkb_device() const { return vkb_device_; }
 
   VkFormat get_swapchain_format();
 
+  // TODO: eradicate this
+  [[nodiscard]] VkInstance get_instance() const { return instance_; }
+  [[nodiscard]] VkSurfaceKHR get_surface() const { return surface_; }
+
+  // TODO: no resetting individual command buffers
   [[nodiscard]] VkCommandPool create_command_pool(
-      u32 queue_idx,
+      QueueType type,
       VkCommandPoolCreateFlags flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT) const;
   void create_command_buffers(VkCommandPool pool, std::span<VkCommandBuffer> buffers) const;
   [[nodiscard]] VkCommandBuffer create_command_buffer(VkCommandPool pool) const;
@@ -80,21 +124,31 @@ class Device {
   }
   Buffer* get_buffer(BufferHandle handle) { return buffer_pool_.get(handle); }
   Buffer* get_buffer(const Holder<BufferHandle>& handle) { return get_buffer(handle.handle); }
+  void init_imgui();
+
+  [[nodiscard]] const Queue& get_queue(QueueType type) const { return queues_[(u32)type]; }
+
+  constexpr u32 get_frames_in_flight() { return frames_in_flight; }
+  [[nodiscard]] AttachmentInfo get_swapchain_info() const;
+  [[nodiscard]] VkImage get_swapchain_img(u32 idx) const;
 
  private:
+  Queue queues_[(u32)QueueType::Count];
   Image make_img_impl(const ImageCreateInfo& info);
   void init_impl(const CreateInfo& info);
   void destroy_impl();
 
-  // non owning
   VkSurfaceKHR surface_;
   VkDevice device_;
-
-  // owning
+  Swapchain swapchain_;
+  GLFWwindow* window_;
+  vkb::Instance instance_;
   DeletionQueue main_del_queue_;
   vkb::PhysicalDevice vkb_phys_device_;
   vkb::Device vkb_device_;
   VmaAllocator allocator_;
+  VkDescriptorPool imgui_descriptor_pool_;
+  static constexpr u32 frames_in_flight = 2;
 };
 
 Device& get_device();  // forward declaration

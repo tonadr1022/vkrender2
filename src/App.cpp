@@ -227,41 +227,64 @@ uvec2 App::window_dims() const {
 }
 
 void App::on_imgui() {
-  ImGui::Begin("hello");
-  ImGui::Text("Frame Time: %f ms/frame, FPS: %f", dt * 1000.f, 1.f / dt);
-  ImGui::Text("Front dot L: %f", glm::dot(cam_data.front, info_.light_dir));
-  if (ImGui::TreeNodeEx("Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
-    cam.on_imgui();
-    ImGui::TreePop();
+  if (ImGui::Begin("hello")) {
+    static char filename[100];
+    static std::string err_filename;
+    static bool enter_clicked = false;
+    static bool no_file_err = false;
+    if (ImGui::InputText("Upload Model", filename, 100, ImGuiInputTextFlags_EnterReturnsTrue)) {
+      enter_clicked = true;
+      if (!std::filesystem::exists(filename)) {
+        no_file_err = true;
+        err_filename = filename;
+      } else {
+        VkRender2::get().load_model(filename);
+        no_file_err = false;
+        enter_clicked = false;
+      }
+    }
+    if (enter_clicked && no_file_err) {
+      ImGui::Text("File not found: %s", err_filename.c_str());
+    }
+
+    ImGui::Text("Frame Time: %f ms/frame, FPS: %f", dt * 1000.f, 1.f / dt);
+    ImGui::Text("Front dot L: %f", glm::dot(cam_data.front, info_.light_dir));
+    if (ImGui::TreeNodeEx("Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
+      cam.on_imgui();
+      ImGui::TreePop();
+    }
+
+    ImGui::DragFloat3("Sunlight Direction", &info_.light_dir.x, 0.01, -10.f, 10.f);
+    ImGui::DragFloat("Light Speed", &light_speed_, .01);
+    ImGui::Checkbox("Light Spin", &spin_light_);
+    if (spin_light_) {
+      light_angle_ += light_speed_;
+      light_angle_ = glm::clamp(light_angle_, .0f, 360.f);
+
+      info_.light_dir.x = std::sin(light_angle_);
+      info_.light_dir.z = std::cos(light_angle_);
+      // scene_data.light_dir =
+    }
+
+    ImGui::ColorEdit3("Sunlight Color", &info_.light_color.x, ImGuiColorEditFlags_Float);
+    ImGui::DragFloat("Ambient Intensity", &info_.ambient_intensity);
+
+    if (ImGui::Button("add sponza")) {
+      static int offset = 1;
+      VkRender2::get().load_model(local_models_dir / "sponza.glb", false,
+                                  glm::translate(mat4{1}, vec3{0, 0, offset * 40}));
+      offset++;
+    }
+    CVarSystem::get().draw_imgui_editor();
   }
-
-  ImGui::DragFloat3("Sunlight Direction", &info_.light_dir.x, 0.01, -10.f, 10.f);
-  ImGui::DragFloat("Light Speed", &light_speed_, .01);
-  ImGui::Checkbox("Light Spin", &spin_light_);
-  if (spin_light_) {
-    light_angle_ += light_speed_;
-    light_angle_ = glm::clamp(light_angle_, .0f, 360.f);
-
-    info_.light_dir.x = std::sin(light_angle_);
-    info_.light_dir.z = std::cos(light_angle_);
-    // scene_data.light_dir =
-  }
-
-  ImGui::ColorEdit3("Sunlight Color", &info_.light_color.x, ImGuiColorEditFlags_Float);
-  ImGui::DragFloat("Ambient Intensity", &info_.ambient_intensity);
-
-  if (ImGui::Button("add sponza")) {
-    static int offset = 1;
-    VkRender2::get().load_model(local_models_dir / "sponza.glb", false,
-                                glm::translate(mat4{1}, vec3{0, 0, offset * 40}));
-    offset++;
-  }
-  CVarSystem::get().draw_imgui_editor();
   ImGui::End();
 }
 
 void App::on_file_drop(int count, const char** paths) {
   for (int i = 0; i < count; i++) {
     LINFO("dropped file: {}", paths[i]);
+    if (std::filesystem::exists(paths[i])) {
+      VkRender2::get().load_model(paths[i]);
+    }
   }
 }

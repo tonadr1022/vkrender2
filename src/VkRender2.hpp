@@ -97,7 +97,6 @@ struct VkRender2 final : public BaseRenderer {
   void transfer_submit(std::function<void(VkCommandBuffer cmd, VkFence fence,
                                           std::queue<InFlightResource<vk2::Buffer*>>&)>&& function);
   void enqueue_transfer();
-  [[nodiscard]] const QueueFamilies& get_queues() const { return queues_; }
   void set_env_map(const std::filesystem::path& path);
   void bind_bindless_descriptors(CmdEncoder& ctx);
 
@@ -191,9 +190,9 @@ struct VkRender2 final : public BaseRenderer {
     };
 
     struct DrawPass {
-      explicit DrawPass(std::string name, u32 count);
+      explicit DrawPass(std::string name, u32 count, u32 frames_in_flight);
       std::string name;
-      Holder<BufferHandle> out_draw_cmds_buf[max_frames_in_flight];
+      std::vector<Holder<BufferHandle>> out_draw_cmds_buf;
       [[nodiscard]] BufferHandle get_frame_out_draw_cmd_buf_handle() const;
       [[nodiscard]] vk2::Buffer* get_frame_out_draw_cmd_buf() const;
       bool enabled{true};
@@ -298,11 +297,6 @@ struct VkRender2 final : public BaseRenderer {
   gfx::RenderGraph rg_;
   DrawStats static_draw_stats_{};
 
-  struct StaticGPUDrawData {
-    Holder<BufferHandle> output_draw_cmd_buf[max_frames_in_flight];
-    Holder<BufferHandle> alpha_mask_output_draw_cmd_buf[max_frames_in_flight];
-  };
-
   std::optional<StaticMeshDrawManager> static_opaque_draw_mgr_;
   std::optional<StaticMeshDrawManager> static_opaque_alpha_mask_draw_mgr_;
   std::optional<StaticMeshDrawManager> static_transparent_draw_mgr_;
@@ -378,6 +372,7 @@ struct VkRender2 final : public BaseRenderer {
   VmaAllocator allocator_;
   // end non owning
 
+  std::vector<std::optional<LoadedSceneData>> loaded_scenes_;
   u32 debug_mode_{DEBUG_MODE_NONE};
   const char* debug_mode_to_string(u32 mode);
   std::filesystem::path env_tex_path_;
@@ -394,7 +389,7 @@ struct VkRender2 final : public BaseRenderer {
                    size_t dst_offset, size_t size);
   void copy_buffer(VkCommandBuffer cmd, vk2::Buffer* src, vk2::Buffer* dst, size_t src_offset,
                    size_t dst_offset, size_t size);
-  AttachmentInfo swapchain_att_info_;
+  // AttachmentInfo swapchain_att_info_;
 // TODO: fix
 #ifdef __APPLE__
   bool portable_{true};

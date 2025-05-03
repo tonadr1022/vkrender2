@@ -662,7 +662,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
   assert(result->textures.size() == images.size());
   {
     ZoneScopedN("upload images");
-    constexpr size_t max_batch_upload_size = 1'000'000'000;
+    constexpr size_t max_batch_upload_size = 1024ull * 1024 * 1024;  // 1 GB
     size_t batch_upload_size = std::min(max_batch_upload_size, staging_offset);
     assert(batch_upload_size < max_batch_upload_size);
     size_t bytes_remaining = staging_offset;

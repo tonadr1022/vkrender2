@@ -1,5 +1,8 @@
 #include "Device.hpp"
 
+#include <imgui.h>
+#include <imgui_impl_glfw.h>
+#include <imgui_impl_vulkan.h>
 #include <volk.h>
 #include <vulkan/vulkan_core.h>
 
@@ -7,10 +10,35 @@
 #include <tracy/Tracy.hpp>
 
 #include "Common.hpp"
+#include "GLFW/glfw3.h"
 #include "Logger.hpp"
+#include "Types.hpp"
 #include "VkBootstrap.h"
 #include "VkCommon.hpp"
-#include "imgui.h"
+#include "vk2/VkTypes.hpp"
+
+namespace {
+
+#ifdef DEBUG_CALLBACK_ENABLED
+VKAPI_ATTR VkBool32 VKAPI_CALL
+debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+               VkDebugUtilsMessageTypeFlagsEXT messageType,
+               const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void*) {
+  const auto* ms = vkb::to_string_message_severity(messageSeverity);
+  const auto* mt = vkb::to_string_message_type(messageType);
+  if (messageType & VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT) {
+    LERROR("[{}: {}] - {}\n{}\n", ms, mt, pCallbackData->pMessageIdName, pCallbackData->pMessage);
+  } else {
+    LERROR("[{}: {}]\n{}\n", ms, mt, pCallbackData->pMessage);
+  }
+
+  // exit(1);
+  return VK_FALSE;
+}
+
+#endif
+
+}  // namespace
 
 template <>
 void destroy(gfx::ImageHandle data) {
@@ -47,8 +75,51 @@ Device& Device::get() {
 
 void Device::init_impl(const CreateInfo& info) {
   ZoneScoped;
-  surface_ = info.surface;
-  vkb::PhysicalDeviceSelector phys_selector(info.instance, info.surface);
+  VK_CHECK(volkInitialize());
+  window_ = info.window;
+  {
+    ZoneScopedN("instance init");
+    vkb::InstanceBuilder instance_builder;
+    instance_builder
+        .set_minimum_instance_version(vk2::min_api_version_major, vk2::min_api_version_minor, 0)
+        .set_app_name(info.app_name)
+        .require_api_version(vk2::min_api_version_major, vk2::min_api_version_minor, 0);
+
+#ifdef DEBUG_CALLBACK_ENABLED
+    instance_builder.set_debug_callback(debug_callback);
+#endif
+#ifdef VALIDATION_LAYERS_ENABLED
+    instance_builder.request_validation_layers(true);
+#endif
+
+#if defined(__APPLE__)
+    instance_builder.add_validation_feature_disable(VK_VALIDATION_FEATURE_DISABLE_SHADERS_EXT);
+    instance_builder.add_validation_feature_disable(
+        VK_VALIDATION_FEATURE_DISABLE_SHADER_VALIDATION_CACHE_EXT);
+#endif
+    auto instance_ret = instance_builder.build();
+    if (!instance_ret) {
+      LCRITICAL("Failed to acquire Vulkan Instance: {}", instance_ret.error().message());
+      exit(1);
+    }
+    instance_ = instance_ret.value();
+  }
+
+  {
+    ZoneScopedN("volk");
+    volkLoadInstance(instance_.instance);
+  }
+
+  {
+    ZoneScopedN("glfw init");
+    glfwCreateWindowSurface(instance_.instance, info.window, nullptr, &surface_);
+    if (!surface_) {
+      LCRITICAL("Failed to create surface");
+      exit(1);
+    }
+  }
+
+  vkb::PhysicalDeviceSelector phys_selector(instance_, surface_);
   VkPhysicalDeviceVulkan12Features features12{
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
   features12.bufferDeviceAddress = true;
@@ -160,29 +231,98 @@ void Device::init_impl(const CreateInfo& info) {
   vma_vulkan_func.vkCmdCopyBuffer = vkCmdCopyBuffer;
   VmaAllocatorCreateInfo allocator_info{
       .flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
-      .physicalDevice = phys_device(),
+      .physicalDevice = get_physical_device(),
       .device = device(),
       .pVulkanFunctions = &vma_vulkan_func,
-      .instance = info.instance,
+      .instance = instance_,
   };
-  main_del_queue_.push([this]() { vkb::destroy_device(vkb_device_); });
+
+  VK_CHECK(vmaCreateAllocator(&allocator_info, &allocator_));
+
+  volkLoadDevice(device_);
+
+  for (u64 i = 0; i < vkb_device_.queue_families.size(); i++) {
+    if (vkb_device_.queue_families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+      vkGetDeviceQueue(device_, i, 0, &queues_[(u32)QueueType::Graphics].queue);
+      queues_[(u32)QueueType::Graphics].family_idx = i;
+      break;
+    }
+  }
+
+  // uint32_t extension_count = 0;
+  // vkEnumerateDeviceExtensionProperties(vk2::get_device().phys_device(), nullptr,
+  // &extension_count,
+  //                                      nullptr);
+  // std::vector<VkExtensionProperties> extensions(extension_count);
+  // vkEnumerateDeviceExtensionProperties(vk2::get_device().phys_device(), nullptr,
+  // &extension_count,
+  //                                      extensions.data());
+  //
+  // for (const auto& ext : extensions) {
+  //   LINFO("{} {}", ext.extensionName, ext.specVersion);
+  // }
+
+  for (u64 i = 0; i < vkb_device_.queue_families.size(); i++) {
+    if (i == queues_[(u32)QueueType::Graphics].family_idx) continue;
+    if (vkb_device_.queue_families[i].queueFlags & VK_QUEUE_TRANSFER_BIT) {
+      vkGetDeviceQueue(device_, i, 0, &queues_[(u32)QueueType::Graphics].queue);
+      queues_[(u32)QueueType::Graphics].family_idx = i;
+      break;
+    }
+  }
+
+#ifndef NDEBUG
+  VkDebugUtilsObjectNameInfoEXT name_info = {
+      .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+      .objectType = VK_OBJECT_TYPE_QUEUE,
+      .objectHandle = reinterpret_cast<uint64_t>(queues_[(u32)QueueType::Graphics].queue),
+      .pObjectName = "GraphicsQueue"};
+  vkSetDebugUtilsObjectNameEXT(device_, &name_info);
+#endif
   {
-    ZoneScopedN("init vma");
-    VK_CHECK(vmaCreateAllocator(&allocator_info, &allocator_));
-    main_del_queue_.push([allocator = allocator_]() { vmaDestroyAllocator(allocator); });
+    ZoneScopedN("init swapchain");
+#if defined(VK_USE_PLATFORM_WAYLAND_KHR)
+    VkPresentModeKHR presentMode =
+        info.vsync ? VK_PRESENT_MODE_FIFO_KHR : VK_PRESENT_MODE_MAILBOX_KHR;
+#else
+    VkPresentModeKHR present_mode =
+        info.vsync ? VK_PRESENT_MODE_FIFO_KHR : VK_PRESENT_MODE_IMMEDIATE_KHR;
+#endif
+    auto& device = vk2::get_device();
+    int w, h;
+    glfwGetWindowSize(window_, &w, &h);
+    swapchain_.init({.phys_device = device.get_physical_device(),
+                     .device = device.device(),
+                     .surface = device.get_surface(),
+                     .present_mode = present_mode,
+                     .dims = {w, h},
+                     .queue_idx = queues_[(u32)QueueType::Graphics].family_idx,
+                     .requested_resize = false},
+                    vk2::get_device().get_swapchain_format());
+    swapchain_.recreate_img_views(vk2::get_device().device());
   }
 }
 
-void Device::destroy_impl() { vkb::destroy_device(vkb_device_); }
+void Device::destroy_impl() {
+  ImGui_ImplVulkan_Shutdown();
+  vkDestroyDescriptorPool(device_, imgui_descriptor_pool_, nullptr);
+  swapchain_.destroy(device_);
+  vmaDestroyAllocator(allocator_);
+  vkb::destroy_device(vkb_device_);
+  vkb::destroy_surface(instance_, surface_);
+  volkFinalize();
+  vkb::destroy_instance(instance_);
+}
 
 Device& get_device() { return Device::get(); }
 
 VkFormat Device::get_swapchain_format() {
   u32 cnt;
-  VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(phys_device(), surface_, &cnt, nullptr));
+  VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(get_physical_device(), surface_, &cnt, nullptr));
   assert(cnt > 0);
   std::vector<VkSurfaceFormatKHR> formats(cnt);
-  VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(phys_device(), surface_, &cnt, formats.data()));
+  VK_CHECK(
+      vkGetPhysicalDeviceSurfaceFormatsKHR(get_physical_device(), surface_, &cnt, formats.data()));
   for (auto format : formats) {
     if (format.format == VK_FORMAT_R8G8B8A8_UNORM || format.format == VK_FORMAT_B8G8R8A8_UNORM) {
       return format.format;
@@ -191,10 +331,10 @@ VkFormat Device::get_swapchain_format() {
   return formats[0].format;
 }
 
-VkCommandPool Device::create_command_pool(u32 queue_idx, VkCommandPoolCreateFlags flags) const {
+VkCommandPool Device::create_command_pool(QueueType type, VkCommandPoolCreateFlags flags) const {
   VkCommandPoolCreateInfo info{.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
                                .flags = flags,
-                               .queueFamilyIndex = queue_idx};
+                               .queueFamilyIndex = queues_[(u32)type].family_idx};
   VkCommandPool pool;
   VK_CHECK(vkCreateCommandPool(device_, &info, nullptr, &pool));
   return pool;
@@ -298,4 +438,109 @@ Holder<BufferHandle> Device::create_buffer_holder(const BufferCreateInfo& info) 
 BufferHandle Device::create_buffer(const BufferCreateInfo& info) {
   return buffer_pool_.alloc(info);
 }
+
+CopyAllocator::CopyCmd CopyAllocator::allocate(u64 size) {
+  CopyCmd cmd;
+  for (size_t i = 0; i < free_copy_cmds_.size(); i++) {
+    auto& free_cmd = free_copy_cmds_[i];
+    if (free_cmd.is_valid()) {
+      auto* staging_buf = get_device().get_buffer(free_cmd.staging_buffer);
+      assert(staging_buf);
+      if (staging_buf->size() >= size) {
+        cmd = free_copy_cmds_[i];
+        std::swap(free_copy_cmds_[i], *free_copy_cmds_.end());
+        free_copy_cmds_.pop_back();
+        break;
+      }
+    }
+  }
+  // make new
+  if (!cmd.is_valid()) {
+    // cmd.transfer_cmd_pool = get_device().create_command_pool();
+  }
+  return cmd;
+}
+
+void CopyAllocator::submit(CopyCmd cmd) { free_copy_cmds_.emplace_back(cmd); }
+
+void CopyAllocator::destroy() {
+  std::scoped_lock lock(free_list_mtx_);
+  for (auto& el : free_copy_cmds_) {
+    vkDestroyFence(get_device().device(), el.fence, nullptr);
+    vkDestroyCommandPool(get_device().device(), el.transfer_cmd_pool, nullptr);
+  }
+  free_copy_cmds_.clear();
+}
+
+void Device::queue_submit(QueueType type, std::span<VkSubmitInfo2> submits, VkFence fence) {
+  VK_CHECK(vkQueueSubmit2KHR(queues_[(u32)type].queue, submits.size(), submits.data(), fence));
+}
+
+void Device::init_imgui() {
+  ZoneScopedN("init imgui");
+  ImGui::CreateContext();
+  ImGuiIO& io = ImGui::GetIO();
+  (void)io;
+  if (!ImGui_ImplGlfw_InitForVulkan(window_, true)) {
+    LCRITICAL("ImGui_ImplGlfw_InitForVulkan failed");
+    exit(1);
+  }
+  {
+    VkInstance instance = vk2::get_device().get_instance();
+    // TODO: remove
+    ImGui_ImplVulkan_LoadFunctions(
+        [](const char* functionName, void* vulkanInstance) {
+          return vkGetInstanceProcAddr(*static_cast<VkInstance*>(vulkanInstance), functionName);
+        },
+        reinterpret_cast<void*>(instance));
+    // create descriptor pool
+    VkDescriptorPoolSize pool_sizes[] = {{VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
+                                         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
+                                         {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000},
+                                         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000},
+                                         {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000},
+                                         {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000},
+                                         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
+                                         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000},
+                                         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000},
+                                         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000},
+                                         {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000}};
+    VkDescriptorPoolCreateInfo pool_info{};
+    pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    pool_info.maxSets = 1000;
+    pool_info.poolSizeCount = std::size(pool_sizes);
+    pool_info.pPoolSizes = pool_sizes;
+
+    VK_CHECK(vkCreateDescriptorPool(device_, &pool_info, nullptr, &imgui_descriptor_pool_));
+
+    ImGui_ImplVulkan_InitInfo init_info{};
+    init_info.Instance = instance;
+    init_info.PhysicalDevice = vkb_phys_device_.physical_device;
+    init_info.Device = device_;
+    init_info.Queue = vk2::get_device().get_queue(vk2::QueueType::Graphics).queue;
+    init_info.DescriptorPool = imgui_descriptor_pool_;
+    init_info.MinImageCount = 3;
+    init_info.ImageCount = 3;
+    init_info.UseDynamicRendering = true;
+
+    init_info.PipelineRenderingCreateInfo = {};
+    init_info.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+    init_info.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
+    init_info.PipelineRenderingCreateInfo.pColorAttachmentFormats = &swapchain_.format;
+    init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    if (!ImGui_ImplVulkan_Init(&init_info)) {
+      LCRITICAL("ImGui_ImplVulkan_Init failed");
+      exit(1);
+    }
+    ImGui_ImplVulkan_CreateFontsTexture();
+  }
+}
+AttachmentInfo Device::get_swapchain_info() const {
+  return AttachmentInfo{.dims = {swapchain_.dims.x, swapchain_.dims.y, 1},
+                        .format = vkformat_to_format(swapchain_.format)};
+}
+
+VkImage Device::get_swapchain_img(u32 idx) const { return swapchain_.imgs[idx]; }
+
 }  // namespace gfx::vk2

@@ -51,7 +51,7 @@ void Swapchain::init(const UpdateSwapchainInfo& info, VkFormat format, VkSwapcha
   VkSurfaceCapabilitiesKHR surface_caps;
   {
     ZoneScopedN("get surface caps");
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vk2::get_device().phys_device(), info.surface,
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vk2::get_device().get_physical_device(), info.surface,
                                               &surface_caps);
   }
   VkSwapchainKHR new_swapchain = create_swapchain(info, format, old, surface_caps);

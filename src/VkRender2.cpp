@@ -21,6 +21,7 @@
 #include "SceneLoader.hpp"
 #include "StateTracker.hpp"
 #include "Timer.hpp"
+#include "Types.hpp"
 #include "glm/packing.hpp"
 #include "imgui.h"
 #include "shaders/common.h.glsl"
@@ -105,12 +106,9 @@ void VkRender2::shutdown() {
 
 using namespace vk2;
 
-VkRender2::VkRender2(const InitInfo& info)
-    : BaseRenderer(info, BaseRenderer::BaseInitInfo{.frames_in_flight = 2}) {
+VkRender2::VkRender2(const InitInfo& info) : BaseRenderer(info) {
   vkrender2_instance = this;
   allocator_ = vk2::get_device().allocator();
-  swapchain_att_info_ = {.format = vkformat_to_format(swapchain_.format)};
-
   vk2::StagingBufferPool::init();
   vk2::BindlessResourceAllocator::init(device_, vk2::get_device().allocator());
   main_set_ = vk2::BindlessResourceAllocator::get().main_set();
@@ -118,7 +116,8 @@ VkRender2::VkRender2(const InitInfo& info)
 
   PrintTimerMS timer;
 
-  imm_cmd_pool_ = vk2::get_device().create_command_pool(queues_.graphics_queue_idx);
+  imm_cmd_pool_ = vk2::get_device().create_command_pool(
+      QueueType::Graphics, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
   imm_cmd_buf_ = vk2::get_device().create_command_buffer(imm_cmd_pool_);
   main_del_q_.push([this]() { vk2::get_device().destroy_command_pool(imm_cmd_pool_); });
   main_del_q_.push([]() {
@@ -203,9 +202,8 @@ VkRender2::VkRender2(const InitInfo& info)
 
   {
     // per frame scene uniforms
-    per_frame_data_2_.resize(frames_in_flight_);
-    for (u32 i = 0; i < frames_in_flight_; i++) {
-      auto& d = per_frame_data_2_[i];
+    per_frame_data_2_.resize(get_device().get_frames_in_flight());
+    for (auto& d : per_frame_data_2_) {
       d.scene_uniform_buf =
           vk2::Buffer{BufferCreateInfo{.size = sizeof(SceneUniforms),
                                        .usage = BufferUsage_Storage,
@@ -364,9 +362,6 @@ VkRender2::VkRender2(const InitInfo& info)
         });
   }
   default_env_map_path_ = info.resource_dir / "hdr" / "newport_loft.hdr";
-  rg_.set_swapchain_info(
-      RenderGraphSwapchainInfo{.width = swapchain_.dims.x, .height = swapchain_.dims.y});
-  rg_.set_backbuffer_img("final_out");
 }
 
 void VkRender2::on_draw(const SceneDrawInfo& info) {
@@ -411,6 +406,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
   }
 
   while (!pending_buffer_transfers_.empty()) {
+    LINFO("size: {}", pending_buffer_transfers_.size());
     auto& f = pending_buffer_transfers_.front();
     if (!f.fence) {
       StagingBufferPool::get().free(f.data);
@@ -430,8 +426,8 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
 
   VkCommandBuffer cmd_buf = curr_frame().main_cmd_buffer;
 
+  VK_CHECK(vkResetCommandPool(device_, curr_frame().cmd_pool, 0));
   auto cmd_begin_info = vk2::init::command_buffer_begin_info();
-  VK_CHECK(vkResetCommandBuffer(cmd_buf, 0));
   VK_CHECK(vkBeginCommandBuffer(cmd_buf, &cmd_begin_info));
 
   CmdEncoder cmd{cmd_buf, default_pipeline_layout_, curr_frame().tracy_vk_ctx};
@@ -446,11 +442,12 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
 
   to_delete_static_model_instances_.clear();
 
-  auto& swapchain_img = swapchain_.imgs[curr_swapchain_img_idx()];
-
   rg_.reset();
-  rg_.set_swapchain_info(RenderGraphSwapchainInfo{
-      .curr_img = swapchain_img, .width = swapchain_.dims.x, .height = swapchain_.dims.y});
+  auto swapchain_info = get_device().get_swapchain_info();
+  rg_.set_swapchain_info(
+      RenderGraphSwapchainInfo{.curr_img = get_device().get_swapchain_img(curr_swapchain_img_idx()),
+                               .width = swapchain_info.dims.x,
+                               .height = swapchain_info.dims.y});
   // auto& curr_frame_data = curr_frame_2();
   rg_.set_backbuffer_img("final_out");
 
@@ -506,7 +503,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
   auto submit = vk2::init::queue_submit_info(SPAN1(cmd_buf_submit_info),
                                              std::span(wait_semaphores.data(), next_wait_sem_idx),
                                              SPAN1(signal_info));
-  VK_CHECK(vkQueueSubmit2KHR(queues_.graphics_queue, 1, &submit, curr_frame().render_fence));
+  get_device().queue_submit(QueueType::Graphics, SPAN1(submit), curr_frame().render_fence);
 
   line_draw_vertices_.clear();
 }
@@ -900,7 +897,7 @@ void VkRender2::immediate_submit(std::function<void(VkCommandBuffer cmd)>&& func
   VK_CHECK(vkEndCommandBuffer(imm_cmd_buf_));
   VkCommandBufferSubmitInfo cmd_info = init::command_buffer_submit_info(imm_cmd_buf_);
   VkSubmitInfo2 submit = init::queue_submit_info(SPAN1(cmd_info), {}, {});
-  VK_CHECK(vkQueueSubmit2KHR(queues_.graphics_queue, 1, &submit, imm_fence));
+  get_device().queue_submit(QueueType::Graphics, SPAN1(submit), imm_fence);
   VK_CHECK(vkWaitForFences(device_, 1, &imm_fence, true, 99999999999));
   FencePool::get().free(imm_fence);
 }
@@ -949,7 +946,7 @@ void VkRender2::transfer_submit(
                                                       ++transfer_queue_manager_->semaphore_value_);
 
   auto submit = init::queue_submit_info(SPAN1(cmd_buf_submit_info), {}, SPAN1(signal_info));
-  VK_CHECK(vkQueueSubmit2KHR(queues_.transfer_queue, 1, &submit, transfer_fence));
+  get_device().queue_submit(QueueType::Transfer, SPAN1(submit), transfer_fence);
   transfer_queue_manager_->submit_signaled_ = true;
 }
 
@@ -985,11 +982,12 @@ void VkRender2::init_pipelines() {
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
   });
   deferred_shade_pipeline_ = PipelineManager::get().load_compute_pipeline({"gbuffer/shade.comp"});
+
   line_draw_pipeline_ = PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
       .vertex_path = "lines/draw_line.vert",
       .fragment_path = "lines/draw_line.frag",
       .topology = PrimitiveTopology::LineList,
-      .rendering = {.color_formats = {swapchain_.format},
+      .rendering = {.color_formats = {to_vkformat(get_device().get_swapchain_info().format)},
                     .depth_format = to_vkformat(depth_img_format_)},
       .rasterization = {.cull_mode = CullMode::None},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(false, CompareOp::GreaterOrEqual),
@@ -1129,7 +1127,7 @@ void VkRender2::immediate_submit(std::function<void(CmdEncoder& ctx)>&& function
   VK_CHECK(vkEndCommandBuffer(imm_cmd_buf_));
   VkCommandBufferSubmitInfo cmd_info = init::command_buffer_submit_info(imm_cmd_buf_);
   VkSubmitInfo2 submit = init::queue_submit_info(SPAN1(cmd_info), {}, {});
-  VK_CHECK(vkQueueSubmit2KHR(queues_.graphics_queue, 1, &submit, imm_fence));
+  get_device().queue_submit(QueueType::Graphics, SPAN1(submit), imm_fence);
   VK_CHECK(vkWaitForFences(device_, 1, &imm_fence, true, 99999999999));
   FencePool::get().free(imm_fence);
 }
@@ -1515,7 +1513,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
   {
     auto& pp = rg.add_pass("post_process");
     auto draw_out_handle = pp.add("draw_out", {.format = draw_img_format_}, Access::ComputeRead);
-    auto final_out_handle = pp.add("final_out", swapchain_att_info_, Access::ComputeWrite);
+    auto final_out_handle = pp.add("final_out", AttachmentInfo{}, Access::ComputeWrite);
     pp.set_execute_fn([this, &rg, draw_out_handle, final_out_handle](CmdEncoder& cmd) {
       TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "post_process");
       if (postprocess_pass_enabled.get()) {
@@ -1563,7 +1561,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
     if (csm_enabled.get() && csm_->get_debug_render_enabled()) {
       csm_debug_img_handle = imgui_p.add("shadow_map_debug_img", Access::FragmentRead);
     }
-    auto color_handle = imgui_p.add("final_out", swapchain_att_info_, Access::ColorRW);
+    auto color_handle = imgui_p.add("final_out", Access::ColorRW);
     auto depth_handle = imgui_p.add("depth", Access::DepthStencilRead);
     imgui_p.set_execute_fn([this, color_handle, &rg, csm_debug_img_handle,
                             depth_handle](CmdEncoder& cmd) {
@@ -1628,8 +1626,8 @@ void VkRender2::StaticMeshDrawManager::remove_draws(StateTracker& state, VkComma
       VkRender2::get().state_,
       VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
       VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT,
-      draw_cmds_buf_.get_buffer()->buffer(), VkRender2::get().queues_.transfer_queue_idx,
-      VkRender2::get().queues_.graphics_queue_idx, a->draw_cmd_slot.get_offset(),
+      draw_cmds_buf_.get_buffer()->buffer(), get_device().get_queue(QueueType::Transfer).family_idx,
+      get_device().get_queue(QueueType::Graphics).family_idx, a->draw_cmd_slot.get_offset(),
       a->draw_cmd_slot.get_size());
   draw_cmds_buf_.allocator.free(std::move(a->draw_cmd_slot));
 
@@ -1656,8 +1654,8 @@ VkRender2::StaticMeshDrawManager::Handle VkRender2::StaticMeshDrawManager::add_d
     // resize output draw cmd buffers
     if (auto* buf = get_device().get_buffer(draw_pass.out_draw_cmds_buf[0].handle);
         a.draw_cmd_slot.get_offset() + a.draw_cmd_slot.get_size() + sizeof(u32) >= buf->size()) {
-      for (u32 i = 0; i < VkRender2::get().frames_in_flight_; i++) {
-        draw_pass.out_draw_cmds_buf[i] = get_device().create_buffer_holder(BufferCreateInfo{
+      for (auto& buf : draw_pass.out_draw_cmds_buf) {
+        buf = get_device().create_buffer_holder(BufferCreateInfo{
             .size = new_size + sizeof(u32),
             .usage = BufferUsage_Indirect | BufferUsage_Storage,
         });
@@ -1743,18 +1741,20 @@ void VkRender2::execute_static_geo_draws(CmdEncoder& cmd) {
   }
 }
 
-VkRender2::StaticMeshDrawManager::DrawPass::DrawPass(std::string name, u32 count)
+VkRender2::StaticMeshDrawManager::DrawPass::DrawPass(std::string name, u32 count,
+                                                     u32 frames_in_flight)
     : name(std::move(name)) {
-  for (u32 i = 0; i < VkRender2::get().frames_in_flight_; i++) {
-    out_draw_cmds_buf[i] = get_device().create_buffer_holder(BufferCreateInfo{
+  for (u32 i = 0; i < frames_in_flight; i++) {
+    out_draw_cmds_buf.emplace_back(get_device().create_buffer_holder(BufferCreateInfo{
         .size = (count * sizeof(VkDrawIndexedIndirectCommand)) + sizeof(u32),
         .usage = BufferUsage_Indirect | BufferUsage_Storage,
-    });
+    }));
   }
 }
 
 void VkRender2::StaticMeshDrawManager::add_draw_pass(const std::string& name) {
-  draw_passes_.emplace_back(name_ + "_" + name, num_draw_cmds_);
+  draw_passes_.emplace_back(name_ + "_" + name, num_draw_cmds_,
+                            get_device().get_frames_in_flight());
 }
 
 BufferHandle VkRender2::StaticMeshDrawManager::DrawPass::get_frame_out_draw_cmd_buf_handle() const {
