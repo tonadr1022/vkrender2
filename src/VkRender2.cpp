@@ -110,9 +110,9 @@ VkRender2::VkRender2(const InitInfo& info) : BaseRenderer(info) {
   vkrender2_instance = this;
   allocator_ = vk2::get_device().allocator();
   vk2::StagingBufferPool::init();
-  vk2::BindlessResourceAllocator::init(device_, vk2::get_device().allocator());
-  main_set_ = vk2::BindlessResourceAllocator::get().main_set();
-  main_set2_ = vk2::BindlessResourceAllocator::get().main_set2_;
+  vk2::ResourceAllocator::init(device_, vk2::get_device().allocator());
+  main_set_ = vk2::ResourceAllocator::get().main_set();
+  main_set2_ = vk2::ResourceAllocator::get().main_set2_;
 
   PrintTimerMS timer;
 
@@ -127,9 +127,9 @@ VkRender2::VkRender2(const InitInfo& info) : BaseRenderer(info) {
 
   VkPushConstantRange default_range{.stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = 128};
   // TODO: refactor
-  VkDescriptorSetLayout main_set_layout = vk2::BindlessResourceAllocator::get().main_set_layout();
+  VkDescriptorSetLayout main_set_layout = vk2::ResourceAllocator::get().main_set_layout();
   VkDescriptorSetLayout layouts[] = {main_set_layout,
-                                     vk2::BindlessResourceAllocator::get().main_set2_layout_};
+                                     vk2::ResourceAllocator::get().main_set2_layout_};
   VkPipelineLayoutCreateInfo pipeline_info{.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
                                            .setLayoutCount = COUNTOF(layouts),
                                            .pSetLayouts = layouts,
@@ -367,6 +367,20 @@ VkRender2::VkRender2(const InitInfo& info) : BaseRenderer(info) {
 void VkRender2::on_draw(const SceneDrawInfo& info) {
   ZoneScoped;
   {
+    on_imgui();
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui::Render();
+    if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+      ImGui::UpdatePlatformWindows();
+      ImGui::RenderPlatformWindowsDefault();
+    }
+
+    get_device().begin_frame();
+    vk2::ResourceAllocator::get().set_frame_num(curr_frame_num(),
+                                                vk2::get_device().get_frames_in_flight());
+    vk2::ResourceAllocator::get().flush_deletions();
+  }
+  {
     ZoneScopedN("scene uniform buffer");
     auto& d = curr_frame_2();
     scene_uniform_cpu_data_.proj = glm::perspective(glm::radians(info.fov_degrees), aspect_ratio(),
@@ -425,7 +439,6 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
   }
 
   VkCommandBuffer cmd_buf = curr_frame().main_cmd_buffer;
-
   VK_CHECK(vkResetCommandPool(device_, curr_frame().cmd_pool, 0));
   auto cmd_begin_info = vk2::init::command_buffer_begin_info();
   VK_CHECK(vkBeginCommandBuffer(cmd_buf, &cmd_begin_info));
@@ -433,8 +446,9 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
   CmdEncoder cmd{cmd_buf, default_pipeline_layout_, curr_frame().tracy_vk_ctx};
 
   bind_bindless_descriptors(cmd);
-  vk2::BindlessResourceAllocator::get().set_frame_num(curr_frame_num());
-  vk2::BindlessResourceAllocator::get().flush_deletions();
+  vk2::ResourceAllocator::get().set_frame_num(curr_frame_num(),
+                                              get_device().get_frames_in_flight());
+  vk2::ResourceAllocator::get().flush_deletions();
 
   for (auto& instance : to_delete_static_model_instances_) {
     free(cmd, instance);
@@ -443,14 +457,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
   to_delete_static_model_instances_.clear();
 
   rg_.reset();
-  auto swapchain_info = get_device().get_swapchain_info();
-  rg_.set_swapchain_info(
-      RenderGraphSwapchainInfo{.curr_img = get_device().get_swapchain_img(curr_swapchain_img_idx()),
-                               .width = swapchain_info.dims.x,
-                               .height = swapchain_info.dims.y});
-  // auto& curr_frame_data = curr_frame_2();
   rg_.set_backbuffer_img("final_out");
-
   csm_->prepare_frame(rg_, curr_frame_num(), info.view, info.light_dir, aspect_ratio(),
                       info.fov_degrees, scene_aabb_, info.view_pos);
 
@@ -485,13 +492,13 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
   TracyVkCollect(curr_frame().tracy_vk_ctx, cmd_buf);
   VK_CHECK(vkEndCommandBuffer(cmd_buf));
 
+  // TODO: refactor queues lmao
   std::array<VkSemaphoreSubmitInfo, 10> wait_semaphores{};
   u32 next_wait_sem_idx{0};
-  // TODO: back to VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT if imgui writes to it
   wait_semaphores[next_wait_sem_idx++] = vk2::init::semaphore_submit_info(
-      curr_frame().swapchain_semaphore,
+      get_device().curr_swapchain_semaphore(),
       VK_PIPELINE_STAGE_2_TRANSFER_BIT | VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT);
-  auto signal_info = vk2::init::semaphore_submit_info(curr_frame().render_semaphore,
+  auto signal_info = vk2::init::semaphore_submit_info(get_device().curr_frame().render_semaphore,
                                                       VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT);
   if (transfer_queue_manager_->submit_signaled_) {
     wait_semaphores[next_wait_sem_idx++] = vk2::init::semaphore_submit_info(
@@ -503,9 +510,10 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
   auto submit = vk2::init::queue_submit_info(SPAN1(cmd_buf_submit_info),
                                              std::span(wait_semaphores.data(), next_wait_sem_idx),
                                              SPAN1(signal_info));
-  get_device().queue_submit(QueueType::Graphics, SPAN1(submit), curr_frame().render_fence);
+  get_device().queue_submit(QueueType::Graphics, SPAN1(submit));
 
   line_draw_vertices_.clear();
+  vk2::get_device().submit_to_graphics_queue();
 }
 
 void VkRender2::on_imgui() {
@@ -885,8 +893,6 @@ SceneHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
   }
   return {};
 }
-
-void VkRender2::submit_static(SceneHandle, mat4) {}
 
 void VkRender2::immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function) {
   VkFence imm_fence = FencePool::get().allocate(true);

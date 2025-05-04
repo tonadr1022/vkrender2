@@ -18,15 +18,11 @@
 #include "vk2/Fence.hpp"
 #include "vk2/Initializers.hpp"
 #include "vk2/SamplerCache.hpp"
-#include "vk2/Swapchain.hpp"
-#include "vk2/VkCommon.hpp"
 
 namespace gfx {
 
 BaseRenderer::BaseRenderer(const InitInfo& info)
-    : window_(info.window),
-      resource_dir_(info.resource_dir),
-      on_gui_callback_(info.on_gui_callback) {
+    : window_(info.window), resource_dir_(info.resource_dir) {
   assert(resource_dir_.string().length());
   if (!info.window) {
     LCRITICAL("cannot initialize renderer, window not provided");
@@ -45,9 +41,6 @@ BaseRenderer::BaseRenderer(const InitInfo& info)
     for (auto& frame : per_frame_data_) {
       frame.cmd_pool = device.create_command_pool(vk2::QueueType::Graphics);
       frame.main_cmd_buffer = device.create_command_buffer(frame.cmd_pool);
-      frame.render_fence = device.create_fence();
-      frame.swapchain_semaphore = device.create_semaphore();
-      frame.render_semaphore = device.create_semaphore();
       frame.tracy_vk_ctx =
           TracyVkContext(device.get_physical_device(), device.device(),
                          device.get_queue(vk2::QueueType::Graphics).queue, frame.main_cmd_buffer);
@@ -57,16 +50,12 @@ BaseRenderer::BaseRenderer(const InitInfo& info)
   app_del_queue_.push([this]() {
     for (auto& frame : per_frame_data_) {
       auto& d = vk2::get_device();
-      d.destroy_fence(frame.render_fence);
-      d.destroy_semaphore(frame.render_semaphore);
-      d.destroy_semaphore(frame.swapchain_semaphore);
       d.destroy_command_pool(frame.cmd_pool);
       TracyVkDestroy(frame.tracy_vk_ctx);
     }
   });
   vk2::SamplerCache::init(device_);
-  transfer_queue_manager_ = std::make_unique<QueueManager>(
-      vk2::get_device().get_queue(vk2::QueueType::Graphics).family_idx, 1);
+  transfer_queue_manager_ = std::make_unique<QueueManager>(vk2::QueueType::Graphics, 1);
   app_del_queue_.push([this]() {
     vk2::SamplerCache::destroy();
     transfer_queue_manager_ = nullptr;
@@ -79,9 +68,9 @@ BaseRenderer::BaseRenderer(const InitInfo& info)
 BaseRenderer::~BaseRenderer() {
   vkDeviceWaitIdle(device_);
   vk2::get_device().destroy_resources();
-  vk2::BindlessResourceAllocator::get().set_frame_num(curr_frame_num() + 100);
-  vk2::BindlessResourceAllocator::get().flush_deletions();
-  vk2::BindlessResourceAllocator::shutdown();
+  vk2::ResourceAllocator::get().set_frame_num(UINT32_MAX, 0);
+  vk2::ResourceAllocator::get().flush_deletions();
+  vk2::ResourceAllocator::shutdown();
   app_del_queue_.flush();
 }
 void BaseRenderer::on_draw(const SceneDrawInfo&) {}
@@ -90,77 +79,11 @@ void BaseRenderer::on_imgui() {}
 
 void BaseRenderer::on_update() {}
 
-void BaseRenderer::draw(const SceneDrawInfo& info) {
-  if (on_gui_callback_) on_gui_callback_();
-  on_imgui();
-  ImGuiIO& io = ImGui::GetIO();
-  ImGui::Render();
-  if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-    ImGui::UpdatePlatformWindows();
-    ImGui::RenderPlatformWindowsDefault();
-  }
+void BaseRenderer::draw(const SceneDrawInfo& info) { on_draw(info); }
 
-  curr_frame_swapchain_status_ = swapchain_.update(
-      {.phys_device = vk2::get_device().get_physical_device(),
-       .device = vk2::get_device().device(),
-       .surface = vk2::get_device().get_surface(),
-       .present_mode = swapchain_.present_mode,
-       .dims = window_dims(),
-       .queue_idx = vk2::get_device().get_queue(vk2::QueueType::Graphics).family_idx,
-       .requested_resize = resize_swapchain_req_});
-  resize_swapchain_req_ = false;
-  if (curr_frame_swapchain_status_ == vk2::Swapchain::Status::NotReady) {
-    return;
-  }
-  if (curr_frame_swapchain_status_ == vk2::Swapchain::Status::Resized) {
-    swapchain_.recreate_img_views(device_);
-    on_resize();
-  }
-
-  // wait for fence
-  u64 timeout = 1000000000;
-  vkWaitForFences(device_, 1, &curr_frame().render_fence, true, timeout);
-
-  vk2::BindlessResourceAllocator::get().set_frame_num(curr_frame_num());
-  vk2::BindlessResourceAllocator::get().flush_deletions();
-
-  // acquire next image
-  VkResult get_swapchain_img_res =
-      vkAcquireNextImageKHR(device_, swapchain_.swapchain, timeout,
-                            curr_frame().swapchain_semaphore, nullptr, &curr_swapchain_img_idx_);
-  if (get_swapchain_img_res == VK_ERROR_OUT_OF_DATE_KHR) {
-    return;
-  }
-
-  // reset fence once drawing, else return
-  VK_CHECK(vkResetFences(device_, 1, &curr_frame().render_fence));
-
-  on_draw(info);
-
-  {
-    ZoneScopedN("presentation");
-    VkResult res;
-    VkPresentInfoKHR info{.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-                          .waitSemaphoreCount = 1,
-                          .pWaitSemaphores = &curr_frame().render_semaphore,
-                          .swapchainCount = 1,
-                          .pSwapchains = &swapchain_.swapchain,
-                          .pImageIndices = &curr_swapchain_img_idx_,
-                          .pResults = &res};
-    VkResult present_result =
-        vkQueuePresentKHR(vk2::get_device().queues_[vk2::QueueType_Graphics].queue, &info);
-    if (present_result == VK_ERROR_OUT_OF_DATE_KHR || present_result == VK_SUBOPTIMAL_KHR) {
-    } else {
-      VK_CHECK(present_result);
-    }
-    curr_frame_num_++;
-  }
+PerFrameData& BaseRenderer::curr_frame() {
+  return per_frame_data_[curr_frame_num() % vk2::get_device().get_frames_in_flight()];
 }
-
-vk2::Swapchain::Status BaseRenderer::curr_frame_swapchain_status() const {
-  return curr_frame_swapchain_status_;
-}
-PerFrameData& BaseRenderer::curr_frame() { return per_frame_data_[curr_frame_num_ % 2]; }
 
 uvec2 BaseRenderer::window_dims() const {
   int x, y;
@@ -171,10 +94,10 @@ uvec2 BaseRenderer::window_dims() const {
 void BaseRenderer::on_resize() {}
 
 // TODO: refactor
-QueueManager::QueueManager(u32 queue_idx, u32 cmd_buffer_cnt)
+QueueManager::QueueManager(vk2::QueueType type, u32 cmd_buffer_cnt)
     : submit_semaphore_(vk2::get_device().create_semaphore(true)),
       cmd_pool_(vk2::get_device().create_command_pool(
-          queue_idx, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT)) {
+          type, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT)) {
   free_cmd_buffers_.resize(cmd_buffer_cnt);
   vk2::get_device().create_command_buffers(cmd_pool_.pool(), free_cmd_buffers_);
 }
@@ -232,6 +155,6 @@ void BaseRenderer::new_frame() {
 }
 
 u64 BaseRenderer::curr_frame_in_flight_num() const {
-  return curr_frame_num_ % vk2::get_device().get_frames_in_flight();
+  return vk2::get_device().curr_frame_num() % vk2::get_device().get_frames_in_flight();
 }
 }  // namespace gfx

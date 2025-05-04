@@ -12,7 +12,7 @@
 
 namespace gfx::vk2 {
 
-class BindlessResourceAllocator {
+class ResourceAllocator {
  public:
   void bind_desc_sets(VkCommandBuffer cmd);
   static constexpr u32 max_resource_descriptors{100'000};
@@ -26,12 +26,12 @@ class BindlessResourceAllocator {
 
   u32 resource_to_binding(ResourceType type);
 
-  static BindlessResourceAllocator& get();
+  static ResourceAllocator& get();
   static void init(VkDevice device, VmaAllocator allocator);
   static void shutdown();
   [[nodiscard]] VkDescriptorSetLayout main_set_layout() const { return main_set_layout_; }
   [[nodiscard]] VkDescriptorSet main_set() const { return main_set_; }
-  void set_frame_num(u32 frame_num);
+  void set_frame_num(u32 frame_num, u32 buffer_count);
 
   BindlessResourceInfo allocate_storage_buffer_descriptor(VkBuffer buffer);
   BindlessResourceInfo allocate_storage_img_descriptor(VkImageView view, VkImageLayout layout);
@@ -43,6 +43,7 @@ class BindlessResourceAllocator {
   void delete_texture(const TextureDeleteInfo& img);
   void delete_texture_view(const TextureViewDeleteInfo& info);
   void delete_buffer(const BufferDeleteInfo& info);
+  void enqueue_delete_swapchain(VkSwapchainKHR swapchain);
 
   void flush_deletions();
 
@@ -59,9 +60,10 @@ class BindlessResourceAllocator {
   std::deque<DeleteQEntry<TextureDeleteInfo>> texture_delete_q_;
   std::deque<DeleteQEntry<TextureViewDeleteInfo>> texture_view_delete_q_;
   std::deque<DeleteQEntry<BufferDeleteInfo>> storage_buffer_delete_q_;
+  std::deque<DeleteQEntry<VkSwapchainKHR>> swapchain_delete_q_;
 
-  ~BindlessResourceAllocator();
-  BindlessResourceAllocator(VkDevice device, VmaAllocator allocator);
+  ~ResourceAllocator();
+  ResourceAllocator(VkDevice device, VmaAllocator allocator);
 
   VkDevice device_;
   VmaAllocator allocator_;
@@ -72,6 +74,7 @@ class BindlessResourceAllocator {
   VkDescriptorPool main_pool_{};
   VkDescriptorSet main_set_{};
   VkDescriptorSetLayout main_set_layout_{};
-  u64 frame_num_;
+  u32 buffer_count_{};
+  u64 frame_num_{};
 };
 }  // namespace gfx::vk2

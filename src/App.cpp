@@ -68,11 +68,8 @@ App::App(const InitInfo& info) : cam(cam_data, .1) {
     ((App*)glfwGetWindowUserPointer(win))->on_cursor_event({xpos, ypos});
   });
 
-  VkRender2::init(VkRender2::InitInfo{.window = window,
-                                      .resource_dir = resource_dir,
-                                      .name = info.name,
-                                      .vsync = info.vsync,
-                                      .on_gui_callback = [this]() { this->on_imgui(); }});
+  VkRender2::init(VkRender2::InitInfo{
+      .window = window, .resource_dir = resource_dir, .name = info.name, .vsync = info.vsync});
   local_models_dir = resource_dir / "local_models/";
 }
 
@@ -145,6 +142,7 @@ void App::run() {
     ren.draw_line({0, 1, 0}, {0, 0, 0}, {1, 1, 1, 1});
     int n1{3}, n2{1};
     static float t{};
+    on_imgui();
     if (ImGui::Begin("lines")) {
       ImGui::DragInt("n1", &n1);
       ImGui::DragInt("n2", &n2);

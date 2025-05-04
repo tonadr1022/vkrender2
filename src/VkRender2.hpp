@@ -89,7 +89,6 @@ struct VkRender2 final : public BaseRenderer {
 
   SceneHandle load_model(const std::filesystem::path& path, bool dynamic = false,
                          const mat4& transform = mat4{1});
-  void submit_static(SceneHandle scene, mat4 transform = mat4{1});
 
   // TODO: private
   void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);

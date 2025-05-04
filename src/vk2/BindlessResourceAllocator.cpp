@@ -5,14 +5,13 @@
 
 #include <tracy/Tracy.hpp>
 
-#include "Logger.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/Resource.hpp"
 #include "vk2/Texture.hpp"
 #include "vk2/VkCommon.hpp"
 namespace gfx::vk2 {
 
-BindlessResourceAllocator::BindlessResourceAllocator(VkDevice device, VmaAllocator allocator)
+ResourceAllocator::ResourceAllocator(VkDevice device, VmaAllocator allocator)
     : device_(device), allocator_(allocator) {
   ZoneScoped;
   {
@@ -126,33 +125,34 @@ BindlessResourceAllocator::BindlessResourceAllocator(VkDevice device, VmaAllocat
 }
 
 namespace {
-BindlessResourceAllocator* instance = nullptr;
+ResourceAllocator* instance = nullptr;
 }
 
-BindlessResourceAllocator& BindlessResourceAllocator::get() {
+ResourceAllocator& ResourceAllocator::get() {
   assert(instance);
   return *instance;
 }
 
-void BindlessResourceAllocator::init(VkDevice device, VmaAllocator allocator) {
+void ResourceAllocator::init(VkDevice device, VmaAllocator allocator) {
   assert(!instance);
-  instance = new BindlessResourceAllocator{device, allocator};
+  instance = new ResourceAllocator{device, allocator};
 }
 
-void BindlessResourceAllocator::shutdown() {
+void ResourceAllocator::shutdown() {
   assert(instance);
   delete instance;
 }
 
-BindlessResourceAllocator::~BindlessResourceAllocator() {
+ResourceAllocator::~ResourceAllocator() {
+  set_frame_num(UINT32_MAX, 0);
   flush_deletions();
   vkDestroyDescriptorPool(device_, main_pool_, nullptr);
   vkDestroyDescriptorSetLayout(device_, main_set_layout_, nullptr);
   vkDestroyDescriptorSetLayout(device_, main_set2_layout_, nullptr);
 }
 
-BindlessResourceInfo BindlessResourceAllocator::allocate_sampled_img_descriptor(
-    VkImageView view, VkImageLayout layout) {
+BindlessResourceInfo ResourceAllocator::allocate_sampled_img_descriptor(VkImageView view,
+                                                                        VkImageLayout layout) {
   u32 handle = sampled_image_allocator_.alloc();
   VkDescriptorImageInfo img{.sampler = nullptr, .imageView = view, .imageLayout = layout};
   allocate_bindless_resource(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &img, nullptr, handle,
@@ -160,8 +160,8 @@ BindlessResourceInfo BindlessResourceAllocator::allocate_sampled_img_descriptor(
   return {ResourceType::SampledImage, handle};
 }
 
-BindlessResourceInfo BindlessResourceAllocator::allocate_storage_img_descriptor(
-    VkImageView view, VkImageLayout layout) {
+BindlessResourceInfo ResourceAllocator::allocate_storage_img_descriptor(VkImageView view,
+                                                                        VkImageLayout layout) {
   u32 handle = storage_image_allocator_.alloc();
   VkDescriptorImageInfo img{.sampler = nullptr, .imageView = view, .imageLayout = layout};
   allocate_bindless_resource(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &img, nullptr, handle,
@@ -169,7 +169,7 @@ BindlessResourceInfo BindlessResourceAllocator::allocate_storage_img_descriptor(
   return {ResourceType::StorageImage, handle};
 }
 
-BindlessResourceInfo BindlessResourceAllocator::allocate_sampler_descriptor(VkSampler sampler) {
+BindlessResourceInfo ResourceAllocator::allocate_sampler_descriptor(VkSampler sampler) {
   u32 handle = sampler_allocator_.alloc();
   VkDescriptorImageInfo info{.sampler = sampler};
   VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -184,10 +184,10 @@ BindlessResourceInfo BindlessResourceAllocator::allocate_sampler_descriptor(VkSa
   return {ResourceType::Sampler, handle};
 }
 
-void BindlessResourceAllocator::allocate_bindless_resource(VkDescriptorType descriptor_type,
-                                                           VkDescriptorImageInfo* img,
-                                                           VkDescriptorBufferInfo* buffer, u32 idx,
-                                                           u32 binding) {
+void ResourceAllocator::allocate_bindless_resource(VkDescriptorType descriptor_type,
+                                                   VkDescriptorImageInfo* img,
+                                                   VkDescriptorBufferInfo* buffer, u32 idx,
+                                                   u32 binding) {
   VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                              .dstSet = main_set_,
                              .dstBinding = binding,
@@ -199,7 +199,7 @@ void BindlessResourceAllocator::allocate_bindless_resource(VkDescriptorType desc
   vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
 }
 
-u32 BindlessResourceAllocator::resource_to_binding(ResourceType type) {
+u32 ResourceAllocator::resource_to_binding(ResourceType type) {
   switch (type) {
     case ResourceType::StorageImage:
       return bindless_storage_image_binding;
@@ -213,23 +213,35 @@ u32 BindlessResourceAllocator::resource_to_binding(ResourceType type) {
       return bindless_combined_image_sampler_binding;
   }
 }
-void BindlessResourceAllocator::set_frame_num(u32 frame_num) { frame_num_ = frame_num; }
+void ResourceAllocator::set_frame_num(u32 frame_num, u32 buffer_count) {
+  frame_num_ = frame_num;
+  buffer_count_ = buffer_count;
+}
 
-void BindlessResourceAllocator::delete_texture(const TextureDeleteInfo& img) {
+void ResourceAllocator::delete_texture(const TextureDeleteInfo& img) {
   texture_delete_q_.emplace_back(img, frame_num_);
 }
 
-void BindlessResourceAllocator::flush_deletions() {
+void ResourceAllocator::flush_deletions() {
+  assert(buffer_count_ > 0);
   std::erase_if(texture_delete_q_, [this](const DeleteQEntry<TextureDeleteInfo>& entry) {
-    if (entry.frame < frame_num_) {
+    if (entry.frame + buffer_count_ < frame_num_) {
       vmaDestroyImage(allocator_, entry.data.img, entry.data.allocation);
       return true;
     }
     return false;
   });
 
+  std::erase_if(swapchain_delete_q_, [this](const DeleteQEntry<VkSwapchainKHR>& entry) {
+    if (entry.frame + buffer_count_ < frame_num_) {
+      vkDestroySwapchainKHR(device_, entry.data, nullptr);
+      return true;
+    }
+    return false;
+  });
+
   std::erase_if(texture_view_delete_q_, [this](const DeleteQEntry<TextureViewDeleteInfo>& entry) {
-    if (entry.frame < frame_num_) {
+    if (entry.frame + buffer_count_ < frame_num_) {
       if (entry.data.sampled_image_resource_info.has_value()) {
         sampled_image_allocator_.free(entry.data.sampled_image_resource_info->handle);
       }
@@ -255,16 +267,15 @@ void BindlessResourceAllocator::flush_deletions() {
   });
 }
 
-void BindlessResourceAllocator::delete_texture_view(const TextureViewDeleteInfo& info) {
+void ResourceAllocator::delete_texture_view(const TextureViewDeleteInfo& info) {
   texture_view_delete_q_.emplace_back(info, frame_num_);
 }
 
-void BindlessResourceAllocator::delete_buffer(const BufferDeleteInfo& info) {
+void ResourceAllocator::delete_buffer(const BufferDeleteInfo& info) {
   storage_buffer_delete_q_.emplace_back(info, frame_num_ + 10);
 }
 
-BindlessResourceInfo BindlessResourceAllocator::allocate_storage_buffer_descriptor(
-    VkBuffer buffer) {
+BindlessResourceInfo ResourceAllocator::allocate_storage_buffer_descriptor(VkBuffer buffer) {
   u32 handle = storage_buffer_allocator_.alloc();
   VkDescriptorBufferInfo buf{.buffer = buffer, .offset = 0, .range = VK_WHOLE_SIZE};
   allocate_bindless_resource(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &buf, handle,
@@ -272,4 +283,7 @@ BindlessResourceInfo BindlessResourceAllocator::allocate_storage_buffer_descript
   return {ResourceType::StorageBuffer, handle};
 }
 
+void ResourceAllocator::enqueue_delete_swapchain(VkSwapchainKHR swapchain) {
+  swapchain_delete_q_.emplace_back(swapchain, frame_num_);
+}
 }  // namespace gfx::vk2

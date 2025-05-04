@@ -8,7 +8,7 @@
 #include "Common.hpp"
 #include "StateTracker.hpp"
 #include "vk2/DeletionQueue.hpp"
-#include "vk2/Swapchain.hpp"
+#include "vk2/Device.hpp"
 
 struct GLFWwindow;
 namespace tracy {
@@ -35,13 +35,12 @@ struct CmdPool {
 struct PerFrameData {
   VkCommandPool cmd_pool;
   VkCommandBuffer main_cmd_buffer;
-  VkSemaphore swapchain_semaphore, render_semaphore;
-  VkFence render_fence;
+  // VkSemaphore swapchain_semaphore, render_semaphore;
   tracy::VkCtx* tracy_vk_ctx{};
 };
 
 struct QueueManager {
-  explicit QueueManager(u32 queue_idx, u32 cmd_buffer_cnt = 1);
+  explicit QueueManager(vk2::QueueType type, u32 cmd_buffer_cnt = 1);
   QueueManager() = delete;
   ~QueueManager();
 
@@ -81,8 +80,6 @@ class BaseRenderer {
     std::filesystem::path resource_dir;
     const char* name = "App";
     bool vsync{true};
-    // VkPresentModeKHR present_mode{VK_PRESENT_MODE_FIFO_KHR};
-    std::function<void()> on_gui_callback;
   };
 
   BaseRenderer(const BaseRenderer&) = delete;
@@ -97,7 +94,7 @@ class BaseRenderer {
 
   bool draw_imgui{true};
 
-  [[nodiscard]] u64 curr_frame_num() const { return curr_frame_num_; }
+  [[nodiscard]] u64 curr_frame_num() const { return vk2::get_device().curr_frame_num(); }
   [[nodiscard]] u64 curr_frame_in_flight_num() const;
 
  protected:
@@ -108,32 +105,19 @@ class BaseRenderer {
   virtual void on_resize();
   void render_imgui(VkCommandBuffer cmd, uvec2 draw_extent, VkImageView target_img_view);
 
-  // QueueFamilies queues_;
   GLFWwindow* window_;
-  [[nodiscard]] vk2::Swapchain::Status curr_frame_swapchain_status() const;
   std::vector<PerFrameData> per_frame_data_;
   PerFrameData& curr_frame();
   std::unique_ptr<QueueManager> transfer_queue_manager_;
   std::filesystem::path resource_dir_;
-
-  // begin non owning
   VkDevice device_;
-
-  // end non-owning
-
-  [[nodiscard]] u32 curr_swapchain_img_idx() const { return curr_swapchain_img_idx_; }
 
   [[nodiscard]] uvec2 window_dims() const;
   [[nodiscard]] float aspect_ratio() const;
 
  private:
-  std::function<void()> on_gui_callback_;
   vk2::DeletionQueue app_del_queue_;
-  vk2::Swapchain::Status curr_frame_swapchain_status_;
-  bool resize_swapchain_req_{};
-  u32 curr_swapchain_img_idx_{};
   bool initialized_{false};
-  u64 curr_frame_num_{};
 };
 
 }  // namespace gfx

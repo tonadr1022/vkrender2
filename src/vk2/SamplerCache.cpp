@@ -39,8 +39,7 @@ Sampler SamplerCache::get_or_create_sampler(const SamplerCreateInfo& info) {
                             .borderColor = info.border_color};
   vkCreateSampler(device_, &cinfo, nullptr, &sampler.sampler);
   assert(sampler.sampler);
-  sampler.resource_info =
-      BindlessResourceAllocator::get().allocate_sampler_descriptor(sampler.sampler);
+  sampler.resource_info = ResourceAllocator::get().allocate_sampler_descriptor(sampler.sampler);
   sampler_cache_.emplace(hash, sampler);
 
   return sampler;

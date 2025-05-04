@@ -681,11 +681,9 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
         }
       }
       futures.clear();
-      VkRender2::get().transfer_submit([start_copy_idx, end_copy_idx = img_i - 1, &img_upload_infos,
-                                        &result, &state, curr_staging_offset, &img_staging_buf,
-                                        batch_upload_size](
-                                           VkCommandBuffer cmd, VkFence fence,
-                                           std::queue<InFlightResource<vk2::Buffer*>>& transfers) {
+      VkRender2::get().immediate_submit([start_copy_idx, end_copy_idx = img_i - 1,
+                                         &img_upload_infos, &result, &state, curr_staging_offset,
+                                         &img_staging_buf, batch_upload_size](VkCommandBuffer cmd) {
         state.reset(cmd);
         for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
           const auto& img_upload = img_upload_infos[i];
@@ -730,7 +728,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
               VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
         }
         state.flush_barriers();
-        transfers.emplace(img_staging_buf, fence);
+        // transfers.emplace(img_staging_buf, fence);
         img_staging_buf = vk2::StagingBufferPool::get().acquire(batch_upload_size);
       });
 

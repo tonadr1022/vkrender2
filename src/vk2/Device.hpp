@@ -64,10 +64,12 @@ class Device {
     VkQueue queue{};
     u32 family_idx{};
   };
+
   static void init(const CreateInfo& info);
   static Device& get();
   static void destroy();
   void on_imgui() const;
+  void queue_submit(QueueType type, std::span<VkSubmitInfo2> submits);
   void queue_submit(QueueType type, std::span<VkSubmitInfo2> submits, VkFence fence);
 
   [[nodiscard]] VkDevice device() const { return vkb_device_.device; }
@@ -76,8 +78,9 @@ class Device {
   }
   [[nodiscard]] const vkb::Device& vkb_device() const { return vkb_device_; }
 
-  VkFormat get_swapchain_format();
+  // VkFormat get_swapchain_format();
 
+  VkImage acquire_next_image();
   // TODO: eradicate this
   [[nodiscard]] VkInstance get_instance() const { return instance_; }
   [[nodiscard]] VkSurfaceKHR get_surface() const { return surface_; }
@@ -131,6 +134,18 @@ class Device {
   constexpr u32 get_frames_in_flight() { return frames_in_flight; }
   [[nodiscard]] AttachmentInfo get_swapchain_info() const;
   [[nodiscard]] VkImage get_swapchain_img(u32 idx) const;
+  void submit_to_graphics_queue();
+  void begin_frame();
+  [[nodiscard]] u32 curr_frame_num() const { return curr_frame_num_; }
+
+  struct PerFrameData {
+    VkSemaphore render_semaphore{};
+    VkFence render_fence{};
+  };
+  PerFrameData& curr_frame() { return per_frame_data_[curr_frame_num_ % per_frame_data_.size()]; }
+  VkSemaphore curr_swapchain_semaphore() {
+    return swapchain_.acquire_semaphores[swapchain_.acquire_semaphore_idx];
+  }
 
  private:
   Queue queues_[(u32)QueueType::Count];
@@ -138,6 +153,7 @@ class Device {
   void init_impl(const CreateInfo& info);
   void destroy_impl();
 
+  std::vector<PerFrameData> per_frame_data_;
   VkSurfaceKHR surface_;
   VkDevice device_;
   Swapchain swapchain_;
@@ -148,6 +164,8 @@ class Device {
   vkb::Device vkb_device_;
   VmaAllocator allocator_;
   VkDescriptorPool imgui_descriptor_pool_;
+  u32 curr_frame_num_{};
+  bool resize_swapchain_req_{};
   static constexpr u32 frames_in_flight = 2;
 };
 

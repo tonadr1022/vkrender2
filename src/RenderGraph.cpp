@@ -210,6 +210,8 @@ VoidResult RenderGraph::validate() {
 
 VoidResult RenderGraph::bake() {
   ZoneScoped;
+  swapchain_img_ = vk2::get_device().acquire_next_image();
+  desc_ = vk2::get_device().get_swapchain_info();
   // validate
   // go through each input and make sure it's an output of a previous pass if it needs to read from
   // it for (auto& pass : passes_) {
@@ -470,8 +472,7 @@ VoidResult RenderGraph::bake() {
 
 void RenderGraph::execute(CmdEncoder& cmd) {
   ZoneScoped;
-  if (swapchain_info_.curr_img == nullptr || swapchain_info_.height == 0 ||
-      swapchain_info_.width == 0) {
+  if (swapchain_img_ == nullptr || desc_.dims.x == 0 || desc_.dims.y == 0) {
     LERROR("invalid swapchain info");
     return;
   }
@@ -551,7 +552,7 @@ void RenderGraph::execute(CmdEncoder& cmd) {
               .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
               .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
               .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-              .image = swapchain_info_.curr_img,
+              .image = swapchain_img_,
               .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
           },
       };
@@ -600,10 +601,9 @@ void RenderGraph::execute(CmdEncoder& cmd) {
                               .pImageMemoryBarriers = img_barriers};
         vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
 
-        VkExtent3D dims{glm::min(tex->create_info().extent.width, swapchain_info_.width),
-                        glm::min(tex->create_info().extent.height, swapchain_info_.height), 1};
-        vk2::blit_img(cmd.cmd(), tex->image(), swapchain_info_.curr_img, dims,
-                      VK_IMAGE_ASPECT_COLOR_BIT);
+        VkExtent3D dims{glm::min(tex->create_info().extent.width, desc_.dims.x),
+                        glm::min(tex->create_info().extent.height, desc_.dims.y), 1};
+        vk2::blit_img(cmd.cmd(), tex->image(), swapchain_img_, dims, VK_IMAGE_ASPECT_COLOR_BIT);
 
         // write after read barrier
         state.layout = img_barriers[0].newLayout;
@@ -624,7 +624,7 @@ void RenderGraph::execute(CmdEncoder& cmd) {
               .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT,
               .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
               .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-              .image = swapchain_info_.curr_img,
+              .image = swapchain_img_,
               .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
                                    .levelCount = 1,
                                    .layerCount = 1},
@@ -739,7 +739,7 @@ ResourceDimensions RenderGraph::get_resource_dims(const RenderResource& resource
   if (resource.get_type() == ResourceType::Buffer) {
     dims.buffer_info = resource.buffer_info;
   } else {
-    assert(swapchain_info_.width > 0 && swapchain_info_.height > 0);
+    assert(desc_.dims.x > 0 && desc_.dims.y > 0);
     dims = {.format = resource.info.format,
             .size_class = resource.info.size_class,
             .depth = 1,
@@ -748,8 +748,8 @@ ResourceDimensions RenderGraph::get_resource_dims(const RenderResource& resource
             .samples = 1,
             .image_usage_flags = resource.image_usage};
     if (resource.info.size_class == SizeClass::SwapchainRelative) {
-      dims.width = swapchain_info_.width;
-      dims.height = swapchain_info_.height;
+      dims.width = desc_.dims.x;
+      dims.height = desc_.dims.y;
     } else if (resource.info.size_class == SizeClass::Absolute) {
       dims.width = (uint32_t)resource.info.dims.x;
       dims.height = (uint32_t)resource.info.dims.y;
@@ -758,10 +758,6 @@ ResourceDimensions RenderGraph::get_resource_dims(const RenderResource& resource
     }
   }
   return dims;
-}
-
-void RenderGraph::set_swapchain_info(const RenderGraphSwapchainInfo& info) {
-  swapchain_info_ = info;
 }
 
 void RenderGraph::build_physical_resource_reqs() {
@@ -892,8 +888,8 @@ void RenderGraph::setup_attachments() {
           if (img) {
             const auto& cinfo = img->create_info();
             if (dims.size_class == SizeClass::SwapchainRelative) {
-              valid_extent = cinfo.extent.width == swapchain_info_.width &&
-                             cinfo.extent.height == swapchain_info_.height;
+              valid_extent =
+                  cinfo.extent.width == desc_.dims.x && cinfo.extent.height == desc_.dims.y;
             } else {
               valid_extent = cinfo.extent.width == dims.width &&
                              cinfo.extent.height == dims.height && cinfo.extent.depth == dims.depth;

@@ -19,7 +19,7 @@ uint32_t get_mip_levels(VkExtent2D size) {
 Image::~Image() {
   if (image_) {
     assert(allocation_);
-    BindlessResourceAllocator::get().delete_texture({image_, allocation_});
+    ResourceAllocator::get().delete_texture({image_, allocation_});
     image_ = nullptr;
   }
 }
@@ -60,11 +60,11 @@ ImageView::ImageView(const Image& texture, const ImageViewCreateInfo& info) : cr
   if ((format_is_color(info.format) && (texture.create_info().override_usage_flags == 0 &&
                                         texture.create_info().usage == ImageUsage::General)) ||
       ((texture.create_info().override_usage_flags & VK_IMAGE_USAGE_STORAGE_BIT) != 0)) {
-    storage_image_resource_info_ = BindlessResourceAllocator::get().allocate_storage_img_descriptor(
-        view_, VK_IMAGE_LAYOUT_GENERAL);
+    storage_image_resource_info_ =
+        ResourceAllocator::get().allocate_storage_img_descriptor(view_, VK_IMAGE_LAYOUT_GENERAL);
   }
   if (texture.usage() & VK_IMAGE_USAGE_SAMPLED_BIT) {
-    sampled_image_resource_info_ = BindlessResourceAllocator::get().allocate_sampled_img_descriptor(
+    sampled_image_resource_info_ = ResourceAllocator::get().allocate_sampled_img_descriptor(
         view_, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
   }
 }
@@ -254,7 +254,7 @@ ImageView& ImageView::operator=(ImageView&& other) noexcept {
 
 ImageView::~ImageView() {
   if (view_) {
-    BindlessResourceAllocator::get().delete_texture_view(
+    ResourceAllocator::get().delete_texture_view(
         {storage_image_resource_info_, sampled_image_resource_info_, view_});
     view_ = nullptr;
   }

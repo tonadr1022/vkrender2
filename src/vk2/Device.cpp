@@ -280,30 +280,29 @@ void Device::init_impl(const CreateInfo& info) {
   vkSetDebugUtilsObjectNameEXT(device_, &name_info);
 #endif
   {
-    ZoneScopedN("init swapchain");
-#if defined(VK_USE_PLATFORM_WAYLAND_KHR)
-    VkPresentModeKHR presentMode =
-        info.vsync ? VK_PRESENT_MODE_FIFO_KHR : VK_PRESENT_MODE_MAILBOX_KHR;
-#else
-    VkPresentModeKHR present_mode =
-        info.vsync ? VK_PRESENT_MODE_FIFO_KHR : VK_PRESENT_MODE_IMMEDIATE_KHR;
-#endif
-    auto& device = vk2::get_device();
     int w, h;
     glfwGetWindowSize(window_, &w, &h);
-    swapchain_.init({.phys_device = device.get_physical_device(),
-                     .device = device.device(),
-                     .surface = device.get_surface(),
-                     .present_mode = present_mode,
-                     .dims = {w, h},
-                     .queue_idx = queues_[(u32)QueueType::Graphics].family_idx,
-                     .requested_resize = false},
-                    vk2::get_device().get_swapchain_format());
-    swapchain_.recreate_img_views(vk2::get_device().device());
+    swapchain_.surface = surface_;
+    create_swapchain(swapchain_, SwapchainDesc{.width = static_cast<u32>(w),
+                                               .height = static_cast<u32>(h),
+                                               .buffer_count = frames_in_flight,
+                                               .vsync = info.vsync});
+  }
+  {
+    for (u32 i = 0; i < frames_in_flight; i++) {
+      auto& d = per_frame_data_.emplace_back();
+      d.render_fence = create_fence();
+      d.render_semaphore = create_semaphore();
+    }
   }
 }
 
 void Device::destroy_impl() {
+  for (auto& d : per_frame_data_) {
+    vkDestroySemaphore(device_, d.render_semaphore, nullptr);
+    vkDestroyFence(device_, d.render_fence, nullptr);
+  }
+
   ImGui_ImplVulkan_Shutdown();
   vkDestroyDescriptorPool(device_, imgui_descriptor_pool_, nullptr);
   swapchain_.destroy(device_);
@@ -315,21 +314,6 @@ void Device::destroy_impl() {
 }
 
 Device& get_device() { return Device::get(); }
-
-VkFormat Device::get_swapchain_format() {
-  u32 cnt;
-  VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(get_physical_device(), surface_, &cnt, nullptr));
-  assert(cnt > 0);
-  std::vector<VkSurfaceFormatKHR> formats(cnt);
-  VK_CHECK(
-      vkGetPhysicalDeviceSurfaceFormatsKHR(get_physical_device(), surface_, &cnt, formats.data()));
-  for (auto format : formats) {
-    if (format.format == VK_FORMAT_R8G8B8A8_UNORM || format.format == VK_FORMAT_B8G8R8A8_UNORM) {
-      return format.format;
-    }
-  }
-  return formats[0].format;
-}
 
 VkCommandPool Device::create_command_pool(QueueType type, VkCommandPoolCreateFlags flags) const {
   VkCommandPoolCreateInfo info{.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -366,15 +350,14 @@ VkFence Device::create_fence(VkFenceCreateFlags flags) const {
 }
 
 VkSemaphore Device::create_semaphore(bool timeline) const {
-  VkSemaphoreTypeCreateInfo timeline_create_info;
-  timeline_create_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO;
-  timeline_create_info.pNext = nullptr;
-  timeline_create_info.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
-  timeline_create_info.initialValue = 0;
-
+  VkSemaphoreTypeCreateInfo cinfo{};
+  cinfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO;
+  cinfo.pNext = nullptr;
+  cinfo.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+  cinfo.initialValue = 0;
   VkSemaphoreCreateInfo info{
       .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-      .pNext = timeline ? &timeline_create_info : nullptr,
+      .pNext = timeline ? &cinfo : nullptr,
   };
   VkSemaphore semaphore;
   VK_CHECK(vkCreateSemaphore(device_, &info, nullptr, &semaphore));
@@ -475,6 +458,10 @@ void CopyAllocator::destroy() {
 void Device::queue_submit(QueueType type, std::span<VkSubmitInfo2> submits, VkFence fence) {
   VK_CHECK(vkQueueSubmit2KHR(queues_[(u32)type].queue, submits.size(), submits.data(), fence));
 }
+void Device::queue_submit(QueueType type, std::span<VkSubmitInfo2> submits) {
+  VK_CHECK(vkQueueSubmit2KHR(queues_[(u32)type].queue, submits.size(), submits.data(),
+                             curr_frame().render_fence));
+}
 
 void Device::init_imgui() {
   ZoneScopedN("init imgui");
@@ -542,5 +529,67 @@ AttachmentInfo Device::get_swapchain_info() const {
 }
 
 VkImage Device::get_swapchain_img(u32 idx) const { return swapchain_.imgs[idx]; }
+
+VkImage Device::acquire_next_image() {
+  swapchain_.acquire_semaphore_idx =
+      (swapchain_.acquire_semaphore_idx + 1) % swapchain_.imgs.size();
+  VkResult acquire_next_image_result;
+  // acquire next image
+  do {
+    acquire_next_image_result =
+        vkAcquireNextImageKHR(device_, swapchain_.swapchain, 1000000000,
+                              swapchain_.acquire_semaphores[swapchain_.acquire_semaphore_idx],
+                              nullptr, &swapchain_.acquire_semaphore_idx);
+    if (acquire_next_image_result == VK_TIMEOUT) {
+      LERROR("vkAcquireNextImageKHR resulted in VK_TIMEOUT, retring");
+    }
+  } while (acquire_next_image_result == VK_TIMEOUT);
+
+  if (acquire_next_image_result != VK_SUCCESS) {
+    // handle outdated error
+    if (acquire_next_image_result == VK_SUBOPTIMAL_KHR ||
+        acquire_next_image_result == VK_ERROR_OUT_OF_DATE_KHR) {
+      // recreate new semaphore
+      // need to make new semaphore since wsi doesn't unsignal it
+      for (auto& sem : swapchain_.acquire_semaphores) {
+        vkDestroySemaphore(device_, sem, nullptr);
+      }
+      swapchain_.acquire_semaphores.clear();
+      int x, y;
+      glfwGetWindowSize(window_, &x, &y);
+      auto desc = swapchain_.desc;
+      desc.width = x;
+      desc.height = y;
+      create_swapchain(swapchain_, desc);
+      return acquire_next_image();
+    }
+    assert(0);
+  }
+  return swapchain_.imgs[swapchain_.curr_swapchain_idx];
+}
+
+void Device::submit_to_graphics_queue() {
+  VkResult res;
+  VkPresentInfoKHR info{.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+                        .waitSemaphoreCount = 1,
+                        .pWaitSemaphores = &curr_frame().render_semaphore,
+                        .swapchainCount = 1,
+                        .pSwapchains = &swapchain_.swapchain,
+                        .pImageIndices = &swapchain_.curr_swapchain_idx,
+                        .pResults = &res};
+  VkResult present_result = vkQueuePresentKHR(queues_[(u32)QueueType::Graphics].queue, &info);
+  if (present_result == VK_ERROR_OUT_OF_DATE_KHR || present_result == VK_SUBOPTIMAL_KHR) {
+  } else {
+    VK_CHECK(present_result);
+  }
+
+  curr_frame_num_++;
+}
+void Device::begin_frame() {
+  // wait for fence
+  u64 timeout = 1000000000;
+  vkWaitForFences(device_, 1, &curr_frame().render_fence, true, timeout);
+  VK_CHECK(vkResetFences(device_, 1, &curr_frame().render_fence));
+}
 
 }  // namespace gfx::vk2

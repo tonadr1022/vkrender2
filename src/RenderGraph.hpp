@@ -172,14 +172,8 @@ struct RenderGraphPass {
   // [[nodiscard]] bool contains_input(const std::string& name) const;
 };
 
-struct RenderGraphSwapchainInfo {
-  VkImage curr_img{};
-  uint32_t width{}, height{};
-};
-
 struct RenderGraph {
   explicit RenderGraph(std::string name = "RenderGraph");
-  void set_swapchain_info(const RenderGraphSwapchainInfo& info);
   RenderGraphPass& add_pass(const std::string& name,
                             RenderGraphPass::Type type = RenderGraphPass::Type::Graphics);
   void set_backbuffer_img(const std::string& name) { backbuffer_img_ = name; }
@@ -202,7 +196,7 @@ struct RenderGraph {
  private:
   // TODO: integrate swapchain more closely?
   friend struct RenderGraphPass;
-  RenderGraphSwapchainInfo swapchain_info_{};
+
   std::string name_;
   std::vector<RenderGraphPass> passes_;
   std::string backbuffer_img_;
@@ -296,6 +290,8 @@ struct RenderGraph {
   };
   std::vector<ResourceState2> resource_states_;
   u64 all_submitted_pass_name_hash_{};
+  VkImage swapchain_img_;
+  AttachmentInfo desc_;
   bool log_ = true;
 };
 

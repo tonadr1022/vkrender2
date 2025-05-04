@@ -52,7 +52,7 @@ Buffer::Buffer(const BufferCreateInfo &cinfo, std::string name) : name_(std::mov
     return;
   }
   if (cinfo.usage & BufferUsage_Storage) {
-    resource_info_ = BindlessResourceAllocator::get().allocate_storage_buffer_descriptor(buffer_);
+    resource_info_ = ResourceAllocator::get().allocate_storage_buffer_descriptor(buffer_);
   }
   if (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) {
     VkBufferDeviceAddressInfo info{.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
@@ -92,8 +92,7 @@ Buffer &Buffer::operator=(Buffer &&other) noexcept {
 Buffer::~Buffer() {
   if (buffer_) {
     assert(allocation_);
-    BindlessResourceAllocator::get().delete_buffer(
-        BufferDeleteInfo{buffer_, allocation_, resource_info_});
+    ResourceAllocator::get().delete_buffer(BufferDeleteInfo{buffer_, allocation_, resource_info_});
     buffer_ = nullptr;
   }
 }
