@@ -323,43 +323,40 @@ VkRender2::VkRender2(const InitInfo& info) : BaseRenderer(info) {
     // memcpy(staging->mapped_data(), cube_indices, index_buf_size);
     cube_vertices_slot_ = static_vertex_buf_.allocator.allocate(vert_buf_size);
     // cube_indices_gpu_offset_ = static_index_buf_->alloc(index_buf_size);
-    transfer_submit(
-        [this, vert_buf_size, staging](VkCommandBuffer cmd, VkFence fence,
-                                       std::queue<InFlightResource<vk2::Buffer*>>& transfers) {
-          transfer_q_state_.reset(cmd)
-              .transition_buffer_to_transfer_dst(static_vertex_buf_.get_buffer()->buffer())
-              .transition_buffer_to_transfer_dst(static_index_buf_.get_buffer()->buffer())
-              .flush_barriers();
-          VkBufferCopy2KHR buf_copy =
-              init::buffer_copy(0, cube_vertices_slot_.get_offset(), vert_buf_size);
-          VkCopyBufferInfo2KHR buf_copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
-                                             .srcBuffer = staging->buffer(),
-                                             .dstBuffer = static_vertex_buf_.get_buffer()->buffer(),
-                                             .regionCount = 1,
-                                             .pRegions = &buf_copy};
-          vkCmdCopyBuffer2KHR(cmd, &buf_copy_info);
-          // vkCmdCopyBuffer2KHR(cmd, vk2::addr(VkCopyBufferInfo2KHR{
-          //                              .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
-          //                              .srcBuffer = staging->buffer(),
-          //                              .dstBuffer = static_index_buf_->buffer.buffer(),
-          //                              .regionCount = 1,
-          //                              .pRegions = addr(init::buffer_copy(
-          //                                  vert_buf_size, cube_indices_gpu_offset_,
-          //                                  index_buf_size))}));
+    immediate_submit([this, vert_buf_size, staging](VkCommandBuffer cmd) {
+      transfer_q_state_.reset(cmd)
+          .transition_buffer_to_transfer_dst(static_vertex_buf_.get_buffer()->buffer())
+          .transition_buffer_to_transfer_dst(static_index_buf_.get_buffer()->buffer())
+          .flush_barriers();
+      VkBufferCopy2KHR buf_copy =
+          init::buffer_copy(0, cube_vertices_slot_.get_offset(), vert_buf_size);
+      VkCopyBufferInfo2KHR buf_copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+                                         .srcBuffer = staging->buffer(),
+                                         .dstBuffer = static_vertex_buf_.get_buffer()->buffer(),
+                                         .regionCount = 1,
+                                         .pRegions = &buf_copy};
+      vkCmdCopyBuffer2KHR(cmd, &buf_copy_info);
+      // vkCmdCopyBuffer2KHR(cmd, vk2::addr(VkCopyBufferInfo2KHR{
+      //                              .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+      //                              .srcBuffer = staging->buffer(),
+      //                              .dstBuffer = static_index_buf_->buffer.buffer(),
+      //                              .regionCount = 1,
+      //                              .pRegions = addr(init::buffer_copy(
+      //                                  vert_buf_size, cube_indices_gpu_offset_,
+      //                                  index_buf_size))}));
 
-          // TODO: this would be solved by a render graph. double barrier happens if load scene at
-          // same time before drawing transfer_q_state_
-          //     .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
-          //                            VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT,
-          //                            static_vertex_buf_->buffer.buffer(),
-          //                            queues_.transfer_queue_idx, queues_.graphics_queue_idx)
-          //     .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT,
-          //                            VK_ACCESS_2_INDEX_READ_BIT,
-          //                            static_index_buf_->buffer.buffer(),
-          //                            queues_.transfer_queue_idx, queues_.graphics_queue_idx)
-          //     .flush_barriers();
-          transfers.emplace(staging, fence);
-        });
+      // TODO: this would be solved by a render graph. double barrier happens if load scene at
+      // same time before drawing transfer_q_state_
+      //     .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
+      //                            VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT,
+      //                            static_vertex_buf_->buffer.buffer(),
+      //                            queues_.transfer_queue_idx, queues_.graphics_queue_idx)
+      //     .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT,
+      //                            VK_ACCESS_2_INDEX_READ_BIT,
+      //                            static_index_buf_->buffer.buffer(),
+      //                            queues_.transfer_queue_idx, queues_.graphics_queue_idx)
+      //     .flush_barriers();
+    });
   }
   default_env_map_path_ = info.resource_dir / "hdr" / "newport_loft.hdr";
 }
@@ -500,12 +497,6 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
       VK_PIPELINE_STAGE_2_TRANSFER_BIT | VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT);
   auto signal_info = vk2::init::semaphore_submit_info(get_device().curr_frame().render_semaphore,
                                                       VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT);
-  if (transfer_queue_manager_->submit_signaled_) {
-    wait_semaphores[next_wait_sem_idx++] = vk2::init::semaphore_submit_info(
-        transfer_queue_manager_->submit_semaphore_, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-        transfer_queue_manager_->semaphore_value_);
-    transfer_queue_manager_->submit_signaled_ = false;
-  }
   auto cmd_buf_submit_info = vk2::init::command_buffer_submit_info(cmd_buf);
   auto submit = vk2::init::queue_submit_info(SPAN1(cmd_buf_submit_info),
                                              std::span(wait_semaphores.data(), next_wait_sem_idx),
@@ -1519,7 +1510,9 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
   {
     auto& pp = rg.add_pass("post_process");
     auto draw_out_handle = pp.add("draw_out", {.format = draw_img_format_}, Access::ComputeRead);
-    auto final_out_handle = pp.add("final_out", AttachmentInfo{}, Access::ComputeWrite);
+    auto final_out_handle =
+        pp.add("final_out", AttachmentInfo{.format = get_device().get_swapchain_info().format},
+               Access::ComputeWrite);
     pp.set_execute_fn([this, &rg, draw_out_handle, final_out_handle](CmdEncoder& cmd) {
       TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "post_process");
       if (postprocess_pass_enabled.get()) {

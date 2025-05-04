@@ -265,8 +265,8 @@ void Device::init_impl(const CreateInfo& info) {
   for (u64 i = 0; i < vkb_device_.queue_families.size(); i++) {
     if (i == queues_[(u32)QueueType::Graphics].family_idx) continue;
     if (vkb_device_.queue_families[i].queueFlags & VK_QUEUE_TRANSFER_BIT) {
-      vkGetDeviceQueue(device_, i, 0, &queues_[(u32)QueueType::Graphics].queue);
-      queues_[(u32)QueueType::Graphics].family_idx = i;
+      vkGetDeviceQueue(device_, i, 0, &queues_[(u32)QueueType::Transfer].queue);
+      queues_[(u32)QueueType::Transfer].family_idx = i;
       break;
     }
   }
@@ -479,7 +479,7 @@ void Device::init_imgui() {
         [](const char* functionName, void* vulkanInstance) {
           return vkGetInstanceProcAddr(*static_cast<VkInstance*>(vulkanInstance), functionName);
         },
-        reinterpret_cast<void*>(instance));
+        reinterpret_cast<void*>(&instance));
     // create descriptor pool
     VkDescriptorPoolSize pool_sizes[] = {{VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
                                          {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
@@ -539,7 +539,7 @@ VkImage Device::acquire_next_image() {
     acquire_next_image_result =
         vkAcquireNextImageKHR(device_, swapchain_.swapchain, 1000000000,
                               swapchain_.acquire_semaphores[swapchain_.acquire_semaphore_idx],
-                              nullptr, &swapchain_.acquire_semaphore_idx);
+                              nullptr, &swapchain_.curr_swapchain_idx);
     if (acquire_next_image_result == VK_TIMEOUT) {
       LERROR("vkAcquireNextImageKHR resulted in VK_TIMEOUT, retring");
     }
@@ -554,6 +554,7 @@ VkImage Device::acquire_next_image() {
       for (auto& sem : swapchain_.acquire_semaphores) {
         vkDestroySemaphore(device_, sem, nullptr);
       }
+      LINFO("new semapohres create");
       swapchain_.acquire_semaphores.clear();
       int x, y;
       glfwGetWindowSize(window_, &x, &y);

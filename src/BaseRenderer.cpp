@@ -30,6 +30,7 @@ BaseRenderer::BaseRenderer(const InitInfo& info)
   }
 
   vk2::Device::init({info.name, window_, info.vsync});
+  device_ = vk2::get_device().device();
 
   vk2::FencePool::init(device_);
   app_del_queue_.push([]() { vk2::FencePool::destroy(); });

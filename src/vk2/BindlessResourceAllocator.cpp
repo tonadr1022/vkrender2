@@ -223,7 +223,6 @@ void ResourceAllocator::delete_texture(const TextureDeleteInfo& img) {
 }
 
 void ResourceAllocator::flush_deletions() {
-  assert(buffer_count_ > 0);
   std::erase_if(texture_delete_q_, [this](const DeleteQEntry<TextureDeleteInfo>& entry) {
     if (entry.frame + buffer_count_ < frame_num_) {
       vmaDestroyImage(allocator_, entry.data.img, entry.data.allocation);

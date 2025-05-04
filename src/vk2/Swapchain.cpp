@@ -128,21 +128,23 @@ void create_swapchain(Swapchain& swapchain, const SwapchainDesc& desc) {
                                                      available_present_modes.data()));
 
   VkSurfaceFormatKHR chosen_surface_format;
+  bool found_format = false;
   if (available_surface_formats.size() == 1 &&
       available_surface_formats[0].format == VK_FORMAT_UNDEFINED) {
-    chosen_surface_format.format = VK_FORMAT_B8G8R8A8_SRGB;
+    found_format = true;
+    chosen_surface_format.format = VK_FORMAT_B8G8R8A8_UNORM;
     chosen_surface_format.colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
   } else {
     for (const auto& available_format : available_surface_formats) {
-      // prefer srgb
-      if (available_format.format == VK_FORMAT_B8G8R8A8_SRGB &&
+      if (available_format.format == VK_FORMAT_B8G8R8A8_UNORM &&
           available_format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
         chosen_surface_format = available_format;
+        found_format = true;
         break;
       }
     }
 
-    if (chosen_surface_format.format != VK_FORMAT_B8G8R8A8_SRGB) {
+    if (!found_format) {
       chosen_surface_format = available_surface_formats[0];
     }
   }

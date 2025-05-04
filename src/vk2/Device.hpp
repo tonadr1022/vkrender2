@@ -82,7 +82,7 @@ class Device {
 
   VkImage acquire_next_image();
   // TODO: eradicate this
-  [[nodiscard]] VkInstance get_instance() const { return instance_; }
+  [[nodiscard]] VkInstance get_instance() const { return instance_.instance; }
   [[nodiscard]] VkSurfaceKHR get_surface() const { return surface_; }
 
   // TODO: no resetting individual command buffers
@@ -143,6 +143,7 @@ class Device {
     VkFence render_fence{};
   };
   PerFrameData& curr_frame() { return per_frame_data_[curr_frame_num_ % per_frame_data_.size()]; }
+
   VkSemaphore curr_swapchain_semaphore() {
     return swapchain_.acquire_semaphores[swapchain_.acquire_semaphore_idx];
   }
