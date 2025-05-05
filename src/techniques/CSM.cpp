@@ -19,6 +19,7 @@
 #include "util/CVar.hpp"
 #include "vk2/Device.hpp"
 #include "vk2/Initializers.hpp"
+#include "vk2/ShaderCompiler.hpp"
 #include "vk2/VkTypes.hpp"
 
 using namespace gfx::vk2;
@@ -171,23 +172,26 @@ CSM::CSM(BaseRenderer* renderer, DrawFunc draw_fn, AddRenderDependenciesFunc add
   }
   ZoneScoped;
   GraphicsPipelineCreateInfo shadow_depth_info{
-      .shaders = {{"shadow_depth.vert"}, {"shadow_depth.frag"}},
+      .shaders = {{"shadow_depth.vert", ShaderType::Vertex},
+                  {"shadow_depth.frag", ShaderType::Fragment}},
       .rendering = {.depth_format = to_vkformat(Format::D32Sfloat)},
       .rasterization = {.depth_clamp = true, .depth_bias = true},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::Less),
       .dynamic_state = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
-                        VK_DYNAMIC_STATE_DEPTH_BIAS},
+                        VK_DYNAMIC_STATE_DEPTH_BIAS, VK_DYNAMIC_STATE_CULL_MODE},
   };
-  shadow_depth_alpha_mask_pipline_ =
-      PipelineManager::get().load_graphics_pipeline(shadow_depth_info);
+  shadow_depth_alpha_mask_pipline_ = PipelineManager::get().load(shadow_depth_info);
   shadow_depth_info.shaders.pop_back();
-  shadow_depth_pipline_ = PipelineManager::get().load_graphics_pipeline(shadow_depth_info);
-  depth_debug_pipeline_ = PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
-      .shaders = {{"fullscreen_quad.vert"}, {"debug/depth_debug.frag"}},
+  shadow_depth_pipline_ = PipelineManager::get().load(shadow_depth_info);
+
+  depth_debug_pipeline_ = PipelineManager::get().load(GraphicsPipelineCreateInfo{
+      .shaders = {{"fullscreen_quad.vert", ShaderType::Vertex},
+                  {"debug/depth_debug.frag", ShaderType::Fragment}},
       .rendering = {.color_formats = {to_vkformat(debug_shadow_img_format_)}},
       .rasterization = {.cull_mode = CullMode::Front},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_disable(),
   });
+
   shadow_map_img_att_info_ = {.size_class = SizeClass::Absolute,
                               .dims = {shadow_map_res_, 1},
                               .format = Format::D32Sfloat,

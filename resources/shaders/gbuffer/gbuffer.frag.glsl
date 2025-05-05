@@ -2,8 +2,8 @@
 
 #extension GL_GOOGLE_include_directive : enable
 #define BDA 1
-#include "../common.h.glsl"
 #include "./gbuffer_common.h.glsl"
+#include "../common.h.glsl"
 #include "../math.h.glsl"
 #include "../material.h.glsl"
 
@@ -23,9 +23,6 @@ VK2_DECLARE_SAMPLED_IMAGES(texture2D);
 layout(std430, buffer_reference) readonly buffer Materials {
     Material mats[];
 };
-// VK2_DECLARE_STORAGE_BUFFERS_RO(MaterialBuffers){
-// Material mats[];
-// } materials[];
 
 void main() {
     SceneData scene_data = SceneDatas(scene_buffer).data;
@@ -80,5 +77,6 @@ void main() {
 
     gbuffer_a = vec4(encode_oct(N) * 0.5 + 0.5, metallic, roughness);
     gbuffer_b = albedo;
+    // gbuffer_b = vec4(1.);
     gbuffer_c = vec4(emissive, ao);
 }

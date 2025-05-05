@@ -6,11 +6,10 @@
 #include <filesystem>
 #include <initializer_list>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
-#include "FixedVector.hpp"
 #include "Types.hpp"
-#include "util/FileWatcher.hpp"
 #include "vk2/Handle.hpp"
 #include "vk2/ShaderCompiler.hpp"
 
@@ -24,17 +23,8 @@ struct Pipeline {
 
 VK2_DEFINE_HANDLE_WITH_NAME(Pipeline, PipelineAndMetadata);
 
-enum class ShaderType : u8 { Vertex, Fragment, Compute };
-struct PipelineShaderInfo {
-  std::filesystem::path path;
-  std::vector<std::string> defines;
-  std::string entry_point{"main"};
-  ShaderType type;
-};
 struct ComputePipelineCreateInfo {
-  std::filesystem::path path;
-  VkPipelineLayout layout{};
-  const char *entry_point = "main";
+  ShaderCreateInfo cinfo{};
 };
 
 // TODO: vertex input, tesselation
@@ -105,9 +95,8 @@ struct GraphicsPipelineCreateInfo {
     bool stencil_test_enable{false};
   };
 
-  util::fixed_vector<PipelineShaderInfo, 2> shaders;
+  std::vector<ShaderCreateInfo> shaders;
 
-  PipelineShaderInfo fragment_info;
   // TODO: move elsewhere
   VkPipelineLayout layout{};
   PrimitiveTopology topology{PrimitiveTopology::TriangleList};
@@ -135,21 +124,21 @@ class PipelineManager {
   static void init(VkDevice device, std::filesystem::path shader_dir, bool hot_reload,
                    VkPipelineLayout default_layout = nullptr);
   static void shutdown();
-
-  void on_shader_update();
   void bind_graphics(VkCommandBuffer cmd, PipelineHandle handle);
   void bind_compute(VkCommandBuffer cmd, PipelineHandle handle);
 
-  [[nodiscard]] PipelineHandle load_compute_pipeline(const ComputePipelineCreateInfo &info);
-  [[nodiscard]] PipelineHandle load_graphics_pipeline(const GraphicsPipelineCreateInfo &info);
-
+  [[nodiscard]] PipelineHandle load_compute(const ShaderCreateInfo &info);
+  [[nodiscard]] PipelineHandle load(const GraphicsPipelineCreateInfo &info);
   Pipeline *get(PipelineHandle handle);
-  void clear_module_cache();
-  void destroy_pipeline(PipelineHandle handle);
+  void reload_shaders();
+  void reload_pipeline(PipelineHandle handle, bool force);
+  void on_imgui();
 
  private:
-  VkPipeline load_graphics_pipeline_impl(const GraphicsPipelineCreateInfo &info);
-  VkPipeline load_compute_pipeline_impl(const ComputePipelineCreateInfo &info);
+  VkPipeline load_graphics_pipeline_impl(const GraphicsPipelineCreateInfo &info, u64 *out_info_hash,
+                                         bool force);
+  VkPipeline load_compute_pipeline_impl(const ShaderCreateInfo &info, u64 *out_info_hash,
+                                        bool force);
   explicit PipelineManager(VkDevice device, std::filesystem::path shader_dir, bool hot_reload,
                            VkPipelineLayout default_layout);
   ~PipelineManager();
@@ -157,31 +146,32 @@ class PipelineManager {
                                      const char *entry_point = "main");
   [[nodiscard]] std::string get_shader_path(const std::string &path) const;
 
+  enum class PipelineType : u8 {
+    Graphics,
+    Compute,
+    Mesh,
+  };
+
   struct PipelineAndMetadata {
     Pipeline pipeline;
     std::vector<std::string> shader_paths;
+    PipelineType type;
   };
 
-  util::FileWatcher file_watcher_;
   void on_dirty_files(std::span<std::filesystem::path> dirty_files);
-  std::unordered_map<std::string, std::vector<PipelineHandle>> shader_name_to_used_pipelines_;
+
+  std::unordered_map<std::string, std::unordered_set<PipelineHandle>>
+      shader_name_to_used_pipelines_;
   std::unordered_map<PipelineHandle, PipelineAndMetadata> pipelines_;
-
   std::unordered_map<PipelineHandle, GraphicsPipelineCreateInfo> graphics_pipeline_infos_;
-  std::unordered_map<PipelineHandle, ComputePipelineCreateInfo> compute_pipeline_infos_;
-  std::unordered_map<PipelineHandle, uint64_t> pipeline_hashes_;
-
-  // TODO: move shader hot reloader into another class for reuse in other projects
-  std::unordered_map<std::filesystem::path, std::vector<std::string>> shader_to_includes_;
+  std::unordered_map<PipelineHandle, ShaderCreateInfo> compute_pipeline_infos_;
 
   std::filesystem::path shader_dir_;
   size_t get_pipeline_hash(const GraphicsPipelineCreateInfo &info);
 
   ShaderManager shader_manager_;
   std::filesystem::path cache_path_;
-  std::filesystem::path pipeline_hash_cache_path_;
   VkPipelineLayout default_pipeline_layout_{};
   VkDevice device_;
-  bool hot_reload_{false};
 };
 }  // namespace gfx::vk2

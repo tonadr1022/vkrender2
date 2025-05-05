@@ -74,6 +74,7 @@ float filter_pcf(in ShadowData shadow_ubo, uint shadow_img_idx, uint shadow_samp
 }
 
 float calc_shadow(in ShadowData shadow_ubo, in SceneData data, uint shadow_img_idx, uint shadow_sampler_idx, vec3 normal, vec3 frag_pos) {
+    //    return 1.0;
     // get the layer of the cascade depth map using view space depth
     vec4 frag_pos_view_space = data.view * vec4(frag_pos, 1.0);
     float depth_val = abs(frag_pos_view_space.z);

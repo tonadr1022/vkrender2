@@ -16,234 +16,55 @@
 #include <unordered_set>
 
 #include "Common.hpp"
+#include "FixedVector.hpp"
 #include "Logger.hpp"
+#include "imgui.h"
 #include "vk2/Hash.hpp"
 #include "vk2/VkCommon.hpp"
 
-// for glslang reflection and file includes: heavy inspiration/stealing from:
+// src for file includes:
 // https://github.com/JuanDiegoMontoya/Frogfood/blob/main/src/Fvog/Shader2.cpp
 
 namespace {
 
-bool compile_glsl_to_spirv(std::string path, VkShaderStageFlagBits stage,
-                           std::vector<u32>& out_binary, std::vector<std::string>* included_files);
-// bool reflect_shader(std::vector<u32>& binary, vk2::ShaderReflectData& out_data);
-
-bool load_shader_bytes(const std::string& path, std::vector<uint32_t>& result);
-
-std::optional<std::string> load_file(const std::filesystem::path& path);
-
-}  // namespace
-
-namespace {
-
-struct PipelineLayoutCreateInfo {
-  // NOTE: expand these if ever needed
-  static constexpr const int max_pc_ranges = 4;
-  std::array<gfx::vk2::DescriptorSetLayoutData, 4> set_layouts;
-  uint32_t set_layout_cnt{0};
-  std::array<VkPushConstantRange, max_pc_ranges> pc_ranges;
-  uint32_t pc_range_cnt{0};
-  VkShaderStageFlags shader_stage_flags;
-  uint32_t shader_stage_cnt{0};
-};
-
-// VkPipelineLayout create_layout(VkDevice device, PipelineLayoutCreateInfo& data,
-//                                vk2::DescriptorSetLayoutCache& layout_cache) {
-//   ZoneScoped;
-//   // for each set, merge the bindings together
-//   constexpr int max_descriptor_sets = 4;
-//   constexpr int max_set_layout_bindings = 100;
-//
-//   std::array<vk2::DescriptorSetLayoutData, max_descriptor_sets> merged_layout_datas{};
-//   std::array<VkDescriptorSetLayout, max_descriptor_sets> combined_set_layouts{};
-//   std::array<uint64_t, max_descriptor_sets> merged_layout_hashes{};
-//   // go through each of the possible set indices
-//   for (uint32_t set_number = 0; set_number < max_descriptor_sets; set_number++) {
-//     // set merged layout info
-//     auto& merged_layout = merged_layout_datas[set_number];
-//     merged_layout.set_number = set_number;
-//
-//     std::array<std::pair<VkDescriptorSetLayoutBinding, bool>, max_set_layout_bindings>
-//         used_bindings{};
-//     for (uint32_t unmerged_set_ly_idx = 0; unmerged_set_ly_idx < data.set_layout_cnt;
-//          unmerged_set_ly_idx++) {
-//       const auto& unmerged_set_layout = data.set_layouts[unmerged_set_ly_idx];
-//       // if the unmerged set corresponds, merge it
-//       if (unmerged_set_layout.set_number != set_number) continue;
-//
-//       // for each of the bindings, if it's already used, add the shader stage since it doesn't
-//       need
-//       // to be duplicated, otherwise mark used and set it
-//       for (const auto& binding : unmerged_set_layout.bindings) {
-//         if (binding.binding >= max_set_layout_bindings) {
-//           LERROR("exceed max layout bindings for pipeline with shader");
-//           return nullptr;
-//         }
-//
-//         if (used_bindings[binding.binding].second) {
-//           used_bindings[binding.binding].first.stageFlags |= binding.stageFlags;
-//         } else {
-//           used_bindings[binding.binding].second = true;
-//           used_bindings[binding.binding].first = binding;
-//         }
-//       }
-//     }
-//     // add the used bindings to the merged layout
-//     for (uint32_t i = 0; i < max_set_layout_bindings; i++) {
-//       if (used_bindings[i].second) {
-//         merged_layout.bindings.push_back(used_bindings[i].first);
-//       }
-//     }
-//     std::ranges::sort(merged_layout.bindings,
-//                       [](VkDescriptorSetLayoutBinding& a, VkDescriptorSetLayoutBinding& b) {
-//                         return a.binding < b.binding;
-//                       });
-//     merged_layout.create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-//     merged_layout.create_info.bindingCount = merged_layout.bindings.size();
-//     merged_layout.create_info.pBindings = merged_layout.bindings.data();
-//     merged_layout.create_info.flags = 0;
-//     merged_layout.create_info.pNext = nullptr;
-//     if (merged_layout.create_info.bindingCount > 0) {
-//       auto res = layout_cache.create_layout(device, merged_layout.create_info);
-//       merged_layout_hashes[set_number] = res.hash;
-//       combined_set_layouts[set_number] = res.layout;
-//     } else {
-//       merged_layout_hashes[set_number] = 0;
-//       combined_set_layouts[set_number] = VK_NULL_HANDLE;
-//     }
-//   }
-//
-//   // use dummy layouts for the case when sets are akin to: [null, 1, null, null]
-//   // set cnt is the last valid set, so in the above case, 1
-//   uint32_t set_cnt = 0;
-//   for (uint32_t i = 0; i < max_descriptor_sets; i++) {
-//     if (combined_set_layouts[i] != VK_NULL_HANDLE) {
-//       set_cnt = i + 1;
-//     } else {
-//       combined_set_layouts[i] = layout_cache.dummy_layout();
-//     }
-//   }
-//
-//   VkPipelineLayoutCreateInfo pipeline_layout_info{
-//       .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-//       // TODO: flags?
-//       .flags = 0,
-//       .setLayoutCount = set_cnt,
-//       .pSetLayouts = set_cnt == 0 ? nullptr : combined_set_layouts.data(),
-//       .pushConstantRangeCount = data.pc_range_cnt,
-//       .pPushConstantRanges = data.pc_ranges.data(),
-//   };
-//   VkPipelineLayout out_layout;
-//   VK_CHECK(vkCreatePipelineLayout(device, &pipeline_layout_info, nullptr, &out_layout));
-//   return out_layout;
-// }
+bool load_entire_file(const std::string& path, std::vector<uint32_t>& result);
+std::optional<std::string> load_entire_file(const std::filesystem::path& path);
 
 }  // namespace
 
 namespace gfx::vk2 {
 
-bool ShaderManager::get_dirty_stages(std::span<ShaderCreateInfo> infos,
-                                     std::span<bool> dirty_flags) {
-  ZoneScoped;
-  assert(dirty_flags.size() >= infos.size());
-  for (u64 i = 0; i < infos.size(); i++) {
-    auto& info = infos[i];
-    auto& path = info.path;
-    assert(path.extension() != ".spv" && path.extension() != ".glsl");
-    auto glsl_path = std::filesystem::path(path.string() + ".glsl");
-    auto spv_path = std::filesystem::path(path.string() + ".spv");
+namespace {
 
-    if (!std::filesystem::exists(glsl_path)) {
-      LERROR("glsl file does not exist for shader: {}", glsl_path.string());
-      return false;
-    }
-    dirty_flags[i] =
-        !std::filesystem::exists(spv_path) ||
-        std::filesystem::last_write_time(spv_path) < std::filesystem::last_write_time(glsl_path);
+VkShaderStageFlagBits convert_shader_stage(ShaderType type) {
+  switch (type) {
+    case gfx::vk2::ShaderType::Compute:
+      return VK_SHADER_STAGE_COMPUTE_BIT;
+    case gfx::vk2::ShaderType::Fragment:
+      return VK_SHADER_STAGE_FRAGMENT_BIT;
+    case gfx::vk2::ShaderType::Vertex:
+      return VK_SHADER_STAGE_VERTEX_BIT;
+    default:
+      return VkShaderStageFlagBits{};
   }
-  return true;
 }
 
-bool ShaderManager::get_spirv_binary(const std::filesystem::path& path, VkShaderStageFlagBits stage,
-                                     CompileToSpirvResult& result, bool needs_new,
-                                     std::vector<std::string>* include_files) {
-  ZoneScoped;
-  assert(path.extension() != ".spv" && path.extension() != ".glsl");
-  auto spv_path = std::filesystem::path(path.string() + ".spv");
-  auto glsl_path = std::filesystem::path(path.string() + ".glsl");
-
-  // {
-  //   std::string command = std::string(
-  //                             "glslang"
-  //                             " -V ") +
-  //                         glsl_path.string() + " -o " + spv_path.string();
-  //   // command += " -gVS";
-  //   int r = std::system(command.c_str());
-  //   if (r != 0) {
-  //     LINFO("Error compiling: {}", glsl_path.string());
-  //   }
-  //
-  //   return load_shader_bytes(spv_path, result.binary_data);
-  // }
-
-  if (needs_new) {
-    if (!std::filesystem::exists(glsl_path)) {
-      LERROR("glsl file does not exist for shader: {}", glsl_path.string());
-      return false;
-    }
-    LINFO("glsl compile {}", path.string());
-    bool success = compile_glsl_to_spirv(glsl_path, stage, result.binary_data, include_files);
-    if (!success) {
-      return false;
-    }
-    std::ofstream file(spv_path, std::ios::binary);
-    if (!file.is_open()) {
-      LERROR("failed to open file");
-      return false;
-    }
-    file.write(reinterpret_cast<const char*>(result.binary_data.data()),
-               result.binary_data.size() * sizeof(u32));
+size_t hash_shader_info(const ShaderCreateInfo& info) {
+  size_t hash{};
+  for (const auto& define : info.defines) {
+    detail::hashing::hash_combine(hash, define);
   }
-  return load_shader_bytes(spv_path, result.binary_data);
+  detail::hashing::hash_combine(hash, info.entry_point);
+  detail::hashing::hash_combine(hash, info.path.string());
+  detail::hashing::hash_combine(hash, (u32)info.type);
+  return hash;
 }
 
-bool ShaderManager::get_spirv_binary(const std::filesystem::path& path, VkShaderStageFlagBits stage,
-                                     CompileToSpirvResult& result,
-                                     std::vector<std::string>* include_files) {
-  ZoneScoped;
-  assert(path.extension() != ".spv" && path.extension() != ".glsl");
-  auto glsl_path = std::filesystem::path(path.string() + ".glsl");
-  auto spv_path = std::filesystem::path(path.string() + ".spv");
-
-  if (!std::filesystem::exists(glsl_path)) {
-    LERROR("glsl file does not exist for shader: {}", glsl_path.string());
-    return false;
-  }
-  // if spirv is older than glsl, need new spirv
-  bool needs_new_spirv =
-      !std::filesystem::exists(spv_path) ||
-      std::filesystem::last_write_time(spv_path) < std::filesystem::last_write_time(glsl_path);
-
-  if (needs_new_spirv) {
-    bool success = compile_glsl_to_spirv(glsl_path, stage, result.binary_data, include_files);
-    if (!success) {
-      return false;
-    }
-    std::ofstream file(spv_path, std::ios::binary);
-    if (!file.is_open()) {
-      LERROR("failed to open file");
-      return false;
-    }
-    file.write(reinterpret_cast<const char*>(result.binary_data.data()),
-               result.binary_data.size() * sizeof(u32));
-  }
-  return load_shader_bytes(spv_path, result.binary_data);
-}
+}  // namespace
 
 ShaderManager::LoadProgramResult ShaderManager::load_program(
-    std::span<ShaderCreateInfo> shader_create_infos,
-    std::span<std::vector<std::string>> include_files) {
+    std::span<const ShaderCreateInfo> shader_create_infos, std::span<u64> out_create_info_hashes,
+    bool force) {
   ZoneScoped;
   // TODO: thread safe
   LoadProgramResult result{};
@@ -251,30 +72,43 @@ ShaderManager::LoadProgramResult ShaderManager::load_program(
     LERROR("ShaderManager::load_shader: no shaders");
     return result;
   }
-  assert(shader_create_infos.size() < LoadProgramResult::max_stages);
-  std::array<bool, LoadProgramResult::max_stages> dirty_shader_stages;
 
-  if (!get_dirty_stages(shader_create_infos, dirty_shader_stages)) {
-    return result;
-  }
+  util::fixed_vector<CompileToSpirvResult, LoadProgramResult::max_stages> spirv_binaries;
 
-  std::array<CompileToSpirvResult, LoadProgramResult::max_stages> spirv_binaries;
-  for (u64 i = 0; i < shader_create_infos.size(); i++) {
-    if (!dirty_shader_stages[i]) {
-      continue;
-    }
-    auto* inc_files =
-        (include_files.size() && include_files.size() > i) ? &include_files[i] : nullptr;
-    if (!get_spirv_binary(shader_create_infos[i].path, shader_create_infos[i].stage,
-                          spirv_binaries[i], dirty_shader_stages[i], inc_files)) {
+  u32 out_create_info_hash_idx = 0;
+  for (const auto& cinfo : shader_create_infos) {
+    auto full_path = cinfo.path.is_relative() ? shader_dir_ / cinfo.path : cinfo.path;
+    size_t new_hash = hash_shader_info(cinfo);
+    out_create_info_hashes[out_create_info_hash_idx++] = new_hash;
+
+    auto& spirv_load_result = spirv_binaries.emplace_back();
+    auto glsl_path = full_path.string() + ".glsl";
+    auto spv_path = full_path.string() + std::to_string(new_hash) + ".spv";
+    if (!std::filesystem::exists(glsl_path)) {
+      LERROR("glsl file does not exist for shader: {}", glsl_path);
       return result;
     }
+
+    if (!std::filesystem::exists(spv_path) || force) {
+      // compile glsl to spirv
+      bool success = compile_glsl_to_spirv(glsl_path, convert_shader_stage(cinfo.type),
+                                           spirv_load_result.binary_data, nullptr);
+      if (!success) {
+        return result;
+      }
+
+      // write the spirv
+      std::ofstream file(spv_path, std::ios::binary);
+      if (!file.is_open()) {
+        return result;
+      }
+      file.write(reinterpret_cast<const char*>(spirv_load_result.binary_data.data()),
+                 spirv_load_result.binary_data.size() * sizeof(u32));
+    } else {
+      // exists already, load spirv
+      load_entire_file(spv_path, spirv_load_result.binary_data);
+    }
   }
-
-  // if spirv pipeline hash equals requested pipeilne hash, use it
-  // otherwise, compile the spirv
-
-  result.module_cnt = shader_create_infos.size();
 
   for (u64 i = 0; i < shader_create_infos.size(); i++) {
     const std::string& path = shader_create_infos[i].path.string();
@@ -287,39 +121,79 @@ ShaderManager::LoadProgramResult ShaderManager::load_program(
       VK_CHECK(vkCreateShaderModule(device_, &create_info, nullptr, &result.modules[i].module));
     }
   }
-
+  result.success = true;
   return result;
 }
 
-u64 ShaderManager::hash(const std::filesystem::path& path, VkShaderStageFlagBits stage) {
-  ZoneScoped;
-  auto v = std::make_tuple(path.string(), stage);
-  return vk2::detail::hashing::hash<decltype(v)>{}(v);
+ShaderManager::ShaderManager(VkDevice device, std::filesystem::path shader_cache_dir,
+                             OnDirtyFileFunc on_dirty_files_fn, std::filesystem::path shader_dir,
+                             bool hot_reload)
+    : file_watcher_(
+          shader_dir,
+          [this](std::span<std::filesystem::path> dirty_files) {
+            if (on_dirty_files_fn_) on_dirty_files_fn_(dirty_files);
+          },
+          std::chrono::milliseconds(250), hot_reload),
+      on_dirty_files_fn_(std::move(on_dirty_files_fn)),
+      shader_dir_(std::move(shader_dir)),
+      shader_cache_dir_(std::move(shader_cache_dir)),
+      shader_hash_cache_path_(shader_cache_dir_ / "shader_hash_cache.txt"),
+      device_(device),
+      hot_reload_(true) {
+  init();
 }
+void ShaderManager::init() {
+  if (!std::filesystem::exists(shader_cache_dir_)) {
+    std::filesystem::create_directory(shader_cache_dir_);
+  }
 
-ShaderManager::ShaderManager(VkDevice device, std::filesystem::path spirv_hash_path)
-    : spirv_hash_path_(std::move(spirv_hash_path)), device_(device) {
-  layout_cache_.init(device);
-  std::ifstream ifs(spirv_hash_path_);
-  if (ifs.is_open()) {
-    std::string filename;
-    uint64_t hash;
-    while (ifs >> filename >> hash) {
-      exit(1);
+  {
+    std::ifstream ifs(shader_cache_dir_ / "include_data.txt");
+    if (ifs.is_open()) {
+      u64 node_count;
+      ifs >> node_count;
+      std::string filename;
+      std::string filename2;
+      u64 included_by_count;
+      while (ifs >> filename >> included_by_count) {
+        auto it = include_graph_nodes_.find(filename);
+        if (it == include_graph_nodes_.end()) {
+          include_graph_nodes_[filename] = {};
+          it = include_graph_nodes_.find(filename);
+        }
+        for (u64 i = 0; i < included_by_count; i++) {
+          ifs >> filename2;
+          it->second.emplace(filename2);
+        }
+      }
     }
   }
+
   glslang::InitializeProcess();
+
+  if (hot_reload_) {
+    file_watcher_.start();
+  }
 }
 
 ShaderManager::~ShaderManager() {
-  layout_cache_.shutdown();
+  ZoneScoped;
+  {
+    std::ofstream ofs(shader_cache_dir_ / "include_data.txt");
+    ofs << include_graph_nodes_.size() << '\n';
+    for (const auto& [filename, included_bys] : include_graph_nodes_) {
+      ofs << filename.string() << ' ' << included_bys.size() << ' ';
+      for (const auto& included_by : included_bys) {
+        ofs << included_by.string() << ' ';
+      }
+      ofs << '\n';
+    }
+  }
+
   glslang::FinalizeProcess();
 }
 
-}  // namespace gfx::vk2
-
 namespace {
-
 constexpr EShLanguage vk_shader_stage_to_glslang(VkShaderStageFlagBits stage) {
   switch (stage) {
     case VkShaderStageFlagBits::VK_SHADER_STAGE_VERTEX_BIT:
@@ -344,10 +218,17 @@ constexpr EShLanguage vk_shader_stage_to_glslang(VkShaderStageFlagBits stage) {
   return static_cast<EShLanguage>(-1);
 }
 
+}  // namespace
+
+}  // namespace gfx::vk2
+
+namespace {
+
 class IncludeHandler final : public glslang::TShader::Includer {
  public:
   explicit IncludeHandler(const std::filesystem::path& source_path) {
     currentIncluderDir_ /= source_path.parent_path();
+    source_path_ = source_path;
   }
 
   glslang::TShader::Includer::IncludeResult* includeLocal(
@@ -356,13 +237,16 @@ class IncludeHandler final : public glslang::TShader::Includer {
     ZoneScoped;
     assert(std::filesystem::path(requested_source).is_relative());
     auto full_requested_source = currentIncluderDir_ / requested_source;
+    auto canonical_requested_source =
+        std::filesystem::weakly_canonical(std::filesystem::path(full_requested_source)).string();
 
-    {
-      ZoneScopedN("add to includes");
-      included_files_.insert(
-          std::filesystem::weakly_canonical(std::filesystem::path(full_requested_source)).string());
-    }
-
+    std::filesystem::path canonical_requesting_source =
+        include_depth == 1
+            ? source_path_
+            : std::filesystem::weakly_canonical(std::filesystem::path(requesting_source));
+    file_include_graph_reverse[full_requested_source].emplace(canonical_requesting_source);
+    file_include_graph[canonical_requesting_source].emplace(canonical_requested_source);
+    included_files_.insert(canonical_requested_source);
     currentIncluderDir_ = full_requested_source.parent_path();
 
     std::ifstream file{full_requested_source};
@@ -402,19 +286,65 @@ class IncludeHandler final : public glslang::TShader::Includer {
 
   [[nodiscard]] const std::unordered_set<std::string>& get_paths() const { return included_files_; }
 
+  std::unordered_map<std::string, std::unordered_set<std::string>> file_include_graph;
+  std::unordered_map<std::string, std::unordered_set<std::string>> file_include_graph_reverse;
+
  private:
   std::unordered_set<std::string> included_files_;
   // Acts like a stack that we "push" path components to when include{Local, System} are invoked,
   // and "pop" when releaseInclude is invoked
   std::filesystem::path currentIncluderDir_;
+  std::filesystem::path source_path_;
   std::vector<std::unique_ptr<std::string>> contentStrings_;
   std::vector<std::unique_ptr<std::string>> sourcePathStrings_;
 };
 
 // returns true on success
-bool compile_glsl_to_spirv(std::string path, VkShaderStageFlagBits stage,
-                           std::vector<u32>& out_binary, std::vector<std::string>* included_files) {
+
+bool load_entire_file(const std::string& path, std::vector<uint32_t>& result) {
   ZoneScoped;
+  std::ifstream file(path, std::ios::binary);
+  if (!file.is_open()) {
+    // TODO: maybe not critical lol
+    LCRITICAL("failed to open file: {}", path);
+    exit(1);
+  }
+  file.seekg(0, std::ios::end);
+  auto len = file.tellg();
+  result.resize(len / sizeof(uint32_t));
+  file.seekg(0, std::ios::beg);
+  file.read(reinterpret_cast<char*>(result.data()), len);
+  file.close();
+  return true;
+}
+
+std::optional<std::string> load_entire_file(const std::filesystem::path& path) {
+  ZoneScoped;
+  std::ifstream file{path, std::ios::binary};
+  if (!file) {
+    return std::nullopt;
+  }
+
+  file.seekg(0, std::ios::end);
+  std::size_t size = file.tellg();
+  file.seekg(0, std::ios::beg);
+
+  std::string content(size, '\0');
+  if (!file.read(content.data(), size)) {
+    return std::nullopt;
+  }
+  return content;
+}
+
+}  // namespace
+
+namespace gfx::vk2 {
+
+bool ShaderManager::compile_glsl_to_spirv(const std::string& path, VkShaderStageFlagBits stage,
+                                          std::vector<u32>& out_binary,
+                                          std::vector<std::string>* included_files) {
+  ZoneScoped;
+  LINFO("compiling glsl: {}", path);
   if (!std::filesystem::exists(path)) {
     LERROR("path does not exist: {}", path);
   }
@@ -423,7 +353,7 @@ bool compile_glsl_to_spirv(std::string path, VkShaderStageFlagBits stage,
   auto glslang_stage = vk_shader_stage_to_glslang(stage);
 
   glslang::TShader shader(glslang_stage);
-  auto glsl_text_result = load_file(path);
+  auto glsl_text_result = load_entire_file(path);
   if (!glsl_text_result.has_value()) {
     LERROR("failed to read file: {}", path);
     return false;
@@ -439,6 +369,7 @@ bool compile_glsl_to_spirv(std::string path, VkShaderStageFlagBits stage,
   shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_2);
   shader.setEnvTarget(glslang::EShTargetLanguage::EShTargetSpv, glslang::EShTargetSpv_1_5);
   std::string preamble = "#extension GL_GOOGLE_include_directive : enable\n";
+  // TODO: defines
   // preamble += "";
   shader.setPreamble(preamble.c_str());
   shader.setOverrideVersion(460);
@@ -450,6 +381,18 @@ bool compile_glsl_to_spirv(std::string path, VkShaderStageFlagBits stage,
     LERROR("Failed to parse GLSL shader:\nShader info log:\n{}\nInfo Debug log:\n{}",
            shader.getInfoLog(), shader.getInfoDebugLog());
     return false;
+  }
+
+  auto& dep_graph = includer.file_include_graph_reverse;
+  for (const auto& [filename, included_bys] : dep_graph) {
+    auto it = include_graph_nodes_.find(filename);
+    if (it == include_graph_nodes_.end()) {
+      include_graph_nodes_[filename] = {};
+      it = include_graph_nodes_.find(filename);
+    }
+    for (const auto& included_by : included_bys) {
+      it->second.emplace(included_by);
+    }
   }
   if (included_files) {
     *included_files = {includer.get_paths().begin(), includer.get_paths().end()};
@@ -472,8 +415,6 @@ bool compile_glsl_to_spirv(std::string path, VkShaderStageFlagBits stage,
       .stripDebugInfo = false,
       .emitNonSemanticShaderDebugInfo = true,
       .emitNonSemanticShaderDebugSource = true,
-      // .disableOptimizer = true,
-      // .disableOptimizer = true,
   };
 
   {
@@ -489,96 +430,11 @@ bool compile_glsl_to_spirv(std::string path, VkShaderStageFlagBits stage,
   return true;
 }
 
-#define TRY(x)                               \
-  do {                                       \
-    if ((x) != SPV_REFLECT_RESULT_SUCCESS) { \
-      LERROR("spirv reflection failed");     \
-      return false;                          \
-    }                                        \
-  } while (0)
-
-// bool reflect_shader(std::vector<u32>& binary, vk2::ShaderReflectData& out_data) {
-//   ZoneScoped;
-//   spv_reflect::ShaderModule refl_module{binary};
-//   TRY(refl_module.GetResult());
-//   out_data.shader_stage = refl_module.GetShaderStage();
-//   u32 cnt;
-//   TRY(refl_module.EnumerateDescriptorSets(&cnt, nullptr));
-//   std::vector<SpvReflectDescriptorSet*> refl_sets(cnt);
-//   TRY(refl_module.EnumerateDescriptorSets(&cnt, refl_sets.data()));
-//
-//   TRY(refl_module.EnumeratePushConstantBlocks(&cnt, nullptr));
-//   std::vector<SpvReflectBlockVariable*> refl_pc_blocks(cnt);
-//   TRY(refl_module.EnumeratePushConstantBlocks(&cnt, refl_pc_blocks.data()));
-//   if (cnt > 1) {
-//     LERROR("shader module has > 1 push constant block, not supported.");
-//     return false;
-//   }
-//   if (cnt > 0) {
-//     out_data.has_pc_range = true;
-//     out_data.range = VkPushConstantRange{
-//         .stageFlags = static_cast<VkShaderStageFlags>(refl_module.GetShaderStage()),
-//         .offset = refl_pc_blocks[0]->offset,
-//         .size = refl_pc_blocks[0]->size};
-//   }
-//
-//   for (const SpvReflectDescriptorSet* set : refl_sets) {
-//     const SpvReflectDescriptorSet& refl_set = *set;
-//     vk2::DescriptorSetLayoutData& layout = out_data.set_layouts[out_data.set_layout_cnt++];
-//     layout.bindings.resize(refl_set.binding_count);
-//     for (uint32_t binding_idx = 0; binding_idx < refl_set.binding_count; binding_idx++) {
-//       auto& binding = layout.bindings[binding_idx];
-//       const auto& refl_binding = *(refl_set.bindings[binding_idx]);
-//       binding.binding = refl_binding.binding;
-//       binding.descriptorType = static_cast<VkDescriptorType>(refl_binding.descriptor_type);
-//       binding.descriptorCount = 1;
-//       if (binding.descriptorCount > 1) {
-//         for (uint32_t dim_idx = 0; dim_idx < refl_binding.array.dims_count; dim_idx++) {
-//           binding.descriptorCount *= refl_binding.array.dims[dim_idx];
-//         }
-//       }
-//       binding.stageFlags = static_cast<VkShaderStageFlagBits>(refl_module.GetShaderStage());
-//     }
-//     layout.set_number = refl_set.set;
-//     layout.create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-//     layout.create_info.bindingCount = refl_set.binding_count;
-//     // NOTE: must move the vector and not copy, or the pBindings will be invalidated
-//     layout.create_info.pBindings = layout.bindings.data();
-//   }
-//   return true;
-// }
-
-bool load_shader_bytes(const std::string& path, std::vector<uint32_t>& result) {
-  ZoneScoped;
-  std::ifstream file(path, std::ios::binary);
-  if (!file.is_open()) {
-    LERROR("failed to open file: {}", path);
-    return false;
-  }
-  file.seekg(0, std::ios::end);
-  auto len = file.tellg();
-  result.resize(len / sizeof(uint32_t));
-  file.seekg(0, std::ios::beg);
-  file.read(reinterpret_cast<char*>(result.data()), len);
-  file.close();
-  return true;
+void ShaderManager::on_imgui() {
+  ImGui::Checkbox("shader debug mode", &shader_debug_mode_);
+  ImGui::Text("size: %zul", include_graph_nodes_.size());
 }
 
-std::optional<std::string> load_file(const std::filesystem::path& path) {
-  ZoneScoped;
-  std::ifstream file{path, std::ios::binary};
-  if (!file) {
-    return std::nullopt;
-  }
+void ShaderManager::invalidate_cache() { include_graph_nodes_.clear(); }
 
-  file.seekg(0, std::ios::end);
-  std::size_t size = file.tellg();
-  file.seekg(0, std::ios::beg);
-
-  std::string content(size, '\0');
-  if (!file.read(content.data(), size)) {
-    return std::nullopt;
-  }
-  return content;
-}
-}  // namespace
+}  // namespace gfx::vk2

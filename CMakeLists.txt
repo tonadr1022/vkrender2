@@ -30,7 +30,6 @@ src/vk2/BindlessResourceAllocator.cpp
 src/vk2/Buffer.cpp
 src/vk2/Definitions.cpp
 src/vk2/DeletionQueue.cpp
-src/vk2/Descriptors.cpp
 src/vk2/Device.cpp
 src/vk2/Initializers.cpp
 src/vk2/PipelineManager.cpp

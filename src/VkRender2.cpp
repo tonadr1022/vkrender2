@@ -42,6 +42,7 @@
 #include "vk2/Initializers.hpp"
 #include "vk2/PipelineManager.hpp"
 #include "vk2/SamplerCache.hpp"
+#include "vk2/ShaderCompiler.hpp"
 #include "vk2/StagingBufferPool.hpp"
 #include "vk2/Texture.hpp"
 #include "vk2/VkCommon.hpp"
@@ -537,6 +538,11 @@ void VkRender2::on_imgui() {
       }
       ImGui::TreePop();
     }
+
+    if (ImGui::TreeNode("Pipelines")) {
+      PipelineManager::get().on_imgui();
+      ImGui::TreePop();
+    }
     if (ImGui::TreeNodeEx("Debug")) {
       ImGui::Checkbox("Draw AABBs", &draw_debug_aabbs_);
       if (ImGui::BeginCombo("Debug Mode", debug_mode_to_string(debug_mode_))) {
@@ -981,37 +987,41 @@ void VkRender2::transfer_submit(
 
 void VkRender2::init_pipelines() {
   auto& mgr = PipelineManager::get();
-  cull_objs_pipeline_ = mgr.load_compute_pipeline({"cull_objects.comp"});
-  postprocess_pipeline_ = mgr.load_compute_pipeline({"postprocess/postprocess.comp"});
-  img_pipeline_ = mgr.load_compute_pipeline({"debug/clear_img.comp"});
-  draw_pipeline_ = mgr.load_graphics_pipeline(GraphicsPipelineCreateInfo{
-      .shaders = {{"debug/basic.vert"}, {"debug/basic.frag"}},
+  cull_objs_pipeline_ = mgr.load_compute({"cull_objects.comp", ShaderType::Compute});
+  postprocess_pipeline_ = mgr.load_compute({"postprocess/postprocess.comp", ShaderType::Compute});
+  img_pipeline_ = mgr.load_compute({"debug/clear_img.comp", ShaderType::Compute});
+  deferred_shade_pipeline_ = mgr.load_compute({"gbuffer/shade.comp", ShaderType::Compute});
+
+  draw_pipeline_ = mgr.load(GraphicsPipelineCreateInfo{
+      .shaders = {{"debug/basic.vert", ShaderType::Vertex},
+                  {"debug/basic.frag", ShaderType::Fragment}},
       .rendering = {.color_formats = {to_vkformat(draw_img_format_)},
                     .depth_format = to_vkformat(depth_img_format_)},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
   });
-
-  skybox_pipeline_ = mgr.load_graphics_pipeline(GraphicsPipelineCreateInfo{
-      .shaders = {{"skybox/skybox.vert"}, {"skybox/skybox.frag"}},
+  skybox_pipeline_ = mgr.load(GraphicsPipelineCreateInfo{
+      .shaders = {{"skybox/skybox.vert", ShaderType::Vertex},
+                  {"skybox/skybox.frag", ShaderType::Fragment}},
       .rendering = {.color_formats = {to_vkformat(draw_img_format_)},
                     .depth_format = to_vkformat(depth_img_format_)},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
   });
   GraphicsPipelineCreateInfo gbuffer_info{
-      .shaders = {{"gbuffer/gbuffer.vert"}, {"gbuffer/gbuffer.frag"}},
+      .shaders = {{"gbuffer/gbuffer.vert", ShaderType::Vertex},
+                  {"gbuffer/gbuffer.frag", ShaderType::Fragment}},
       .rendering = {.color_formats = {to_vkformat(gbuffer_a_format_),
                                       to_vkformat(gbuffer_b_format_),
                                       to_vkformat(gbuffer_c_format_)},
                     .depth_format = to_vkformat(depth_img_format_)},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
   };
-  gbuffer_pipeline_ = mgr.load_graphics_pipeline(gbuffer_info);
+  gbuffer_pipeline_ = mgr.load(gbuffer_info);
   gbuffer_info.shaders[1].defines = {"#define ALPHA_MASK_ENABLED 1"};
-  gbuffer_alpha_mask_pipeline_ = mgr.load_graphics_pipeline(gbuffer_info);
+  gbuffer_alpha_mask_pipeline_ = mgr.load(gbuffer_info);
 
-  deferred_shade_pipeline_ = mgr.load_compute_pipeline({"gbuffer/shade.comp"});
-  line_draw_pipeline_ = mgr.load_graphics_pipeline(GraphicsPipelineCreateInfo{
-      .shaders = {{"lines/draw_line.vert"}, {"lines/draw_line.frag"}},
+  line_draw_pipeline_ = mgr.load(GraphicsPipelineCreateInfo{
+      .shaders = {{"lines/draw_line.vert", ShaderType::Vertex},
+                  {"lines/draw_line.frag", ShaderType::Fragment}},
       .topology = PrimitiveTopology::LineList,
       .rendering = {.color_formats = {to_vkformat(get_device().get_swapchain_info().format)},
                     .depth_format = to_vkformat(depth_img_format_)},
@@ -1388,8 +1398,9 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
           ibl_->prefiltered_env_map_tex_->texture->view().sampled_img_resource().handle,
           linear_sampler_clamp_to_edge_->resource_info.handle};
       cmd.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
+      // TODO: double sided
       PipelineManager::get().bind_graphics(cmd.cmd(), draw_pipeline_);
-      execute_static_geo_draws(cmd);
+      execute_static_geo_draws(cmd, false);
       draw_skybox(cmd);
       vkCmdEndRenderingKHR(cmd.cmd());
     });
@@ -1425,8 +1436,6 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
           return;
         }
 
-        PipelineManager::get().bind_graphics(cmd.cmd(), gbuffer_pipeline_);
-
         VkClearValue clear_value{.color = {{0.0, 0.0, 0.0, 0.0}}};
         VkRenderingAttachmentInfo color_atts[] = {
             vk2::init::rendering_attachment_info(
@@ -1446,6 +1455,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
         vkCmdBeginRenderingKHR(cmd.cmd(), &render_info);
         cmd.set_viewport_and_scissor(render_extent.width, render_extent.height);
 
+        PipelineManager::get().bind_graphics(cmd.cmd(), gbuffer_pipeline_);
         GBufferPushConstants pc{
             static_vertex_buf_.get_buffer()->device_addr(),
             curr_frame_2().scene_uniform_buf->device_addr(),
@@ -1455,7 +1465,9 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
             linear_sampler_->resource_info.handle,
         };
         cmd.push_constants(sizeof(pc), &pc);
-        execute_static_geo_draws(cmd);
+        execute_static_geo_draws(cmd, false);
+        PipelineManager::get().bind_graphics(cmd.cmd(), gbuffer_alpha_mask_pipeline_);
+        execute_static_geo_draws(cmd, true);
         vkCmdEndRenderingKHR(cmd.cmd());
       });
     }
@@ -1772,29 +1784,28 @@ BufferHandle VkRender2::StaticMeshDrawManager::get_draw_info_buf_handle() const 
   return draw_cmds_buf_.buffer.handle;
 }
 
-void VkRender2::execute_static_geo_draws(CmdEncoder& cmd) {
+void VkRender2::execute_static_geo_draws(CmdEncoder& cmd, bool double_sided) {
   vkCmdBindIndexBuffer(cmd.cmd(), static_index_buf_.get_buffer()->buffer(), 0,
                        VK_INDEX_TYPE_UINT32);
-  for (int double_sided = 0; double_sided < 2; double_sided++) {
-    if (double_sided) {
-      cmd.set_cull_mode(CullMode::None);
-    } else {
-      cmd.set_cull_mode(CullMode::Back);
-    }
-    if (static_opaque_draw_mgr_->should_draw() &&
-        static_opaque_draw_mgr_->get_num_draw_cmds(double_sided) > 0) {
-      execute_draw(cmd,
-                   *static_opaque_draw_mgr_->get_draw_passes()[main_mesh_pass_idx_]
-                        .get_frame_out_draw_cmd_buf(double_sided),
-                   static_opaque_draw_mgr_->get_num_draw_cmds(double_sided));
-    }
-    if (static_opaque_alpha_mask_draw_mgr_->should_draw() &&
-        static_opaque_alpha_mask_draw_mgr_->get_num_draw_cmds(double_sided) > 0) {
-      execute_draw(cmd,
-                   *static_opaque_alpha_mask_draw_mgr_->get_draw_passes()[main_mesh_pass_idx_]
-                        .get_frame_out_draw_cmd_buf(double_sided),
-                   static_opaque_alpha_mask_draw_mgr_->get_num_draw_cmds(double_sided));
-    }
+  if (double_sided) {
+    cmd.set_cull_mode(CullMode::None);
+  } else {
+    cmd.set_cull_mode(CullMode::Back);
+  }
+  if (static_opaque_draw_mgr_->should_draw() &&
+      static_opaque_draw_mgr_->get_num_draw_cmds(double_sided) > 0) {
+    execute_draw(
+        cmd,
+        *static_opaque_draw_mgr_->get_draw_passes()[main_mesh_pass_idx_].get_frame_out_draw_cmd_buf(
+            double_sided),
+        static_opaque_draw_mgr_->get_num_draw_cmds(double_sided));
+  }
+  if (static_opaque_alpha_mask_draw_mgr_->should_draw() &&
+      static_opaque_alpha_mask_draw_mgr_->get_num_draw_cmds(double_sided) > 0) {
+    execute_draw(cmd,
+                 *static_opaque_alpha_mask_draw_mgr_->get_draw_passes()[main_mesh_pass_idx_]
+                      .get_frame_out_draw_cmd_buf(double_sided),
+                 static_opaque_alpha_mask_draw_mgr_->get_num_draw_cmds(double_sided));
   }
 }
 

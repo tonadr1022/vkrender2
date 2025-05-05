@@ -9,6 +9,7 @@
 #include "shaders/ibl/eq_to_cube_comp_common.h.glsl"
 #include "vk2/Initializers.hpp"
 #include "vk2/SamplerCache.hpp"
+#include "vk2/ShaderCompiler.hpp"
 
 using namespace gfx::vk2;
 
@@ -64,42 +65,30 @@ IBL::IBL() {
   make_cubemap_views_all_mips(prefiltered_env_map_tex_->texture.value(),
                               prefiltered_env_tex_views_);
 
-  integrate_brdf_pipeline_ = PipelineManager::get().load_compute_pipeline(ComputePipelineCreateInfo{
-      .path = "ibl/integrate_brdf.comp",
-  });
+  integrate_brdf_pipeline_ =
+      PipelineManager::get().load_compute({"ibl/integrate_brdf.comp", ShaderType::Compute});
   equirect_to_cube_pipeline2_ =
-      PipelineManager::get().load_compute_pipeline(ComputePipelineCreateInfo{
-          .path = "ibl/eq_to_cube.comp",
-      });
-  convolute_cube_pipeline_ = PipelineManager::get().load_compute_pipeline(ComputePipelineCreateInfo{
-      .path = "ibl/cube_convolute.comp",
+      PipelineManager::get().load_compute({"ibl/eq_to_cube.comp", ShaderType::Compute});
+  convolute_cube_pipeline_ =
+      PipelineManager::get().load_compute({"ibl/cube_convolute.comp", ShaderType::Compute});
+  prefilter_env_map_pipeline_ = PipelineManager::get().load(GraphicsPipelineCreateInfo{
+      .shaders = {{"ibl/prefilter_env_map.vert", ShaderType::Vertex},
+                  {"ibl/prefilter_env_map.frag", ShaderType::Fragment}},
+      .rendering =
+          {
+              .color_formats = {prefiltered_env_map_tex_->texture->format()},
+          },
+      .rasterization = {.cull_mode = CullMode::None},
   });
-  prefilter_env_map_pipeline_ =
-      PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
-          .shaders = {{"ibl/prefilter_env_map.vert"}, {"ibl/prefilter_env_map.frag"}},
-          .rendering =
-              {
-                  .color_formats = {prefiltered_env_map_tex_->texture->format()},
-              },
-          .rasterization = {.cull_mode = CullMode::None},
-      });
-  convolute_cube_raster_pipeline_ =
-      PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
-          .shaders = {{"ibl/cube_convolute.vert"}, {"ibl/cube_convolute.frag"}},
-          .rendering =
-              {
-                  .color_formats = {irradiance_cubemap_tex_->format()},
-              },
-          .rasterization = {.cull_mode = CullMode::None},
-      });
-  equirect_to_cube_pipeline_ =
-      PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
-          .shaders = {{"ibl/equirect_to_cube.vert"}, {"ibl/equirect_to_cube.frag"}},
-          .rendering =
-              {
-                  .color_formats = {env_cubemap_tex_->format()},
-              },
-      });
+  convolute_cube_raster_pipeline_ = PipelineManager::get().load(GraphicsPipelineCreateInfo{
+      .shaders = {{"ibl/cube_convolute.vert", ShaderType::Vertex},
+                  {"ibl/cube_convolute.frag", ShaderType::Fragment}},
+      .rendering =
+          {
+              .color_formats = {irradiance_cubemap_tex_->format()},
+          },
+      .rasterization = {.cull_mode = CullMode::None},
+  });
 
   auto make_cubemap_views =
       [](const vk2::Image& tex) -> std::array<std::optional<vk2::ImageView>, 6> {

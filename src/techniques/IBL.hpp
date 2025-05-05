@@ -32,7 +32,7 @@ class IBL {
  private:
   std::array<std::optional<vk2::ImageView>, 6> cubemap_tex_views_;
   std::array<std::optional<vk2::ImageView>, 6> convoluted_cubemap_tex_views_;
-  vk2::PipelineHandle equirect_to_cube_pipeline_;
+  // vk2::PipelineHandle equirect_to_cube_pipeline_;
   vk2::PipelineHandle equirect_to_cube_pipeline2_;
   vk2::PipelineHandle convolute_cube_pipeline_;
   vk2::PipelineHandle integrate_brdf_pipeline_;

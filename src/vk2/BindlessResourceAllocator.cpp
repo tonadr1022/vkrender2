@@ -231,6 +231,13 @@ void ResourceAllocator::flush_deletions() {
     return false;
   });
 
+  std::erase_if(pipeline_delete_q_, [this](const DeleteQEntry<VkPipeline>& entry) {
+    if (entry.frame + buffer_count_ < frame_num_) {
+      vkDestroyPipeline(device_, entry.data, nullptr);
+      return true;
+    }
+    return false;
+  });
   std::erase_if(swapchain_delete_q_, [this](const DeleteQEntry<VkSwapchainKHR>& entry) {
     if (entry.frame + buffer_count_ < frame_num_) {
       vkDestroySwapchainKHR(device_, entry.data, nullptr);
@@ -285,4 +292,9 @@ BindlessResourceInfo ResourceAllocator::allocate_storage_buffer_descriptor(VkBuf
 void ResourceAllocator::enqueue_delete_swapchain(VkSwapchainKHR swapchain) {
   swapchain_delete_q_.emplace_back(swapchain, frame_num_);
 }
+
+void ResourceAllocator::enqueue_delete_pipeline(VkPipeline pipeline) {
+  pipeline_delete_q_.emplace_back(pipeline, frame_num_ + 5);
+}
+
 }  // namespace gfx::vk2

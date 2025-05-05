@@ -44,6 +44,7 @@ class ResourceAllocator {
   void delete_texture_view(const TextureViewDeleteInfo& info);
   void delete_buffer(const BufferDeleteInfo& info);
   void enqueue_delete_swapchain(VkSwapchainKHR swapchain);
+  void enqueue_delete_pipeline(VkPipeline pipeline);
 
   void flush_deletions();
 
@@ -61,6 +62,7 @@ class ResourceAllocator {
   std::deque<DeleteQEntry<TextureViewDeleteInfo>> texture_view_delete_q_;
   std::deque<DeleteQEntry<BufferDeleteInfo>> storage_buffer_delete_q_;
   std::deque<DeleteQEntry<VkSwapchainKHR>> swapchain_delete_q_;
+  std::deque<DeleteQEntry<VkPipeline>> pipeline_delete_q_;
 
   ~ResourceAllocator();
   ResourceAllocator(VkDevice device, VmaAllocator allocator);
