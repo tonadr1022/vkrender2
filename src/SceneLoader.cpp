@@ -806,6 +806,10 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
       mat.pbr_factors.x = gltf_mat.pbrData.metallicFactor;
       mat.pbr_factors.y = gltf_mat.pbrData.roughnessFactor;
 
+      if (gltf_mat.doubleSided) {
+        mat.ids2.w |= MATERIAL_DOUBLE_SIDED_BIT;
+      }
+
       if (gltf_mat.pbrData.baseColorTexture.has_value()) {
         mat.ids1.x = get_idx(gltf_mat.pbrData.baseColorTexture.value());
       }
@@ -1082,5 +1086,7 @@ PassFlags Material::get_pass_flags() const {
   }
   return flags;
 }
+
+bool Material::is_double_sided() const { return (ids2.w & MATERIAL_DOUBLE_SIDED_BIT); }
 
 }  // namespace gfx

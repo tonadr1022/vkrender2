@@ -154,7 +154,7 @@ void App::run() {
     // ren.draw_plane({}, {0, 0, 1}, {1, 0, 1}, 1, 1, n1, n2, {1, 1, 1, 1});
     info_.view = cam_data.get_view();
     info_.view_pos = cam_data.pos;
-    info_.light_dir = glm::normalize(info_.light_dir);
+    info_.light_dir = glm::normalize(light_dir_);
     ren.draw(info_);
   }
 
@@ -246,21 +246,20 @@ void App::on_imgui() {
     }
 
     ImGui::Text("Frame Time: %f ms/frame, FPS: %f", dt * 1000.f, 1.f / dt);
-    ImGui::Text("Front dot L: %f", glm::dot(cam_data.front, info_.light_dir));
     if (ImGui::TreeNodeEx("Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
       cam.on_imgui();
       ImGui::TreePop();
     }
 
-    ImGui::DragFloat3("Sunlight Direction", &info_.light_dir.x, 0.01, -10.f, 10.f);
+    ImGui::DragFloat3("Sunlight Direction", &light_dir_.x, 0.01, -10.f, 10.f);
     ImGui::DragFloat("Light Speed", &light_speed_, .01);
     ImGui::Checkbox("Light Spin", &spin_light_);
     if (spin_light_) {
       light_angle_ += light_speed_;
       light_angle_ = glm::clamp(light_angle_, .0f, 360.f);
 
-      info_.light_dir.x = std::sin(light_angle_);
-      info_.light_dir.z = std::cos(light_angle_);
+      light_dir_.x = std::sin(light_angle_);
+      light_dir_.z = std::cos(light_angle_);
       // scene_data.light_dir =
     }
 

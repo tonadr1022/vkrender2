@@ -34,6 +34,7 @@ struct Material {
   uvec4 ids1;  // albedo, normal, metal_rough, emissive
   uvec4 ids2;  // ao
   [[nodiscard]] PassFlags get_pass_flags() const;
+  [[nodiscard]] bool is_double_sided() const;
 };
 
 struct PrimitiveDrawInfo {

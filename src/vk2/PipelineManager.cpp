@@ -9,11 +9,13 @@
 #include <tracy/Tracy.hpp>
 #include <utility>
 
+#include "FixedVector.hpp"
 #include "Logger.hpp"
 #include "vk2/Hash.hpp"
 #include "vk2/Initializers.hpp"
 #include "vk2/ShaderCompiler.hpp"
 #include "vk2/VkCommon.hpp"
+#include "vk2/VkTypes.hpp"
 
 namespace gfx::vk2 {
 
@@ -46,18 +48,6 @@ constexpr VkFrontFace convert_front_face(FrontFace face) {
       return VK_FRONT_FACE_CLOCKWISE;
     case FrontFace::CounterClockwise:
       return VK_FRONT_FACE_COUNTER_CLOCKWISE;
-  }
-}
-constexpr VkCullModeFlags convert_cull_mode(CullMode mode) {
-  switch (mode) {
-    case CullMode::None:
-      return VK_CULL_MODE_NONE;
-    case CullMode::Back:
-      return VK_CULL_MODE_BACK_BIT;
-    case CullMode::Front:
-      return VK_CULL_MODE_FRONT_BIT;
-    case CullMode::FrontAndBack:
-      return VK_CULL_MODE_FRONT_AND_BACK;
   }
 }
 constexpr VkPolygonMode convert_polygon_mode(PolygonMode mode) {
@@ -220,7 +210,29 @@ PipelineManager::~PipelineManager() {
       }
     }
   }
+
+  if (!cache_path_.empty()) {
+    auto p = cache_path_;
+    std::vector<std::filesystem::path> paths;
+    while (p.has_parent_path() && p != p.root_path()) {
+      paths.emplace_back(p.parent_path());
+      p = p.parent_path();
+    }
+    std::ranges::reverse(paths);
+    for (const auto& dir : paths) {
+      if (!std::filesystem::exists(dir)) {
+        std::filesystem::create_directory(dir);
+      }
+    }
+    std::ofstream ofs(cache_path_);
+    if (ofs.is_open()) {
+      for (const auto& [file, time] : file_watcher_.get_modified_timestamps()) {
+        ofs << file.string() << ' ' << static_cast<size_t>(time.time_since_epoch().count()) << '\n';
+      }
+    }
+  }
 }
+
 namespace {
 
 template <typename T>
@@ -234,17 +246,40 @@ PipelineManager::PipelineManager(VkDevice device, std::filesystem::path shader_d
     : file_watcher_(
           shader_dir,
           [this](std::span<std::filesystem::path> dirty_files) { on_dirty_files(dirty_files); },
-          std::chrono::milliseconds(250),
-          hot_reload ? shader_dir / ".cache" / "dirty_shaders.txt" : ""),
+          {"glsl"}, std::chrono::milliseconds(250)),
       shader_dir_(std::move(shader_dir)),
       shader_manager_(device),
       default_pipeline_layout_(default_layout),
       device_(device),
       hot_reload_(hot_reload) {
-  // TODO: flag for enabled
   if (hot_reload) {
+    pipeline_hash_cache_path_ = shader_dir / ".cache" / "pipeline_hash_cache.txt";
+    if (std::filesystem::exists(pipeline_hash_cache_path_)) {
+      std::ifstream ifs(pipeline_hash_cache_path_);
+      if (ifs.is_open()) {
+        uint64_t handle;
+        while (ifs >> handle) {
+        }
+      }
+    }
+    cache_path_ = shader_dir / ".cache" / "dirty_shaders.txt";
+    if (std::filesystem::exists(cache_path_)) {
+      std::ifstream ifs(cache_path_);
+      std::vector<std::pair<std::string, std::filesystem::file_time_type>> modified_times;
+      if (ifs.is_open()) {
+        std::filesystem::path filename;
+        uint64_t timestamp;
+        while (ifs >> filename >> timestamp) {
+          modified_times.emplace_back(
+              filename, std::filesystem::file_time_type(std::chrono::nanoseconds(timestamp)));
+        }
+      }
+      file_watcher_.add_timestamps(modified_times);
+    }
+
     file_watcher_.start();
   }
+
   std::filesystem::path shader_include_path = shader_dir / ".cache" / "shader_includes.txt";
   if (std::filesystem::exists(shader_include_path)) {
     std::ifstream ifs(shader_include_path);
@@ -259,37 +294,39 @@ PipelineManager::PipelineManager(VkDevice device, std::filesystem::path shader_d
 std::string PipelineManager::get_shader_path(const std::string& path) const {
   return shader_dir_ / path;
 }
+
 PipelineHandle PipelineManager::load_graphics_pipeline(const GraphicsPipelineCreateInfo& info) {
   // TODO: verify path ends in .vert/.frag
+  if (info.shaders.size() == 0) {
+    return {};
+  }
   VkPipeline pipeline = load_graphics_pipeline_impl(info);
   if (!pipeline) {
     return {};
   }
-
-  auto tup = std::make_tuple(info.vertex_path.string(), info.fragment_path.string());
-  auto handle = detail::hashing::hash<decltype(tup)>{}(tup);
+  size_t handle{};
+  std::vector<std::string> shader_paths;
+  for (const auto& shader_info : info.shaders) {
+    shader_paths.emplace_back(shader_info.path.string());
+    detail::hashing::hash_combine(handle, shader_info.path.string());
+  }
   pipelines_.emplace(handle,
-                     PipelineAndMetadata{
-                         .pipeline = {.pipeline = pipeline, .owns_layout = false},
-                         .shader_paths = {info.vertex_path.string(), info.fragment_path.string()}});
+                     PipelineAndMetadata{.pipeline = {.pipeline = pipeline, .owns_layout = false},
+                                         .shader_paths = shader_paths});
   graphics_pipeline_infos_.emplace(PipelineHandle{handle}, info);
-  auto full_vert_path = get_shader_path(info.vertex_path) + ".glsl";
-  auto full_frag_path = get_shader_path(info.fragment_path) + ".glsl";
-  // LINFO("{} full frag", full_frag_path);
-  auto it = shader_name_to_used_pipelines_.find(full_vert_path);
-  if (it == shader_name_to_used_pipelines_.end()) {
-    shader_name_to_used_pipelines_[full_vert_path] = {PipelineHandle{handle}};
-  } else {
-    it->second.emplace_back(handle);
+  for (auto& path : shader_paths) {
+    auto full_path = get_shader_path(path + ".glsl");
+    auto it = shader_name_to_used_pipelines_.find(full_path);
+    if (it == shader_name_to_used_pipelines_.end()) {
+      shader_name_to_used_pipelines_[full_path] = {PipelineHandle{handle}};
+    } else {
+      it->second.emplace_back(handle);
+    }
   }
-  it = shader_name_to_used_pipelines_.find(full_frag_path);
-  if (it == shader_name_to_used_pipelines_.end()) {
-    shader_name_to_used_pipelines_[full_frag_path] = {PipelineHandle{handle}};
-  } else {
-    it->second.emplace_back(handle);
-  }
+
   return PipelineHandle{handle};
 }
+
 void PipelineManager::bind_graphics(VkCommandBuffer cmd, PipelineHandle handle) {
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, get(handle)->pipeline);
 }
@@ -299,13 +336,30 @@ void PipelineManager::bind_compute(VkCommandBuffer cmd, PipelineHandle handle) {
 }
 
 VkPipeline PipelineManager::load_graphics_pipeline_impl(const GraphicsPipelineCreateInfo& info) {
-  std::array<ShaderManager::ShaderCreateInfo, 2> shader_create_infos{
-      {{get_shader_path(info.vertex_path), VK_SHADER_STAGE_VERTEX_BIT},
-       {get_shader_path(info.fragment_path), VK_SHADER_STAGE_FRAGMENT_BIT}}};
-  u32 stage_cnt = 1;
-  if (info.fragment_path.string().length()) {
-    stage_cnt = 2;
+  const PipelineShaderInfo* vertex_shader_info{};
+  const PipelineShaderInfo* fragment_shader_info{};
+  for (const auto& shader_info : info.shaders) {
+    switch (shader_info.type) {
+      case ShaderType::Vertex:
+        vertex_shader_info = &shader_info;
+        break;
+      case ShaderType::Fragment:
+        fragment_shader_info = &shader_info;
+        break;
+      default:
+    }
   }
+
+  if (!vertex_shader_info) {
+    return {};
+  }
+
+  util::fixed_vector<ShaderManager::ShaderCreateInfo, 2> shader_create_infos;
+  shader_create_infos[0] = {vertex_shader_info->path, VK_SHADER_STAGE_VERTEX_BIT};
+  if (fragment_shader_info) {
+    shader_create_infos[1] = {fragment_shader_info->path, VK_SHADER_STAGE_FRAGMENT_BIT};
+  }
+  u32 stage_cnt = shader_create_infos.size();
 
   std::array<std::vector<std::string>, 2> include_files;
   ShaderManager::LoadProgramResult result;
@@ -406,10 +460,10 @@ VkPipeline PipelineManager::load_graphics_pipeline_impl(const GraphicsPipelineCr
   VkPipelineDynamicStateCreateInfo dynamic_state{
       .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
 
-  std::array<VkDynamicState, 100> states;
+  util::fixed_vector<VkDynamicState, 100> states;
   if (info.dynamic_state.size() == 0) {
-    states = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-    dynamic_state.dynamicStateCount = 2;
+    states = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE};
+    dynamic_state.dynamicStateCount = states.size();
   } else {
     u32 i = 0;
     for (auto s : info.dynamic_state) {
@@ -468,7 +522,7 @@ VkPipeline PipelineManager::load_compute_pipeline_impl(const ComputePipelineCrea
                                                         .stage = VK_SHADER_STAGE_COMPUTE_BIT};
   std::array<std::vector<std::string>, 1> include_files_arr;
   ShaderManager::LoadProgramResult result =
-      shader_manager_.load_program(SPAN1(shader_create_info), false, include_files_arr);
+      shader_manager_.load_program(SPAN1(shader_create_info), include_files_arr);
   if (result.module_cnt != 1) {
     LINFO("no modules generated during compute pipeline creation");
     return nullptr;
@@ -496,20 +550,41 @@ void PipelineManager::on_dirty_files(std::span<std::filesystem::path> dirty_file
           if (graphics_it != graphics_pipeline_infos_.end()) {
             VkPipeline res = load_graphics_pipeline_impl(graphics_it->second);
             if (res) {
-              vkDestroyPipeline(device_, pipeline_it->second.pipeline.pipeline, nullptr);
-              LINFO("res");
+              if (pipeline_it->second.pipeline.pipeline) {
+                vkDestroyPipeline(device_, pipeline_it->second.pipeline.pipeline, nullptr);
+              }
               pipeline_it->second.pipeline.pipeline = res;
             }
+            continue;
           }
+
           auto compute_it = compute_pipeline_infos_.find(handle);
           if (compute_it != compute_pipeline_infos_.end()) {
-            pipeline_it->second.pipeline.pipeline = load_compute_pipeline_impl(compute_it->second);
+            VkPipeline res = load_compute_pipeline_impl(compute_it->second);
+            if (res) {
+              if (pipeline_it->second.pipeline.pipeline) {
+                vkDestroyPipeline(device_, pipeline_it->second.pipeline.pipeline, nullptr);
+              }
+              pipeline_it->second.pipeline.pipeline = res;
+            }
+            continue;
           }
         }
       }
-      // LINFO("dirty shader file: {}", file.string());
     }
   }
 }
 
+size_t PipelineManager::get_pipeline_hash(const GraphicsPipelineCreateInfo& info) {
+  size_t hash{};
+  for (const auto& shader_info : info.shaders) {
+    detail::hashing::hash_combine(hash, shader_info.path.string());
+    detail::hashing::hash_combine(hash, shader_info.entry_point);
+    for (const auto& define : shader_info.defines) {
+      detail::hashing::hash_combine(hash, define);
+    }
+  }
+
+  return hash;
+}
 }  // namespace gfx::vk2

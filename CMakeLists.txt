@@ -19,11 +19,10 @@ src/util/IndexAllocator.cpp
 src/util/CVar.cpp
 src/util/FileWatcher.cpp
 src/RenderGraph.cpp
-src/IBL.cpp
+src/techniques/IBL.cpp
 src/techniques/CSM.cpp
 
 src/CommandEncoder.cpp
-src/vk2/Rendering.cpp
 src/vk2/VkTypes.cpp
 src/vk2/StagingBufferPool.cpp
 src/vk2/Fence.cpp

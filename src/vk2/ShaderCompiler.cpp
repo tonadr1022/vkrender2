@@ -10,9 +10,7 @@
 #include <cassert>
 #include <filesystem>
 #include <fstream>
-#include <mutex>
 #include <print>
-#include <ranges>
 #include <string>
 #include <tracy/Tracy.hpp>
 #include <unordered_set>
@@ -244,7 +242,7 @@ bool ShaderManager::get_spirv_binary(const std::filesystem::path& path, VkShader
 }
 
 ShaderManager::LoadProgramResult ShaderManager::load_program(
-    std::span<ShaderCreateInfo> shader_create_infos, bool create_pipeline_layout,
+    std::span<ShaderCreateInfo> shader_create_infos,
     std::span<std::vector<std::string>> include_files) {
   ZoneScoped;
   // TODO: thread safe
@@ -255,13 +253,6 @@ ShaderManager::LoadProgramResult ShaderManager::load_program(
   }
   assert(shader_create_infos.size() < LoadProgramResult::max_stages);
   std::array<bool, LoadProgramResult::max_stages> dirty_shader_stages;
-  std::array<bool, LoadProgramResult::max_stages> cached_shader_stages;
-  {
-    std::lock_guard<std::mutex> lock(mtx_);
-    for (u64 i = 0; i < shader_create_infos.size(); i++) {
-      cached_shader_stages[i] = module_cache_.contains(shader_create_infos[i].path.string());
-    }
-  }
 
   if (!get_dirty_stages(shader_create_infos, dirty_shader_stages)) {
     return result;
@@ -269,7 +260,7 @@ ShaderManager::LoadProgramResult ShaderManager::load_program(
 
   std::array<CompileToSpirvResult, LoadProgramResult::max_stages> spirv_binaries;
   for (u64 i = 0; i < shader_create_infos.size(); i++) {
-    if (cached_shader_stages[i] && !dirty_shader_stages[i]) {
+    if (!dirty_shader_stages[i]) {
       continue;
     }
     auto* inc_files =
@@ -280,30 +271,13 @@ ShaderManager::LoadProgramResult ShaderManager::load_program(
     }
   }
 
+  // if spirv pipeline hash equals requested pipeilne hash, use it
+  // otherwise, compile the spirv
+
   result.module_cnt = shader_create_infos.size();
 
   for (u64 i = 0; i < shader_create_infos.size(); i++) {
     const std::string& path = shader_create_infos[i].path.string();
-    // if cached and not dirty, use the cache entry that has module and reflection data already
-    {
-      std::lock_guard<std::mutex> lock(mtx_);
-      if (cached_shader_stages[i] && !dirty_shader_stages[i]) {
-        auto it = module_cache_.find(path);
-        assert(it != module_cache_.end());
-        result.modules[i] = it->second;
-        continue;
-      }
-    }
-
-    if (create_pipeline_layout) {
-      assert(0 && "no don't do that use bindless please");
-      // // reflect shader
-      // if (!reflect_shader(spirv_binaries[i].binary_data, result.modules[i].refl_data)) {
-      //   LERROR("failed to reflect spirv binary: {}", path);
-      //   return result;
-      // }
-    }
-
     {
       ZoneScopedN("make module");
       VkShaderModuleCreateInfo create_info{
@@ -312,35 +286,6 @@ ShaderManager::LoadProgramResult ShaderManager::load_program(
           .pCode = spirv_binaries[i].binary_data.data()};
       VK_CHECK(vkCreateShaderModule(device_, &create_info, nullptr, &result.modules[i].module));
     }
-
-    // add to cache
-    {
-      std::lock_guard<std::mutex> lock(mtx_);
-      module_cache_.emplace(path, result.modules[i]);
-    }
-  }
-
-  if (create_pipeline_layout) {
-    assert(0 && "no don't do that use bindless please");
-    // // merge individual module data for layout creation
-    // PipelineLayoutCreateInfo data{};
-    // data.shader_stage_cnt = result.module_cnt;
-    // for (u64 i = 0; i < shader_create_infos.size(); i++) {
-    //   const auto& module = result.modules[i];
-    //   const auto& refl_data = module.refl_data;
-    //   data.shader_stage_flags |= refl_data.shader_stage;
-    //   if (refl_data.has_pc_range) {
-    //     data.pc_ranges[data.pc_range_cnt++] = refl_data.range;
-    //   }
-    //   for (u64 set_layout_idx = 0; set_layout_idx < refl_data.set_layout_cnt; set_layout_idx++) {
-    //     data.set_layouts[data.set_layout_cnt++] = refl_data.set_layouts[set_layout_idx];
-    //   }
-    // }
-    // result.layout = create_layout(device_, data, layout_cache_);
-    // if (!result.layout) {
-    //   LERROR("Failed to create pipeline layout for pipeline with shader stage 0: {}",
-    //          shader_create_infos[0].path.string());
-    // }
   }
 
   return result;
@@ -352,26 +297,22 @@ u64 ShaderManager::hash(const std::filesystem::path& path, VkShaderStageFlagBits
   return vk2::detail::hashing::hash<decltype(v)>{}(v);
 }
 
-void ShaderManager::clear_module_cache() {
-  ZoneScoped;
-  {
-    std::lock_guard lock(mtx_);
-    for (auto& [path, module] : module_cache_) {
-      assert(module.module);
-      vkDestroyShaderModule(device_, module.module, nullptr);
-    }
-    module_cache_.clear();
-  }
-}
-
-ShaderManager::ShaderManager(VkDevice device) : device_(device) {
+ShaderManager::ShaderManager(VkDevice device, std::filesystem::path spirv_hash_path)
+    : spirv_hash_path_(std::move(spirv_hash_path)), device_(device) {
   layout_cache_.init(device);
+  std::ifstream ifs(spirv_hash_path_);
+  if (ifs.is_open()) {
+    std::string filename;
+    uint64_t hash;
+    while (ifs >> filename >> hash) {
+      exit(1);
+    }
+  }
   glslang::InitializeProcess();
 }
 
 ShaderManager::~ShaderManager() {
   layout_cache_.shutdown();
-  clear_module_cache();
   glslang::FinalizeProcess();
 }
 

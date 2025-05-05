@@ -8,7 +8,6 @@
 #include "VkRender2.hpp"
 #include "shaders/ibl/eq_to_cube_comp_common.h.glsl"
 #include "vk2/Initializers.hpp"
-#include "vk2/Rendering.hpp"
 #include "vk2/SamplerCache.hpp"
 
 using namespace gfx::vk2;
@@ -77,8 +76,7 @@ IBL::IBL() {
   });
   prefilter_env_map_pipeline_ =
       PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
-          .vertex_path = "ibl/prefilter_env_map.vert",
-          .fragment_path = "ibl/prefilter_env_map.frag",
+          .shaders = {{"ibl/prefilter_env_map.vert"}, {"ibl/prefilter_env_map.frag"}},
           .rendering =
               {
                   .color_formats = {prefiltered_env_map_tex_->texture->format()},
@@ -87,8 +85,7 @@ IBL::IBL() {
       });
   convolute_cube_raster_pipeline_ =
       PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
-          .vertex_path = "ibl/cube_convolute.vert",
-          .fragment_path = "ibl/cube_convolute.frag",
+          .shaders = {{"ibl/cube_convolute.vert"}, {"ibl/cube_convolute.frag"}},
           .rendering =
               {
                   .color_formats = {irradiance_cubemap_tex_->format()},
@@ -97,13 +94,11 @@ IBL::IBL() {
       });
   equirect_to_cube_pipeline_ =
       PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
-          .vertex_path = "ibl/equirect_to_cube.vert",
-          .fragment_path = "ibl/equirect_to_cube.frag",
+          .shaders = {{"ibl/equirect_to_cube.vert"}, {"ibl/equirect_to_cube.frag"}},
           .rendering =
               {
                   .color_formats = {env_cubemap_tex_->format()},
               },
-          // .rasterization = {.cull_mode = CullMode::None},
       });
 
   auto make_cubemap_views =
@@ -218,7 +213,8 @@ void IBL::convolute_cube(CmdEncoder& ctx) {
       auto rendering_info =
           init::rendering_info(irradiance_cubemap_tex_->extent_2d(), &color_attachment);
       vkCmdBeginRenderingKHR(cmd, &rendering_info);
-      set_viewport_and_scissor(cmd, irradiance_cubemap_tex_->extent_2d());
+      ctx.set_viewport_and_scissor(irradiance_cubemap_tex_->extent_2d().width,
+                                   irradiance_cubemap_tex_->extent_2d().height);
       PipelineManager::get().bind_graphics(cmd, convolute_cube_raster_pipeline_);
       struct {
         mat4 vp;
@@ -274,7 +270,7 @@ void IBL::prefilter_env_map(CmdEncoder& ctx) {
         auto rendering_info =
             init::rendering_info(VkExtent2D{mip_width, mip_height}, &color_attachment);
         vkCmdBeginRenderingKHR(cmd, &rendering_info);
-        set_viewport_and_scissor(cmd, {mip_width, mip_height});
+        ctx.set_viewport_and_scissor(mip_width, mip_height);
         PipelineManager::get().bind_graphics(cmd, prefilter_env_map_pipeline_);
 
         struct {

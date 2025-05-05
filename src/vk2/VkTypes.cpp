@@ -29,4 +29,14 @@ VkImageAspectFlags format_to_aspect_flags(Format format) {
   return format_to_aspect_flags(to_vkformat(format));
 }
 
+VkCullModeFlags convert_cull_mode(CullMode mode) {
+  switch (mode) {
+    case CullMode::None:
+      return VK_CULL_MODE_NONE;
+    case CullMode::Back:
+      return VK_CULL_MODE_BACK_BIT;
+    case CullMode::Front:
+      return VK_CULL_MODE_FRONT_BIT;
+  }
+}
 }  // namespace gfx::vk2

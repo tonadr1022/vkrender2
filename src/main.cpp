@@ -1,4 +1,3 @@
-
 #include <cstring>
 #include <print>
 #include <tracy/Tracy.hpp>
@@ -6,8 +5,6 @@
 #include "App.hpp"
 
 #define CMP(arg, cmp) strcmp(arg, cmp) == 0
-
-using vr = std::expected<void, const char*>;
 
 int main(int argc, char* argv[]) {
   ZoneScoped;

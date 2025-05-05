@@ -1,16 +1,15 @@
 #include "FileWatcher.hpp"
 
-#include <algorithm>
-#include <fstream>
-#include <ranges>
-#include <stdexcept>
 #include <utility>
 
 #include "ThreadPool.hpp"
 
 namespace util {
 
-void FileWatcher::start() { update_loop(); }
+void FileWatcher::start() {
+  running_ = true;
+  update_loop();
+}
 
 void FileWatcher::update_loop() {
   using namespace std::chrono_literals;
@@ -48,29 +47,10 @@ void FileWatcher::update() {
 }
 
 void FileWatcher::shutdown() {
-  running_ = false;
-  if (update_task_.valid()) {
-    update_task_.get();
-  }
-  // TODO: race condition lol
-  if (!cache_path_.empty()) {
-    auto p = cache_path_;
-    std::vector<std::filesystem::path> paths;
-    while (p.has_parent_path() && p != p.root_path()) {
-      paths.emplace_back(p.parent_path());
-      p = p.parent_path();
-    }
-    std::ranges::reverse(paths);
-    for (const auto& dir : paths) {
-      if (!std::filesystem::exists(dir)) {
-        std::filesystem::create_directory(dir);
-      }
-    }
-    std::ofstream ofs(cache_path_);
-    if (ofs.is_open()) {
-      for (const auto& [file, time] : modified_time_stamps_) {
-        ofs << file.string() << ' ' << static_cast<size_t>(time.time_since_epoch().count()) << '\n';
-      }
+  if (running_) {
+    running_ = false;
+    if (update_task_.valid()) {
+      update_task_.get();
     }
   }
 }
@@ -78,25 +58,18 @@ void FileWatcher::shutdown() {
 FileWatcher::~FileWatcher() { shutdown(); }
 
 FileWatcher::FileWatcher(std::filesystem::path base_path, OnDirtyFunc func,
-                         std::chrono::milliseconds sleep_time, std::filesystem::path cache_path)
+                         std::vector<const char*>&& watch_extensions,
+                         std::chrono::milliseconds sleep_time)
     : on_dirty_func_(std::move(func)),
       base_path_(std::move(base_path)),
-      cache_path_(std::move(cache_path)),
-      sleep_time_(sleep_time) {
-  if (!cache_path_.empty() && std::filesystem::exists(cache_path_)) {
-    std::ifstream file(cache_path_);
-    if (file.is_open()) {
-      try {
-        std::filesystem::path filename;
-        std::uint64_t timestamp;
-        while (file >> filename >> timestamp) {
-          modified_time_stamps_.emplace(
-              filename, std::filesystem::file_time_type(std::chrono::nanoseconds(timestamp)));
-        }
-      } catch (const std::runtime_error&) {
-        return;
-      }
-    }
+      watch_extensions_(std::move(watch_extensions)),
+      sleep_time_(sleep_time) {}
+
+void FileWatcher::add_timestamps(
+    std::span<std::pair<std::string, std::filesystem::file_time_type>> timestamps) {
+  for (const auto& [filepath, modified_time] : timestamps) {
+    modified_time_stamps_.emplace(filepath, modified_time);
   }
 }
+
 }  // namespace util

@@ -13,6 +13,7 @@ u64 scene_data;
 u32 num_objs;
 u32 in_draw_info_buf_idx;
 u32 out_draw_cmds_buf_idx;
+u32 out_draw_cmds_buf_double_sided_idx;
 u32 object_bounds_buf_idx;
 u32 flags;
 } ;

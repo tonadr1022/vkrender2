@@ -33,7 +33,7 @@ struct ShaderModule {
 
 class ShaderManager {
  public:
-  explicit ShaderManager(VkDevice device);
+  explicit ShaderManager(VkDevice device, std::filesystem::path spirv_hash_path);
   ~ShaderManager();
 
   struct ShaderCreateInfo {
@@ -47,13 +47,12 @@ class ShaderManager {
     u64 module_cnt{};
     VkPipelineLayout layout{};
   };
-  void clear_module_cache();
   LoadProgramResult load_program(std::span<ShaderCreateInfo> shader_create_infos,
-                                 bool create_pipeline_layout,
                                  std::span<std::vector<std::string>> include_files);
-  // VkShaderModule load_shader(const std::filesystem::path& path, VkShaderStageFlagBits stage);
 
  private:
+  std::unordered_map<std::filesystem::path, uint64_t> spirv_hash_cache_;
+  std::filesystem::path spirv_hash_path_;
   struct CompileToSpirvResult {
     std::vector<uint32_t> binary_data;
   };
@@ -69,7 +68,6 @@ class ShaderManager {
   bool get_dirty_stages(std::span<ShaderCreateInfo> infos, std::span<bool> dirty_flags);
   DescriptorSetLayoutCache layout_cache_;
   std::unordered_map<u64, ShaderMetadata> shader_metadata_;
-  std::unordered_map<std::string, ShaderModule> module_cache_;
   std::mutex mtx_;
   u64 hash(const std::filesystem::path& path, VkShaderStageFlagBits stage);
 };

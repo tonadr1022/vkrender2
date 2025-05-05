@@ -3,15 +3,14 @@
 #include <vulkan/vulkan_core.h>
 
 #include "Common.hpp"
+#include "Types.hpp"
 
 namespace tracy {
 struct VkCtx;
 }
+
 namespace gfx {
 
-enum class StoreOp : uint8_t { Store, Discard };
-
-struct RenderPassInfo {};
 struct CmdEncoder {
   explicit CmdEncoder(VkCommandBuffer cmd, VkPipelineLayout default_pipeline_layout,
                       tracy::VkCtx* tracy_ctx = nullptr)
@@ -25,6 +24,8 @@ struct CmdEncoder {
                VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access);
   void push_constants(VkPipelineLayout layout, u32 size, void* data);
   void push_constants(u32 size, void* data);
+  void set_viewport_and_scissor(u32 width, u32 height);
+  void set_cull_mode(CullMode mode);
 
   [[nodiscard]] VkCommandBuffer cmd() const { return cmd_; }
 

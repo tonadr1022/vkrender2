@@ -10,7 +10,6 @@
 #include "AABB.hpp"
 #include "BaseRenderer.hpp"
 #include "CommandEncoder.hpp"
-#include "IBL.hpp"
 #include "RenderGraph.hpp"
 #include "Scene.hpp"
 #include "SceneLoader.hpp"
@@ -18,6 +17,7 @@
 #include "Types.hpp"
 #include "shaders/common.h.glsl"
 #include "techniques/CSM.hpp"
+#include "techniques/IBL.hpp"
 #include "util/IndexAllocator.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/DeletionQueue.hpp"
@@ -186,29 +186,40 @@ struct VkRender2 final : public BaseRenderer {
 
     struct Alloc {
       util::FreeListAllocator::Slot draw_cmd_slot;
+      u32 num_double_sided_draws;
     };
 
     struct DrawPass {
-      explicit DrawPass(std::string name, u32 count, u32 frames_in_flight);
+      explicit DrawPass(std::string name, u32 num_single_sided_draws, u32 num_double_sided_draws,
+                        u32 frames_in_flight);
       std::string name;
-      std::vector<Holder<BufferHandle>> out_draw_cmds_buf;
-      [[nodiscard]] BufferHandle get_frame_out_draw_cmd_buf_handle() const;
-      [[nodiscard]] vk2::Buffer* get_frame_out_draw_cmd_buf() const;
+      // lol this is jank but i don't want a string alloc every time. need to make a special hashed
+      // string that combines multiple strings at once
+      std::string name_double_sided;
+
+      std::array<std::vector<Holder<BufferHandle>>, 2> out_draw_cmds_bufs;
+      [[nodiscard]] BufferHandle get_frame_out_draw_cmd_buf_handle(bool double_sided) const;
+      [[nodiscard]] vk2::Buffer* get_frame_out_draw_cmd_buf(bool double_sided) const;
       bool enabled{true};
     };
     void add_draw_pass(const std::string& name);
 
+    // TODO: this is a little jank
     Handle add_draws(StateTracker& state, VkCommandBuffer cmd, size_t size, size_t staging_offset,
-                     vk2::Buffer& staging);
+                     vk2::Buffer& staging, u32 num_double_sided_draws);
     void remove_draws(StateTracker& state, VkCommandBuffer cmd, Handle handle);
 
     [[nodiscard]] const std::string& get_name() const { return name_; }
-    [[nodiscard]] u32 get_num_draw_cmds() const { return num_draw_cmds_; }
+    [[nodiscard]] u32 get_num_draw_cmds(bool double_sided) const {
+      return num_draw_cmds_[double_sided];
+    }
     [[nodiscard]] BufferHandle get_draw_info_buf_handle() const;
     [[nodiscard]] vk2::Buffer* get_draw_info_buf() const;
 
     bool draw_enabled{true};
-    [[nodiscard]] bool should_draw() const { return draw_enabled && get_num_draw_cmds() > 0; }
+    [[nodiscard]] bool should_draw() const {
+      return draw_enabled && (get_num_draw_cmds(false) > 0 || get_num_draw_cmds(true) > 0);
+    }
 
     [[nodiscard]] const std::vector<DrawPass>& get_draw_passes() const { return draw_passes_; }
 
@@ -217,25 +228,26 @@ struct VkRender2 final : public BaseRenderer {
     std::string name_;
     Pool<Handle, Alloc> allocs_;
     FreeListBuffer draw_cmds_buf_;
-    u32 num_draw_cmds_{};
+    u32 num_draw_cmds_[2] = {};  // idx 1 is double sided
   };
 
   struct StaticModelGPUResources {
     StaticModelGPUResources() = default;
     StaticModelGPUResources(SceneLoadData scene_graph_data,
-                            std::vector<gfx::PrimitiveDrawInfo> mesh_draw_infos,
-                            util::FreeListAllocator::Slot materials_slot,
-                            util::FreeListAllocator::Slot vertices_slot,
-                            util::FreeListAllocator::Slot indices_slot,
-                            std::vector<Holder<ImageHandle>> textures, u64 first_vertex,
-                            u64 first_index, u64 num_vertices, u64 num_indices, std::string name,
-                            u32 ref_count)
+                            std::vector<gfx::PrimitiveDrawInfo>&& mesh_draw_infos,
+                            util::FreeListAllocator::Slot&& materials_slot,
+                            util::FreeListAllocator::Slot&& vertices_slot,
+                            util::FreeListAllocator::Slot&& indices_slot,
+                            std::vector<Holder<ImageHandle>>&& textures,
+                            std::vector<Material>&& materials, u64 first_vertex, u64 first_index,
+                            u64 num_vertices, u64 num_indices, std::string name, u32 ref_count)
         : scene_graph_data(std::move(scene_graph_data)),
           mesh_draw_infos(std::move(mesh_draw_infos)),
           materials_slot(std::move(materials_slot)),
           vertices_slot(std::move(vertices_slot)),
           indices_slot(std::move(indices_slot)),
           textures(std::move(textures)),
+          materials(std::move(materials)),
           first_vertex(first_vertex),
           first_index(first_index),
           num_vertices(num_vertices),
@@ -254,6 +266,7 @@ struct VkRender2 final : public BaseRenderer {
     util::FreeListAllocator::Slot vertices_slot;
     util::FreeListAllocator::Slot indices_slot;
     std::vector<Holder<ImageHandle>> textures;
+    std::vector<Material> materials;
     u64 first_vertex;
     u64 first_index;
     u64 num_vertices;
@@ -286,11 +299,14 @@ struct VkRender2 final : public BaseRenderer {
   void free(StaticModelInstanceResources& instance);
   void free(CmdEncoder& cmd, StaticModelInstanceResources& instance);
 
+  enum GPUDrawInfoFlags : u8 { GPUDrawInfoFlags_DoubleSided = (1 << 0) };
+
   struct GPUDrawInfo {
     u32 index_cnt;
     u32 first_index;
     u32 vertex_offset;
     u32 instance_id;
+    u32 flags;
   };
 
   gfx::RenderGraph rg_;
@@ -348,12 +364,13 @@ struct VkRender2 final : public BaseRenderer {
   vk2::PipelineHandle skybox_pipeline_;
   vk2::PipelineHandle postprocess_pipeline_;
   vk2::PipelineHandle gbuffer_pipeline_;
+  vk2::PipelineHandle gbuffer_alpha_mask_pipeline_;
   vk2::PipelineHandle deferred_shade_pipeline_;
   vk2::PipelineHandle line_draw_pipeline_;
-  Format gbuffer_a_format_{Format::R32G32B32A32Sfloat};
-  Format gbuffer_b_format_{Format::R32G32B32A32Sfloat};
-  Format gbuffer_c_format_{Format::R32G32B32A32Sfloat};
-  Format draw_img_format_{Format::R32G32B32A32Sfloat};
+  Format gbuffer_a_format_{Format::R16G16B16A16Sfloat};
+  Format gbuffer_b_format_{Format::R16G16B16A16Sfloat};
+  Format gbuffer_c_format_{Format::R16G16B16A16Sfloat};
+  Format draw_img_format_{Format::R16G16B16A16Sfloat};
   Format depth_img_format_{Format::D32Sfloat};
   // TODO: make more robust settings
   bool deferred_enabled_{true};

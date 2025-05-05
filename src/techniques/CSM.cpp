@@ -19,7 +19,6 @@
 #include "util/CVar.hpp"
 #include "vk2/Device.hpp"
 #include "vk2/Initializers.hpp"
-#include "vk2/Rendering.hpp"
 #include "vk2/VkTypes.hpp"
 
 using namespace gfx::vk2;
@@ -172,8 +171,7 @@ CSM::CSM(BaseRenderer* renderer, DrawFunc draw_fn, AddRenderDependenciesFunc add
   }
   ZoneScoped;
   GraphicsPipelineCreateInfo shadow_depth_info{
-      .vertex_path = "shadow_depth.vert",
-      .fragment_path = "shadow_depth.frag",
+      .shaders = {{"shadow_depth.vert"}, {"shadow_depth.frag"}},
       .rendering = {.depth_format = to_vkformat(Format::D32Sfloat)},
       .rasterization = {.depth_clamp = true, .depth_bias = true},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::Less),
@@ -182,12 +180,10 @@ CSM::CSM(BaseRenderer* renderer, DrawFunc draw_fn, AddRenderDependenciesFunc add
   };
   shadow_depth_alpha_mask_pipline_ =
       PipelineManager::get().load_graphics_pipeline(shadow_depth_info);
-  shadow_depth_info.fragment_path = "";
+  shadow_depth_info.shaders.pop_back();
   shadow_depth_pipline_ = PipelineManager::get().load_graphics_pipeline(shadow_depth_info);
-
   depth_debug_pipeline_ = PipelineManager::get().load_graphics_pipeline(GraphicsPipelineCreateInfo{
-      .vertex_path = "fullscreen_quad.vert",
-      .fragment_path = "debug/depth_debug.frag",
+      .shaders = {{"fullscreen_quad.vert"}, {"debug/depth_debug.frag"}},
       .rendering = {.color_formats = {to_vkformat(debug_shadow_img_format_)}},
       .rasterization = {.cull_mode = CullMode::Front},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_disable(),
@@ -335,7 +331,8 @@ void CSM::add_pass(RenderGraph& rg) {
       auto* sm_img = get_device().get_image(shadow_map_img_);
       auto rendering_info = init::rendering_info(sm_img->extent_2d(), nullptr, &depth_att);
       vkCmdBeginRenderingKHR(cmd.cmd(), &rendering_info);
-      set_viewport_and_scissor(cmd.cmd(), sm_img->extent_2d());
+      cmd.set_cull_mode(CullMode::None);
+      cmd.set_viewport_and_scissor(sm_img->extent_2d().width, sm_img->extent_2d().height);
       if (depth_bias_enabled_) {
         vkCmdSetDepthBias(cmd.cmd(), depth_bias_constant_factor_, 0.0f, depth_bias_slope_factor_);
       } else {
@@ -380,7 +377,7 @@ void CSM::debug_shadow_pass(RenderGraph& rg, const vk2::Sampler& linear_sampler)
           init::rendering_info(tex->extent_2d(), &color_attachment, nullptr, nullptr);
 
       vkCmdBeginRenderingKHR(cmd.cmd(), &render_info);
-      set_viewport_and_scissor(cmd.cmd(), tex->extent_2d());
+      cmd.set_viewport_and_scissor(tex->extent_2d().width, tex->extent_2d().height);
 
       assert(debug_cascade_idx_ >= 0 && (u32)debug_cascade_idx_ < cascade_count_);
 
