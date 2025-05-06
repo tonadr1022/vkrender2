@@ -10,7 +10,6 @@ add_subdirectory(third_party)
 add_executable(vkrender2
 
 src/main.cpp
-src/BaseRenderer.cpp
 src/StateTracker.cpp
 src/Camera.cpp
 src/VkRender2.cpp
@@ -25,11 +24,9 @@ src/techniques/CSM.cpp
 src/CommandEncoder.cpp
 src/vk2/VkTypes.cpp
 src/vk2/StagingBufferPool.cpp
-src/vk2/Fence.cpp
 src/vk2/BindlessResourceAllocator.cpp
 src/vk2/Buffer.cpp
 src/vk2/Definitions.cpp
-src/vk2/DeletionQueue.cpp
 src/vk2/Device.cpp
 src/vk2/Initializers.cpp
 src/vk2/PipelineManager.cpp

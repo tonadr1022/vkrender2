@@ -9,12 +9,15 @@
 #include <cassert>
 #include <tracy/Tracy.hpp>
 
+#include "BindlessResourceAllocator.hpp"
 #include "Common.hpp"
 #include "GLFW/glfw3.h"
-#include "Logger.hpp"
+#include "PipelineManager.hpp"
 #include "Types.hpp"
 #include "VkBootstrap.h"
 #include "VkCommon.hpp"
+#include "core/Logger.hpp"
+#include "vk2/SamplerCache.hpp"
 #include "vk2/VkTypes.hpp"
 
 namespace {
@@ -57,6 +60,7 @@ void destroy(gfx::ImageViewHandle data) {
 namespace gfx {}  // namespace gfx
 
 namespace gfx::vk2 {
+
 namespace {
 Device* g_device{};
 }
@@ -66,7 +70,11 @@ void Device::init(const CreateInfo& info) {
   g_device->init_impl(info);
 }
 
-void Device::destroy() { delete g_device; }
+void Device::destroy() {
+  assert(g_device);
+  delete g_device;
+  g_device = nullptr;
+}
 
 Device& Device::get() {
   assert(g_device);
@@ -202,6 +210,7 @@ void Device::init_impl(const CreateInfo& info) {
   }
   vkb_device_ = std::move(dev_ret.value());
   device_ = vkb_device_.device;
+  assert(device_);
 
   {
     ZoneScopedN("init volk device");
@@ -271,6 +280,7 @@ void Device::init_impl(const CreateInfo& info) {
     }
   }
 
+  // TODO: set debug name functions
 #ifndef NDEBUG
   VkDebugUtilsObjectNameInfoEXT name_info = {
       .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
@@ -295,22 +305,7 @@ void Device::init_impl(const CreateInfo& info) {
       d.render_semaphore = create_semaphore();
     }
   }
-}
-
-void Device::destroy_impl() {
-  for (auto& d : per_frame_data_) {
-    vkDestroySemaphore(device_, d.render_semaphore, nullptr);
-    vkDestroyFence(device_, d.render_fence, nullptr);
-  }
-
-  ImGui_ImplVulkan_Shutdown();
-  vkDestroyDescriptorPool(device_, imgui_descriptor_pool_, nullptr);
-  swapchain_.destroy(device_);
-  vmaDestroyAllocator(allocator_);
-  vkb::destroy_device(vkb_device_);
-  vkb::destroy_surface(instance_, surface_);
-  volkFinalize();
-  vkb::destroy_instance(instance_);
+  assert(device_ && device());
 }
 
 Device& get_device() { return Device::get(); }
@@ -473,13 +468,12 @@ void Device::init_imgui() {
     exit(1);
   }
   {
-    VkInstance instance = vk2::get_device().get_instance();
     // TODO: remove
     ImGui_ImplVulkan_LoadFunctions(
         [](const char* functionName, void* vulkanInstance) {
           return vkGetInstanceProcAddr(*static_cast<VkInstance*>(vulkanInstance), functionName);
         },
-        reinterpret_cast<void*>(&instance));
+        reinterpret_cast<void*>(&instance_));
     // create descriptor pool
     VkDescriptorPoolSize pool_sizes[] = {{VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
                                          {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
@@ -502,15 +496,15 @@ void Device::init_imgui() {
     VK_CHECK(vkCreateDescriptorPool(device_, &pool_info, nullptr, &imgui_descriptor_pool_));
 
     ImGui_ImplVulkan_InitInfo init_info{};
-    init_info.Instance = instance;
+    init_info.Instance = instance_;
     init_info.PhysicalDevice = vkb_phys_device_.physical_device;
     init_info.Device = device_;
     init_info.Queue = vk2::get_device().get_queue(vk2::QueueType::Graphics).queue;
     init_info.DescriptorPool = imgui_descriptor_pool_;
+    // TODO: fix
     init_info.MinImageCount = 3;
     init_info.ImageCount = 3;
     init_info.UseDynamicRendering = true;
-
     init_info.PipelineRenderingCreateInfo = {};
     init_info.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
     init_info.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
@@ -523,6 +517,7 @@ void Device::init_imgui() {
     ImGui_ImplVulkan_CreateFontsTexture();
   }
 }
+
 AttachmentInfo Device::get_swapchain_info() const {
   return AttachmentInfo{.dims = {swapchain_.dims.x, swapchain_.dims.y, 1},
                         .format = vkformat_to_format(swapchain_.format)};
@@ -592,5 +587,58 @@ void Device::begin_frame() {
   vkWaitForFences(device_, 1, &curr_frame().render_fence, true, timeout);
   VK_CHECK(vkResetFences(device_, 1, &curr_frame().render_fence));
 }
+
+VkFence Device::allocate_fence(bool reset) {
+  if (!free_fences_.empty()) {
+    VkFence f = free_fences_.back();
+    free_fences_.pop_back();
+    if (reset) {
+      VK_CHECK(vkResetFences(device_, 1, &f));
+    }
+    return f;
+  }
+
+  VkFenceCreateInfo info{.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+                         .flags = VK_FENCE_CREATE_SIGNALED_BIT};
+  VkFence fence;
+  VK_CHECK(vkCreateFence(device_, &info, nullptr, &fence));
+  // TODO: maybe not this
+  if (reset) {
+    VK_CHECK(vkResetFences(device_, 1, &fence));
+  }
+  return fence;
+}
+
+void Device::free_fence(VkFence fence) { free_fences_.push_back(fence); }
+
+Device::~Device() {
+  ZoneScoped;
+  vk2::PipelineManager::shutdown();
+  vk2::SamplerCache::destroy();
+  vk2::ResourceAllocator::get().set_frame_num(UINT32_MAX, 0);
+  vk2::ResourceAllocator::shutdown();
+
+  for (auto& d : per_frame_data_) {
+    vkDestroySemaphore(device_, d.render_semaphore, nullptr);
+    vkDestroyFence(device_, d.render_fence, nullptr);
+  }
+  for (auto& f : free_fences_) {
+    vkDestroyFence(device_, f, nullptr);
+  }
+
+  ImGui_ImplVulkan_Shutdown();
+  vkDestroyDescriptorPool(device_, imgui_descriptor_pool_, nullptr);
+  swapchain_.destroy(device_);
+  {
+    ZoneScopedN("shutdown base");
+    vmaDestroyAllocator(allocator_);
+    vkb::destroy_device(vkb_device_);
+    vkb::destroy_surface(instance_, surface_);
+    volkFinalize();
+    vkb::destroy_instance(instance_);
+  }
+}
+
+void Device::wait_idle() { vkDeviceWaitIdle(device_); }
 
 }  // namespace gfx::vk2

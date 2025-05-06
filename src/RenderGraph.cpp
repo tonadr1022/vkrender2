@@ -12,7 +12,7 @@
 #include <utility>
 
 #include "CommandEncoder.hpp"
-#include "Logger.hpp"
+#include "core/Logger.hpp"
 #include "util/BitOps.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/Device.hpp"
@@ -1212,4 +1212,6 @@ RenderGraph::ResourceState* RenderGraph::get_resource_pipeline_state(u32 idx) {
   }
   return &buffer_pipeline_states_[physical_buffers_[idx]];
 }
+
+
 }  // namespace gfx

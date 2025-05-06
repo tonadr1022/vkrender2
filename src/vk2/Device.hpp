@@ -10,7 +10,6 @@
 #include "Types.hpp"
 #include "VkBootstrap.h"
 #include "vk2/Buffer.hpp"
-#include "vk2/DeletionQueue.hpp"
 #include "vk2/Pool.hpp"
 #include "vk2/Swapchain.hpp"
 #include "vk2/Texture.hpp"
@@ -55,6 +54,16 @@ enum class QueueType : u8 {
 
 class Device {
  public:
+  Device(const Device&) = delete;
+  Device(Device&&) = delete;
+  Device& operator=(const Device&) = delete;
+  Device& operator=(Device&&) = delete;
+
+ private:
+  Device() = default;
+  ~Device();
+
+ public:
   struct CreateInfo {
     const char* app_name;
     GLFWwindow* window;
@@ -72,11 +81,13 @@ class Device {
   void queue_submit(QueueType type, std::span<VkSubmitInfo2> submits);
   void queue_submit(QueueType type, std::span<VkSubmitInfo2> submits, VkFence fence);
 
-  [[nodiscard]] VkDevice device() const { return vkb_device_.device; }
+  [[nodiscard]] VkDevice device() const {
+    assert(device_);
+    return device_;
+  }
   [[nodiscard]] VkPhysicalDevice get_physical_device() const {
     return vkb_phys_device_.physical_device;
   }
-  [[nodiscard]] const vkb::Device& vkb_device() const { return vkb_device_; }
 
   // VkFormat get_swapchain_format();
 
@@ -131,12 +142,15 @@ class Device {
 
   [[nodiscard]] const Queue& get_queue(QueueType type) const { return queues_[(u32)type]; }
 
-  constexpr u32 get_frames_in_flight() { return frames_in_flight; }
+  [[nodiscard]] constexpr u32 get_frames_in_flight() const { return frames_in_flight; }
   [[nodiscard]] AttachmentInfo get_swapchain_info() const;
   [[nodiscard]] VkImage get_swapchain_img(u32 idx) const;
   void submit_to_graphics_queue();
   void begin_frame();
   [[nodiscard]] u32 curr_frame_num() const { return curr_frame_num_; }
+  [[nodiscard]] u32 curr_frame_in_flight() const {
+    return curr_frame_num() % get_frames_in_flight();
+  }
 
   struct PerFrameData {
     VkSemaphore render_semaphore{};
@@ -148,21 +162,24 @@ class Device {
     return swapchain_.acquire_semaphores[swapchain_.acquire_semaphore_idx];
   }
 
+  VkFence allocate_fence(bool reset);
+  void free_fence(VkFence fence);
+  void wait_idle();
+
  private:
   Queue queues_[(u32)QueueType::Count];
   Image make_img_impl(const ImageCreateInfo& info);
   void init_impl(const CreateInfo& info);
-  void destroy_impl();
 
   std::vector<PerFrameData> per_frame_data_;
+  std::vector<VkFence> free_fences_;
   VkSurfaceKHR surface_;
   VkDevice device_;
   Swapchain swapchain_;
   GLFWwindow* window_;
   vkb::Instance instance_;
-  DeletionQueue main_del_queue_;
   vkb::PhysicalDevice vkb_phys_device_;
-  vkb::Device vkb_device_;
+  vkb::Device vkb_device_{};
   VmaAllocator allocator_;
   VkDescriptorPool imgui_descriptor_pool_;
   u32 curr_frame_num_{};

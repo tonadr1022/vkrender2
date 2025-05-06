@@ -7,7 +7,7 @@
 #include <tracy/Tracy.hpp>
 #include <vector>
 
-#include "Logger.hpp"
+#include "core/Logger.hpp"
 #include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Device.hpp"
 #include "vk2/Texture.hpp"
@@ -92,14 +92,16 @@ Swapchain::Status Swapchain::update(const UpdateSwapchainInfo& info) {
 }
 
 void Swapchain::destroy(VkDevice device) {
-  for (u32 i = 0; i < imgs.size(); i++) {
-    if (img_views[i]) {
-      vkDestroyImageView(device, img_views[i], nullptr);
-      img_views[i] = nullptr;
+  for (auto& img_view : img_views) {
+    if (img_view) {
+      vkDestroyImageView(device, img_view, nullptr);
+      img_view = nullptr;
     }
-    if (acquire_semaphores[i]) {
-      vkDestroySemaphore(device, acquire_semaphores[i], nullptr);
-      acquire_semaphores[i] = nullptr;
+  }
+  for (auto& semaphore : acquire_semaphores) {
+    if (semaphore) {
+      vkDestroySemaphore(device, semaphore, nullptr);
+      semaphore = nullptr;
     }
   }
   vkDestroySwapchainKHR(device, swapchain, nullptr);

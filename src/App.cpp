@@ -1,12 +1,12 @@
 #include "App.hpp"
 
 #include <fstream>
+#include <tracy/Tracy.hpp>
 
 #include "Camera.hpp"
 #include "GLFW/glfw3.h"
-#include "Input.hpp"
-#include "Logger.hpp"
 #include "VkRender2.hpp"
+#include "core/Logger.hpp"
 #include "imgui.h"
 #include "util/CVar.hpp"
 namespace {
@@ -68,9 +68,19 @@ App::App(const InitInfo& info) : cam(cam_data, .1) {
     ((App*)glfwGetWindowUserPointer(win))->on_cursor_event({xpos, ypos});
   });
 
-  VkRender2::init(VkRender2::InitInfo{
-      .window = window, .resource_dir = resource_dir, .name = info.name, .vsync = info.vsync});
+  vk2::Device::init({info.name, window, info.vsync});
+  bool success;
+  VkRender2::init(VkRender2::InitInfo{.window = window,
+                                      .device = &vk2::Device::get(),
+                                      .resource_dir = resource_dir,
+                                      .name = info.name,
+                                      .vsync = info.vsync},
+                  success);
+  if (!success) {
+    return;
+  }
   local_models_dir = resource_dir / "local_models/";
+  running_ = true;
 }
 
 namespace {
@@ -104,6 +114,9 @@ void load_cam(Camera& cam) {
 }  // namespace
 
 void App::run() {
+  if (!running_) {
+    return;
+  }
   load_cam(cam_data);
   float last_time{};
   auto& ren = VkRender2::get();
@@ -130,31 +143,19 @@ void App::run() {
   // std::filesystem::path env_tex = "/home/tony/Downloads/golden_gate_hills_4k.hdr";
 
   VkRender2::get().set_env_map(env_tex);
-  while (!glfwWindowShouldClose(window)) {
-    glfwPollEvents();
+  while (running_ && !glfwWindowShouldClose(window)) {
+    {
+      ZoneScopedN("poll events");
+      glfwPollEvents();
+    }
+
     float curr_t = glfwGetTime();
     dt = curr_t - last_time;
     last_time = curr_t;
 
     ren.new_frame();
     update(dt);
-
-    ren.draw_line({0, 1, 0}, {0, 0, 0}, {1, 1, 1, 1});
-    int n1{3}, n2{1};
-    static float t{};
-    on_imgui();
-    if (ImGui::Begin("lines")) {
-      ImGui::DragInt("n1", &n1);
-      ImGui::DragInt("n2", &n2);
-      ImGui::DragFloat("dist", &t, .1);
-      ImGui::End();
-    }
-
-    ren.draw_box(glm::translate(mat4{1}, vec3{0, t, 0}), vec3{1}, vec4{1.f});
-    // ren.draw_plane({}, {0, 0, 1}, {1, 0, 1}, 1, 1, n1, n2, {1, 1, 1, 1});
-    info_.view = cam_data.get_view();
-    info_.view_pos = cam_data.pos;
-    info_.light_dir = glm::normalize(light_dir_);
+    draw_imgui();
     ren.draw(info_);
   }
 
@@ -165,13 +166,21 @@ void App::run() {
 void App::quit() const { glfwSetWindowShouldClose(window, true); }
 
 void App::shutdown() const {
-  VkRender2::shutdown();
+  ZoneScoped;
+  // NOTE: destroying window first doesn't break the renderer for now. it's nice
+  // since the window of the app closes faster
   glfwDestroyWindow(window);
+  VkRender2::shutdown();
+  vk2::Device::destroy();
   glfwTerminate();
 }
 
 void App::update(float dt) {
+  ZoneScoped;
   cam.update_pos(window, dt);
+  info_.view = cam_data.get_view();
+  info_.view_pos = cam_data.pos;
+  info_.light_dir = glm::normalize(light_dir_);
   // static glm::quat rot = glm::quat(1, 0, 0, 0);
   // glm::quat delta_rot = glm::angleAxis(dt, glm::vec3(0., 1., 0.));
   // rot = glm::normalize(delta_rot * rot);  // Accumulate rotation
@@ -185,7 +194,7 @@ void App::on_key_event([[maybe_unused]] int key, [[maybe_unused]] int scancode,
       on_hide_mouse_change(!hide_mouse);
     }
     if (key == GLFW_KEY_G && mods & GLFW_MOD_ALT) {
-      VkRender2::get().draw_imgui = !VkRender2::get().draw_imgui;
+      VkRender2::get().set_imgui_enabled(!VkRender2::get().get_imgui_enabled());
     }
   }
 }
@@ -224,7 +233,8 @@ uvec2 App::window_dims() const {
   return {x, y};
 }
 
-void App::on_imgui() {
+void App::draw_imgui() {
+  ZoneScoped;
   if (ImGui::Begin("hello")) {
     static char filename[100];
     static std::string err_filename;

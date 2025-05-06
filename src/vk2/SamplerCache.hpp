@@ -7,7 +7,6 @@
 #include "vk2/Resource.hpp"
 namespace gfx::vk2 {
 
-// TODO: manage lifetimes instead of clearing all
 struct Sampler {
   VkSampler sampler;
   BindlessResourceInfo resource_info;

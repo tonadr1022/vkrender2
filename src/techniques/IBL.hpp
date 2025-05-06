@@ -4,13 +4,15 @@
 #include <optional>
 #include <vector>
 
+#include "Types.hpp"
 #include "vk2/PipelineManager.hpp"
 #include "vk2/Texture.hpp"
+
 namespace gfx {
 struct CmdEncoder;
 class IBL {
  public:
-  IBL();
+  explicit IBL(BufferHandle cube_vertex_buf);
   void load_env_map(CmdEncoder& ctx, const std::filesystem::path& path);
 
  private:
@@ -38,6 +40,7 @@ class IBL {
   vk2::PipelineHandle integrate_brdf_pipeline_;
   vk2::PipelineHandle convolute_cube_raster_pipeline_;
   vk2::PipelineHandle prefilter_env_map_pipeline_;
+  BufferHandle cube_vertex_buf_;
 };
 
 }  // namespace gfx

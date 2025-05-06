@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "AABB.hpp"
-#include "BaseRenderer.hpp"
 #include "CommandEncoder.hpp"
 #include "RenderGraph.hpp"
 #include "StateTracker.hpp"
@@ -159,11 +158,11 @@ void calc_csm_light_space_matrices(std::span<mat4> matrices, std::span<mat4> pro
 
 namespace gfx {
 
-CSM::CSM(BaseRenderer* renderer, DrawFunc draw_fn, AddRenderDependenciesFunc add_deps_fn)
+CSM::CSM(vk2::Device* device, DrawFunc draw_fn, AddRenderDependenciesFunc add_deps_fn)
     : draw_fn_(std::move(draw_fn)),
       add_deps_fn_(std::move(add_deps_fn)),
       shadow_map_res_(uvec2{4096}),
-      renderer_(renderer) {
+      device_(device) {
   for (auto& b : shadow_data_bufs_) {
     b = get_device().create_buffer_holder(BufferCreateInfo{
         .size = sizeof(ShadowData),
@@ -173,14 +172,14 @@ CSM::CSM(BaseRenderer* renderer, DrawFunc draw_fn, AddRenderDependenciesFunc add
   ZoneScoped;
   GraphicsPipelineCreateInfo shadow_depth_info{
       .shaders = {{"shadow_depth.vert", ShaderType::Vertex},
-                  {"shadow_depth.frag", ShaderType::Fragment}},
+                  {"shadow_depth.frag", ShaderType::Fragment, {"#define ALPHA_MASK_ENABLED"}}},
       .rendering = {.depth_format = to_vkformat(Format::D32Sfloat)},
       .rasterization = {.depth_clamp = true, .depth_bias = true},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::Less),
       .dynamic_state = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
                         VK_DYNAMIC_STATE_DEPTH_BIAS, VK_DYNAMIC_STATE_CULL_MODE},
   };
-  shadow_depth_alpha_mask_pipline_ = PipelineManager::get().load(shadow_depth_info);
+  shadow_depth_alpha_mask_pipeline_ = PipelineManager::get().load(shadow_depth_info);
   shadow_depth_info.shaders.pop_back();
   shadow_depth_pipline_ = PipelineManager::get().load(shadow_depth_info);
 
@@ -294,7 +293,7 @@ void CSM::add_pass(RenderGraph& rg) {
   csm_prepare_pass.set_execute_fn([this](CmdEncoder& cmd) {
     TracyVkZone(cmd.get_tracy_ctx(), cmd.cmd(), "csm_prepare");
     auto* buf = get_device().get_buffer(
-        shadow_data_bufs_[renderer_->curr_frame_num() % shadow_data_bufs_.size()]);
+        shadow_data_bufs_[device_->curr_frame_num() % shadow_data_bufs_.size()]);
     if (!buf) return;
     vkCmdUpdateBuffer(cmd.cmd(), buf->buffer(), 0, sizeof(CSM::ShadowData), &data_);
   });
@@ -352,8 +351,9 @@ void CSM::add_pass(RenderGraph& rg) {
       {
         TracyVkZone(cmd.get_tracy_ctx(), cmd.cmd(), "opaque_alpha_mask");
         if (alpha_cutout_enabled_) {
-          vkCmdBindPipeline(cmd.cmd(), VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            PipelineManager::get().get(shadow_depth_alpha_mask_pipline_)->pipeline);
+          vkCmdBindPipeline(
+              cmd.cmd(), VK_PIPELINE_BIND_POINT_GRAPHICS,
+              PipelineManager::get().get(shadow_depth_alpha_mask_pipeline_)->pipeline);
         }
         draw_fn_(cmd, light_matrices_[i], true, i);
       }

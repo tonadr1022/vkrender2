@@ -13,25 +13,6 @@
 
 namespace gfx::vk2 {
 
-struct DescriptorSetLayoutData {
-  uint32_t set_number;
-  VkDescriptorSetLayoutCreateInfo create_info;
-  std::vector<VkDescriptorSetLayoutBinding> bindings;
-};
-
-struct ShaderReflectData {
-  std::array<DescriptorSetLayoutData, 4> set_layouts;
-  uint32_t set_layout_cnt{0};
-  VkPushConstantRange range;
-  bool has_pc_range{};
-  VkShaderStageFlags shader_stage;
-};
-
-struct ShaderModule {
-  ShaderReflectData refl_data;
-  VkShaderModule module;
-};
-
 enum class ShaderType : u8 { None, Vertex, Fragment, Compute };
 
 struct ShaderCreateInfo {
@@ -52,7 +33,7 @@ class ShaderManager {
 
   struct LoadProgramResult {
     static constexpr int max_stages = 4;
-    std::array<ShaderModule, max_stages> modules;
+    std::array<VkShaderModule, max_stages> modules;
     bool success{};
   };
   LoadProgramResult load_program(std::span<const ShaderCreateInfo> shader_create_infos,
@@ -76,8 +57,7 @@ class ShaderManager {
       include_graph_nodes_;
   bool is_stale(const std::filesystem::path& node);
   bool compile_glsl_to_spirv(const std::string& path, VkShaderStageFlagBits stage,
-                             std::vector<u32>& out_binary,
-                             std::vector<std::string>* included_files);
+                             std::vector<u32>& out_binary, std::span<const std::string> defines);
   bool shader_debug_mode_{};
   bool hot_reload_{};
 };

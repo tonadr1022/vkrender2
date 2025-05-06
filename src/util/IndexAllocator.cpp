@@ -1,6 +1,6 @@
 #include "IndexAllocator.hpp"
 
-#include "Logger.hpp"
+#include "core/Logger.hpp"
 
 namespace util {
 

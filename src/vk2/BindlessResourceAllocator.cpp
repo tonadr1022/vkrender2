@@ -139,11 +139,13 @@ void ResourceAllocator::init(VkDevice device, VmaAllocator allocator) {
 }
 
 void ResourceAllocator::shutdown() {
+  ZoneScoped;
   assert(instance);
   delete instance;
 }
 
 ResourceAllocator::~ResourceAllocator() {
+  ZoneScoped;
   set_frame_num(UINT32_MAX, 0);
   flush_deletions();
   vkDestroyDescriptorPool(device_, main_pool_, nullptr);
@@ -223,6 +225,8 @@ void ResourceAllocator::delete_texture(const TextureDeleteInfo& img) {
 }
 
 void ResourceAllocator::flush_deletions() {
+  ZoneScoped;
+
   std::erase_if(texture_delete_q_, [this](const DeleteQEntry<TextureDeleteInfo>& entry) {
     if (entry.frame + buffer_count_ < frame_num_) {
       vmaDestroyImage(allocator_, entry.data.img, entry.data.allocation);
@@ -238,6 +242,7 @@ void ResourceAllocator::flush_deletions() {
     }
     return false;
   });
+
   std::erase_if(swapchain_delete_q_, [this](const DeleteQEntry<VkSwapchainKHR>& entry) {
     if (entry.frame + buffer_count_ < frame_num_) {
       vkDestroySwapchainKHR(device_, entry.data, nullptr);

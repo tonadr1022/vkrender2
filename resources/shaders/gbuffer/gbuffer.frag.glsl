@@ -77,6 +77,5 @@ void main() {
 
     gbuffer_a = vec4(encode_oct(N) * 0.5 + 0.5, metallic, roughness);
     gbuffer_b = albedo;
-    // gbuffer_b = vec4(1.);
     gbuffer_c = vec4(emissive, ao);
 }

@@ -4,7 +4,6 @@
 
 #include <cstring>
 #include <filesystem>
-#include <initializer_list>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -56,7 +55,8 @@ struct GraphicsPipelineCreateInfo {
   struct Blend {
     bool logic_op_enable{false};
     LogicOp logic_op{LogicOpCopy};
-    std::initializer_list<ColorBlendAttachment> attachments;
+    // TODO: fixed vector
+    std::vector<ColorBlendAttachment> attachments;
     float blend_constants[4]{};
   };
   struct Multisample {
@@ -105,7 +105,7 @@ struct GraphicsPipelineCreateInfo {
   Blend blend{};
   Multisample multisample{};
   DepthStencil depth_stencil{};
-  std::initializer_list<VkDynamicState> dynamic_state;
+  std::vector<VkDynamicState> dynamic_state;
 
   static constexpr DepthStencil depth_disable() { return DepthStencil{.depth_test_enable = false}; }
   static constexpr DepthStencil depth_enable(bool write_enable, CompareOp op) {

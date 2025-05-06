@@ -7,6 +7,7 @@
 #include "StateTracker.hpp"
 #include "VkRender2.hpp"
 #include "shaders/ibl/eq_to_cube_comp_common.h.glsl"
+#include "vk2/Device.hpp"
 #include "vk2/Initializers.hpp"
 #include "vk2/SamplerCache.hpp"
 #include "vk2/ShaderCompiler.hpp"
@@ -37,7 +38,7 @@ void IBL::load_env_map(CmdEncoder& ctx, const std::filesystem::path& path) {
   prefilter_env_map(ctx);
 }
 
-IBL::IBL() {
+IBL::IBL(BufferHandle cube_vertex_buf) : cube_vertex_buf_(cube_vertex_buf) {
   u32 skybox_res = 1024;
   u32 convoluted_res = 32;
   irradiance_cubemap_tex_ =
@@ -210,9 +211,10 @@ void IBL::convolute_cube(CmdEncoder& ctx) {
         u32 in_tex_idx, sampler_idx, vertex_buffer_idx;
       } pc{PROJ * VIEW_MATRICES[i], env_cubemap_tex_->view().sampled_img_resource().handle,
            SamplerCache::get().get_linear_sampler().resource_info.handle,
-           VkRender2::get().static_vertex_buf_.get_buffer()->resource_info_->handle};
+           get_device().get_buffer(cube_vertex_buf_)->resource_info_->handle};
       ctx.push_constants(sizeof(pc), &pc);
-      VkRender2::get().draw_cube(cmd);
+      vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
+      vkCmdDraw(cmd, 36, 1, 0, 0);
       vkCmdEndRenderingKHR(cmd);
     }
   }
@@ -279,10 +281,11 @@ void IBL::prefilter_env_map(CmdEncoder& ctx) {
                      .address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
                  })
                  .resource_info.handle,
-             VkRender2::get().static_vertex_buf_.get_buffer()->resource_info_->handle,
+             get_device().get_buffer(cube_vertex_buf_)->resource_info_->handle,
              static_cast<float>(env_cubemap_tex_->extent_2d().width)};
         ctx.push_constants(sizeof(pc), &pc);
-        VkRender2::get().draw_cube(cmd);
+        vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
+        vkCmdDraw(cmd, 36, 1, 0, 0);
         vkCmdEndRenderingKHR(cmd);
       }
     }

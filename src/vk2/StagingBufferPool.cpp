@@ -35,10 +35,8 @@ vk2::Buffer* StagingBufferPool::acquire(u64 size) {
       }
     }
   }
-  auto new_buf =
-      std::make_unique<vk2::Buffer>(vk2::BufferCreateInfo{.size = std::max<u64>(size, 4096),
-                                                          .flags = BufferCreateFlags_HostVisible,
-                                                          .debug_name = "Staging buffer"});
+  auto new_buf = std::make_unique<vk2::Buffer>(vk2::BufferCreateInfo{
+      .size = std::max<u64>(size, 4096), .flags = BufferCreateFlags_HostVisible});
   {
     std::lock_guard lock(mtx_);
     allocated_buffers_.emplace_back(std::move(new_buf));

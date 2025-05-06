@@ -9,22 +9,22 @@
 
 #include <cassert>
 #include <filesystem>
+#include <memory>
 #include <tracy/Tracy.hpp>
 #include <tracy/TracyVulkan.hpp>
 #include <utility>
 
-#include "BaseRenderer.hpp"
 #include "CommandEncoder.hpp"
-#include "FixedVector.hpp"
-#include "Logger.hpp"
+#include "GLFW/glfw3.h"
 #include "RenderGraph.hpp"
 #include "Scene.hpp"
 #include "SceneLoader.hpp"
 #include "StateTracker.hpp"
-#include "Timer.hpp"
 #include "Types.hpp"
+#include "core/Logger.hpp"
 #include "glm/packing.hpp"
 #include "imgui.h"
+#include "imgui_impl_glfw.h"
 #include "shaders/common.h.glsl"
 #include "shaders/cull_objects_common.h.glsl"
 #include "shaders/debug/basic_common.h.glsl"
@@ -37,8 +37,6 @@
 #include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/Device.hpp"
-#include "vk2/Fence.hpp"
-#include "vk2/Hash.hpp"
 #include "vk2/Initializers.hpp"
 #include "vk2/PipelineManager.hpp"
 #include "vk2/SamplerCache.hpp"
@@ -95,9 +93,9 @@ VkRender2& VkRender2::get() {
   return *vkrender2_instance;
 }
 
-void VkRender2::init(const InitInfo& info) {
+void VkRender2::init(const InitInfo& info, bool& success) {
   assert(!vkrender2_instance);
-  new VkRender2{info};
+  new VkRender2{info, success};
 }
 
 void VkRender2::shutdown() {
@@ -107,25 +105,57 @@ void VkRender2::shutdown() {
 
 using namespace vk2;
 
-VkRender2::VkRender2(const InitInfo& info) : BaseRenderer(info) {
+void VkRender2::new_frame() {
+  ImGui_ImplVulkan_NewFrame();
+  ImGui_ImplGlfw_NewFrame();
+  ImGui::NewFrame();
+}
+
+VkRender2::VkRender2(const InitInfo& info, bool& success)
+    : device_(info.device), window_(info.window), resource_dir_(info.resource_dir) {
+  success = true;
   vkrender2_instance = this;
-  allocator_ = vk2::get_device().allocator();
+
+  if (resource_dir_.empty() || !std::filesystem::exists(resource_dir_)) {
+    LCRITICAL("cannot initialize renderer, resource dir not provided or does not exist");
+    success = false;
+    return;
+  }
+  if (!info.window) {
+    LCRITICAL("cannot initialize renderer, window not provided");
+    success = false;
+    return;
+  }
+  if (!info.device) {
+    LCRITICAL("cannot initialize renderer, window not provided");
+    success = false;
+    return;
+  }
+
+  {
+    ZoneScopedN("init per frame");
+    auto& device = get_device();
+    per_frame_data_.resize(device_->get_frames_in_flight());
+    for (auto& frame : per_frame_data_) {
+      frame.cmd_pool = device.create_command_pool(vk2::QueueType::Graphics);
+      frame.main_cmd_buffer = device.create_command_buffer(frame.cmd_pool);
+      frame.tracy_vk_ctx =
+          TracyVkContext(device.get_physical_device(), device.device(),
+                         device.get_queue(vk2::QueueType::Graphics).queue, frame.main_cmd_buffer);
+    }
+  }
+
+  vk2::SamplerCache::init(device_->device());
+  device_->init_imgui();
+
   vk2::StagingBufferPool::init();
-  vk2::ResourceAllocator::init(device_, vk2::get_device().allocator());
+  vk2::ResourceAllocator::init(device_->device(), device_->allocator());
   main_set_ = vk2::ResourceAllocator::get().main_set();
   main_set2_ = vk2::ResourceAllocator::get().main_set2_;
 
-  PrintTimerMS timer;
-
-  imm_cmd_pool_ = vk2::get_device().create_command_pool(
-      QueueType::Graphics, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
-  imm_cmd_buf_ = vk2::get_device().create_command_buffer(imm_cmd_pool_);
-  main_del_q_.push([this]() { vk2::get_device().destroy_command_pool(imm_cmd_pool_); });
-  main_del_q_.push([]() {
-    vk2::PipelineManager::shutdown();
-    vk2::StagingBufferPool::destroy();
-  });
-
+  imm_cmd_pool_ = device_->create_command_pool(QueueType::Graphics,
+                                               VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+  imm_cmd_buf_ = device_->create_command_buffer(imm_cmd_pool_);
   VkPushConstantRange default_range{.stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = 128};
   // TODO: refactor
   VkDescriptorSetLayout main_set_layout = vk2::ResourceAllocator::get().main_set_layout();
@@ -136,10 +166,10 @@ VkRender2::VkRender2(const InitInfo& info) : BaseRenderer(info) {
                                            .pSetLayouts = layouts,
                                            .pushConstantRangeCount = 1,
                                            .pPushConstantRanges = &default_range};
-  VK_CHECK(vkCreatePipelineLayout(device_, &pipeline_info, nullptr, &default_pipeline_layout_));
-  main_del_q_.push(
-      [this]() { vkDestroyPipelineLayout(device_, default_pipeline_layout_, nullptr); });
-  vk2::PipelineManager::init(device_, resource_dir_ / "shaders", true, default_pipeline_layout_);
+  VK_CHECK(vkCreatePipelineLayout(device_->device(), &pipeline_info, nullptr,
+                                  &default_pipeline_layout_));
+  vk2::PipelineManager::init(device_->device(), resource_dir_ / "shaders", true,
+                             default_pipeline_layout_);
 
   uint32_t white = glm::packUnorm4x8(glm::vec4(1, 1, 1, 1));
   vk2::Buffer* staging = vk2::StagingBufferPool::get().acquire(32);
@@ -176,6 +206,7 @@ VkRender2::VkRender2(const InitInfo& info) : BaseRenderer(info) {
                       VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
     state_.flush_barriers();
   });
+
   vk2::StagingBufferPool::get().free(staging);
 
   nearest_sampler_ = SamplerCache::get().get_or_create_sampler({
@@ -203,27 +234,27 @@ VkRender2::VkRender2(const InitInfo& info) : BaseRenderer(info) {
 
   {
     // per frame scene uniforms
-    per_frame_data_2_.resize(get_device().get_frames_in_flight());
-    for (auto& d : per_frame_data_2_) {
+    per_frame_data_.resize(device_->get_frames_in_flight());
+    for (auto& d : per_frame_data_) {
       d.scene_uniform_buf =
           vk2::Buffer{BufferCreateInfo{.size = sizeof(SceneUniforms),
                                        .usage = BufferUsage_Storage,
                                        .flags = vk2::BufferCreateFlags_HostVisible}};
 
-      d.line_draw_buf = get_device().create_buffer_holder(
-          BufferCreateInfo{.size = sizeof(LineVertex) * 1000,
-                           .usage = BufferUsage_Storage,
-                           .flags = BufferCreateFlags_HostVisible});
+      d.line_draw_buf =
+          device_->create_buffer_holder(BufferCreateInfo{.size = sizeof(LineVertex) * 1000,
+                                                         .usage = BufferUsage_Storage,
+                                                         .flags = BufferCreateFlags_HostVisible});
     }
   }
 
   auto vertices_size = 10'000'000 * sizeof(gfx::Vertex);
-  static_vertex_buf_.buffer = get_device().create_buffer_holder(
+  static_vertex_buf_.buffer = device_->create_buffer_holder(
       {BufferCreateInfo{.size = vertices_size, .usage = BufferUsage_Storage}});
   static_vertex_buf_.allocator.init(vertices_size, sizeof(Vertex));
 
   auto indices_size = 10'000'000 * sizeof(u32);
-  static_index_buf_.buffer = get_device().create_buffer_holder(BufferCreateInfo{
+  static_index_buf_.buffer = device_->create_buffer_holder(BufferCreateInfo{
       .size = indices_size,
       .usage = BufferUsage_Index,
   });
@@ -231,18 +262,18 @@ VkRender2::VkRender2(const InitInfo& info) : BaseRenderer(info) {
   u64 max_static_draws = 100'000;
 
   auto static_materials_size = 1000 * sizeof(gfx::Material);
-  static_materials_buf_.buffer = get_device().create_buffer_holder(
+  static_materials_buf_.buffer = device_->create_buffer_holder(
       {BufferCreateInfo{.size = static_materials_size, .usage = BufferUsage_Storage}});
   static_materials_buf_.allocator.init(static_materials_size, sizeof(Material), 100);
 
-  static_instance_data_buf_.buffer = get_device().create_buffer_holder(BufferCreateInfo{
-      .size = max_static_draws * sizeof(InstanceData),
+  static_instance_data_buf_.buffer = device_->create_buffer_holder(BufferCreateInfo{
+      .size = max_static_draws * sizeof(GPUInstanceData),
       .usage = BufferUsage_Storage,
   });
-  static_instance_data_buf_.allocator.init(max_static_draws * sizeof(InstanceData),
-                                           sizeof(InstanceData), 100);
+  static_instance_data_buf_.allocator.init(max_static_draws * sizeof(GPUInstanceData),
+                                           sizeof(GPUInstanceData), 100);
 
-  static_object_data_buf_.buffer = get_device().create_buffer_holder(BufferCreateInfo{
+  static_object_data_buf_.buffer = device_->create_buffer_holder(BufferCreateInfo{
       .size = max_static_draws * sizeof(ObjectData),
       .usage = BufferUsage_Storage,
   });
@@ -252,7 +283,7 @@ VkRender2::VkRender2(const InitInfo& info) : BaseRenderer(info) {
   init_pipelines();
 
   csm_ = std::make_unique<CSM>(
-      this,
+      &get_device(),
       [this](CmdEncoder& cmd, const mat4& vp, bool opaque_alpha, u32 cascade_i) {
         const StaticMeshDrawManager* mgr{};
         if (opaque_alpha) {
@@ -266,7 +297,7 @@ VkRender2::VkRender2(const InitInfo& info) : BaseRenderer(info) {
             static_vertex_buf_.get_buffer()->device_addr(),
             static_instance_data_buf_.get_buffer()->device_addr(),
             static_object_data_buf_.get_buffer()->device_addr(),
-            curr_frame_2().scene_uniform_buf->resource_info_->handle,
+            curr_frame().scene_uniform_buf->resource_info_->handle,
             static_materials_buf_.get_buffer()->resource_info_->handle,
             linear_sampler_->resource_info.handle,
         };
@@ -300,9 +331,9 @@ VkRender2::VkRender2(const InitInfo& info) : BaseRenderer(info) {
         }
       });
 
-  static_opaque_draw_mgr_.emplace("Opaque", 1000);
-  static_opaque_alpha_mask_draw_mgr_.emplace("Opaque Alpha Mask", 1000);
-  static_transparent_draw_mgr_.emplace("Transparent", 1000);
+  static_opaque_draw_mgr_.emplace("Opaque", 1000, device_);
+  static_opaque_alpha_mask_draw_mgr_.emplace("Opaque Alpha Mask", 1000, device_);
+  static_transparent_draw_mgr_.emplace("Transparent", 1000, device_);
   draw_managers_ = {&static_opaque_draw_mgr_.value(), &static_opaque_alpha_mask_draw_mgr_.value(),
                     &static_transparent_draw_mgr_.value()};
 
@@ -321,56 +352,35 @@ VkRender2::VkRender2(const InitInfo& info) : BaseRenderer(info) {
                         .address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
                         .border_color = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE});
 
-  ibl_ = IBL{};
-
   // TODO: make a function for this lmao, so cringe
   {
     auto vert_buf_size = sizeof(cube_vertices);
-    // auto index_buf_size = sizeof(cube_indices);
     auto* staging = StagingBufferPool::get().acquire(vert_buf_size);
     memcpy(staging->mapped_data(), cube_vertices, vert_buf_size);
-    // memcpy(staging->mapped_data(), cube_indices, index_buf_size);
-    cube_vertices_slot_ = static_vertex_buf_.allocator.allocate(vert_buf_size);
-    // cube_indices_gpu_offset_ = static_index_buf_->alloc(index_buf_size);
+    cube_vertex_buf_ = device_->create_buffer_holder(
+        BufferCreateInfo{.size = vert_buf_size, .usage = BufferUsage_Storage});
     immediate_submit([this, vert_buf_size, staging](VkCommandBuffer cmd) {
-      transfer_q_state_.reset(cmd)
-          .transition_buffer_to_transfer_dst(static_vertex_buf_.get_buffer()->buffer())
-          .transition_buffer_to_transfer_dst(static_index_buf_.get_buffer()->buffer())
+      state_.reset(cmd)
+          .buffer_barrier(static_vertex_buf_.get_buffer()->buffer(),
+                          VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
+          .buffer_barrier(static_index_buf_.get_buffer()->buffer(),
+                          VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
           .flush_barriers();
-      VkBufferCopy2KHR buf_copy =
-          init::buffer_copy(0, cube_vertices_slot_.get_offset(), vert_buf_size);
-      VkCopyBufferInfo2KHR buf_copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
-                                         .srcBuffer = staging->buffer(),
-                                         .dstBuffer = static_vertex_buf_.get_buffer()->buffer(),
-                                         .regionCount = 1,
-                                         .pRegions = &buf_copy};
+      VkBufferCopy2KHR buf_copy = init::buffer_copy(0, 0, vert_buf_size);
+      VkCopyBufferInfo2KHR buf_copy_info{
+          .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+          .srcBuffer = staging->buffer(),
+          .dstBuffer = device_->get_buffer(cube_vertex_buf_)->buffer(),
+          .regionCount = 1,
+          .pRegions = &buf_copy};
       vkCmdCopyBuffer2KHR(cmd, &buf_copy_info);
-      // vkCmdCopyBuffer2KHR(cmd, vk2::addr(VkCopyBufferInfo2KHR{
-      //                              .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
-      //                              .srcBuffer = staging->buffer(),
-      //                              .dstBuffer = static_index_buf_->buffer.buffer(),
-      //                              .regionCount = 1,
-      //                              .pRegions = addr(init::buffer_copy(
-      //                                  vert_buf_size, cube_indices_gpu_offset_,
-      //                                  index_buf_size))}));
-
-      // TODO: this would be solved by a render graph. double barrier happens if load scene at
-      // same time before drawing transfer_q_state_
-      //     .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
-      //                            VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT,
-      //                            static_vertex_buf_->buffer.buffer(),
-      //                            queues_.transfer_queue_idx, queues_.graphics_queue_idx)
-      //     .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT,
-      //                            VK_ACCESS_2_INDEX_READ_BIT,
-      //                            static_index_buf_->buffer.buffer(),
-      //                            queues_.transfer_queue_idx, queues_.graphics_queue_idx)
-      //     .flush_barriers();
     });
   }
+  ibl_ = IBL{cube_vertex_buf_.handle};
   default_env_map_path_ = info.resource_dir / "hdr" / "newport_loft.hdr";
 }
 
-void VkRender2::on_draw(const SceneDrawInfo& info) {
+void VkRender2::draw(const SceneDrawInfo& info) {
   ZoneScoped;
   {
     on_imgui();
@@ -381,14 +391,14 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
       ImGui::RenderPlatformWindowsDefault();
     }
 
-    get_device().begin_frame();
-    vk2::ResourceAllocator::get().set_frame_num(curr_frame_num(),
-                                                vk2::get_device().get_frames_in_flight());
+    device_->begin_frame();
+    vk2::ResourceAllocator::get().set_frame_num(device_->curr_frame_num(),
+                                                device_->get_frames_in_flight());
     vk2::ResourceAllocator::get().flush_deletions();
   }
   {
     ZoneScopedN("scene uniform buffer");
-    auto& d = curr_frame_2();
+    auto& d = curr_frame();
     scene_uniform_cpu_data_.proj = glm::perspective(glm::radians(info.fov_degrees), aspect_ratio(),
                                                     near_far_z_.y, near_far_z_.x);
     scene_uniform_cpu_data_.proj[1][1] *= -1;
@@ -425,35 +435,16 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
     }
   }
 
-  while (!pending_buffer_transfers_.empty()) {
-    LINFO("size: {}", pending_buffer_transfers_.size());
-    auto& f = pending_buffer_transfers_.front();
-    if (!f.fence) {
-      StagingBufferPool::get().free(f.data);
-      pending_buffer_transfers_.pop();
-      continue;
-    }
-
-    if (vkGetFenceStatus(device_, f.fence) == VK_SUCCESS) {
-      StagingBufferPool::get().free(f.data);
-      FencePool::get().free(f.fence);
-      pending_buffer_transfers_.pop();
-    } else {
-      LINFO("NOT READ");
-      break;
-    }
-  }
-
   VkCommandBuffer cmd_buf = curr_frame().main_cmd_buffer;
-  VK_CHECK(vkResetCommandPool(device_, curr_frame().cmd_pool, 0));
+  VK_CHECK(vkResetCommandPool(device_->device(), curr_frame().cmd_pool, 0));
   auto cmd_begin_info = vk2::init::command_buffer_begin_info();
   VK_CHECK(vkBeginCommandBuffer(cmd_buf, &cmd_begin_info));
 
   CmdEncoder cmd{cmd_buf, default_pipeline_layout_, curr_frame().tracy_vk_ctx};
 
   bind_bindless_descriptors(cmd);
-  vk2::ResourceAllocator::get().set_frame_num(curr_frame_num(),
-                                              get_device().get_frames_in_flight());
+  vk2::ResourceAllocator::get().set_frame_num(device_->curr_frame_num(),
+                                              device_->get_frames_in_flight());
   vk2::ResourceAllocator::get().flush_deletions();
 
   for (auto& instance : to_delete_static_model_instances_) {
@@ -464,7 +455,7 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
 
   rg_.reset();
   rg_.set_backbuffer_img("final_out");
-  csm_->prepare_frame(rg_, curr_frame_num(), info.view, info.light_dir, aspect_ratio(),
+  csm_->prepare_frame(rg_, device_->curr_frame_num(), info.view, info.light_dir, aspect_ratio(),
                       info.fov_degrees, scene_aabb_, info.view_pos);
 
   if (!frustum_cull_settings_.paused) {
@@ -505,24 +496,24 @@ void VkRender2::on_draw(const SceneDrawInfo& info) {
   std::array<VkSemaphoreSubmitInfo, 10> wait_semaphores{};
   u32 next_wait_sem_idx{0};
   wait_semaphores[next_wait_sem_idx++] = vk2::init::semaphore_submit_info(
-      get_device().curr_swapchain_semaphore(),
+      device_->curr_swapchain_semaphore(),
       VK_PIPELINE_STAGE_2_TRANSFER_BIT | VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT);
-  auto signal_info = vk2::init::semaphore_submit_info(get_device().curr_frame().render_semaphore,
+  auto signal_info = vk2::init::semaphore_submit_info(device_->curr_frame().render_semaphore,
                                                       VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT);
   auto cmd_buf_submit_info = vk2::init::command_buffer_submit_info(cmd_buf);
   auto submit = vk2::init::queue_submit_info(SPAN1(cmd_buf_submit_info),
                                              std::span(wait_semaphores.data(), next_wait_sem_idx),
                                              SPAN1(signal_info));
-  get_device().queue_submit(QueueType::Graphics, SPAN1(submit));
+  device_->queue_submit(QueueType::Graphics, SPAN1(submit));
 
   line_draw_vertices_.clear();
-  vk2::get_device().submit_to_graphics_queue();
+  device_->submit_to_graphics_queue();
 }
 
 void VkRender2::on_imgui() {
   if (ImGui::Begin("Renderer")) {
     if (ImGui::TreeNodeEx("Device")) {
-      vk2::get_device().on_imgui();
+      device_->on_imgui();
       ImGui::TreePop();
     }
     if (ImGui::TreeNode("stats")) {
@@ -595,23 +586,6 @@ void VkRender2::on_imgui() {
     ImGui::Checkbox("Render prefilter env map skybox", &render_prefilter_mip_skybox_);
     ImGui::SliderInt("Prefilter Env Map Layer", &prefilter_mip_skybox_level_, 0,
                      ibl_->prefiltered_env_map_tex_->texture->create_info().mip_levels - 1);
-    if (ImGui::TreeNode("textures")) {
-      for (const auto& obj : loaded_dynamic_scenes_) {
-        for (const auto& t : obj.resources->textures) {
-          ImGui::PushID(&t);
-          if (ImGui::CollapsingHeader("a")) {
-            ImVec2 window_size = ImGui::GetContentRegionAvail();
-            float scale_width = window_size.x / t.extent_2d().width;
-            float scaled_height = t.extent_2d().height * scale_width;
-            ImGui::Image(reinterpret_cast<ImTextureID>(
-                             get_imgui_set(linear_sampler_->sampler, t.view().view())),
-                         ImVec2(window_size.x, scaled_height));
-          }
-          ImGui::PopID();
-        }
-      }
-      ImGui::TreePop();
-    }
   }
 
   if (ImGui::TreeNodeEx("Scene", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -646,16 +620,19 @@ void VkRender2::on_imgui() {
 }
 
 VkRender2::~VkRender2() {
-  vkDeviceWaitIdle(device_);
-  static_vertex_buf_.allocator.free(std::move(cube_vertices_slot_));
-  for (auto& instance : loaded_model_instance_resources_) {
-    if (auto* i = static_model_instance_pool_.get(instance); i) {
-      free(*i);
-    }
+  ZoneScoped;
+  device_->wait_idle();
+  device_->destroy_command_pool(imm_cmd_pool_);
+  vkDestroyPipelineLayout(device_->device(), default_pipeline_layout_, nullptr);
+  vk2::StagingBufferPool::destroy();
+  for (auto& frame : per_frame_data_) {
+    device_->destroy_command_pool(frame.cmd_pool);
+    TracyVkDestroy(frame.tracy_vk_ctx);
+    frame.scene_uniform_buf = {};
+    frame.line_draw_buf = {};
   }
+  device_->destroy_resources();
 }
-
-void VkRender2::on_resize() {}
 
 SceneHandle VkRender2::load_model(const std::filesystem::path& path, bool dynamic,
                                   const mat4& transform) {
@@ -707,9 +684,9 @@ SceneHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
       auto materials_gpu_slot = static_materials_buf_.allocator.allocate(material_data_size);
 
       immediate_submit([&, this](VkCommandBuffer cmd) {
-        copy_buffer(
-            cmd, *staging.get_buffer(), *get_device().get_buffer(static_materials_buf_.buffer),
-            material_data_staging_offset, materials_gpu_slot.get_offset(), material_data_size);
+        copy_buffer(cmd, *staging.get_buffer(), *device_->get_buffer(static_materials_buf_.buffer),
+                    material_data_staging_offset, materials_gpu_slot.get_offset(),
+                    material_data_size);
         copy_buffer(cmd, *staging.get_buffer(), *static_vertex_buf_.get_buffer(),
                     vertices_staging_offset, vertices_gpu_slot.get_offset(), vertices_size);
         copy_buffer(cmd, *staging.get_buffer(), *static_index_buf_.get_buffer(),
@@ -769,7 +746,7 @@ SceneHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
     instance_resources->model_resources_handle = resources_handle;
     instance_resources->name = resources->name.c_str();
 
-    std::vector<InstanceData> instance_datas;
+    std::vector<GPUInstanceData> instance_datas;
     instance_resources->object_datas.reserve(num_objs_tot);
     instance_datas.reserve(num_objs_tot);
 
@@ -783,12 +760,12 @@ SceneHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
     alpha_mask_cmds.reserve(num_opaque_alpha_mask_objs);
     transparent_cmds.reserve(num_transparent_objs);
     instance_resources->instance_data_slot =
-        static_instance_data_buf_.allocator.allocate(num_objs_tot * sizeof(InstanceData));
+        static_instance_data_buf_.allocator.allocate(num_objs_tot * sizeof(GPUInstanceData));
     instance_resources->object_data_slot =
         static_object_data_buf_.allocator.allocate(num_objs_tot * sizeof(ObjectData));
 
     u32 base_instance_id =
-        instance_resources->instance_data_slot.get_offset() / sizeof(InstanceData);
+        instance_resources->instance_data_slot.get_offset() / sizeof(GPUInstanceData);
     u32 base_object_data_id =
         instance_resources->object_data_slot.get_offset() / sizeof(ObjectData);
     auto base_material_id = resources->materials_slot.get_offset() / sizeof(Material);
@@ -850,7 +827,7 @@ SceneHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
     }
 
     u64 obj_datas_size = instance_resources->object_datas.size() * sizeof(gfx::ObjectData);
-    u64 instance_datas_size = instance_datas.size() * sizeof(InstanceData);
+    u64 instance_datas_size = instance_datas.size() * sizeof(GPUInstanceData);
 
     scene_aabb_.min = glm::min(scene_aabb_.min, scene_min);
     scene_aabb_.max = glm::max(scene_aabb_.max, scene_max);
@@ -924,7 +901,7 @@ SceneHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
 }
 
 void VkRender2::immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function) {
-  VkFence imm_fence = FencePool::get().allocate(true);
+  VkFence imm_fence = device_->allocate_fence(true);
   VK_CHECK(vkResetCommandBuffer(imm_cmd_buf_, 0));
   auto info = vk2::init::command_buffer_begin_info();
   VK_CHECK(vkBeginCommandBuffer(imm_cmd_buf_, &info));
@@ -932,10 +909,11 @@ void VkRender2::immediate_submit(std::function<void(VkCommandBuffer cmd)>&& func
   VK_CHECK(vkEndCommandBuffer(imm_cmd_buf_));
   VkCommandBufferSubmitInfo cmd_info = init::command_buffer_submit_info(imm_cmd_buf_);
   VkSubmitInfo2 submit = init::queue_submit_info(SPAN1(cmd_info), {}, {});
-  get_device().queue_submit(QueueType::Graphics, SPAN1(submit), imm_fence);
-  VK_CHECK(vkWaitForFences(device_, 1, &imm_fence, true, 99999999999));
-  FencePool::get().free(imm_fence);
+  device_->queue_submit(QueueType::Graphics, SPAN1(submit), imm_fence);
+  VK_CHECK(vkWaitForFences(device_->device(), 1, &imm_fence, true, 99999999999));
+  device_->free_fence(imm_fence);
 }
+
 VkDescriptorSet VkRender2::get_imgui_set(VkSampler sampler, VkImageView view) {
   auto tup = std::make_tuple(sampler, view);
   auto hash = vk2::detail::hashing::hash<decltype(tup)>{}(tup);
@@ -962,28 +940,28 @@ const char* VkRender2::debug_mode_to_string(u32 mode) {
   }
 }
 
-void VkRender2::transfer_submit(
-    std::function<void(VkCommandBuffer cmd, VkFence fence,
-                       std::queue<InFlightResource<vk2::Buffer*>>&)>&& function) {
-  LINFO("transfer submit: {}", curr_frame_num());
-  VkCommandBuffer cmd = transfer_queue_manager_->get_cmd_buffer();
-  VK_CHECK(vkResetCommandBuffer(cmd, 0));
-  auto info = vk2::init::command_buffer_begin_info();
-  VK_CHECK(vkBeginCommandBuffer(cmd, &info));
-  VkFence transfer_fence = vk2::FencePool::get().allocate(true);
-  function(cmd, transfer_fence, pending_buffer_transfers_);
-  VK_CHECK(vkEndCommandBuffer(cmd));
-
-  auto cmd_buf_submit_info = vk2::init::command_buffer_submit_info(cmd);
-
-  auto signal_info = vk2::init::semaphore_submit_info(transfer_queue_manager_->submit_semaphore_,
-                                                      VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                                                      ++transfer_queue_manager_->semaphore_value_);
-
-  auto submit = init::queue_submit_info(SPAN1(cmd_buf_submit_info), {}, SPAN1(signal_info));
-  get_device().queue_submit(QueueType::Transfer, SPAN1(submit), transfer_fence);
-  transfer_queue_manager_->submit_signaled_ = true;
-}
+// void VkRender2::transfer_submit(
+//     std::function<void(VkCommandBuffer cmd, VkFence fence,
+//                        std::queue<InFlightResource<vk2::Buffer*>>&)>&& function) {
+//   LINFO("transfer submit: {}", curr_frame_num());
+//   VkCommandBuffer cmd = transfer_queue_manager_->get_cmd_buffer();
+//   VK_CHECK(vkResetCommandBuffer(cmd, 0));
+//   auto info = vk2::init::command_buffer_begin_info();
+//   VK_CHECK(vkBeginCommandBuffer(cmd, &info));
+//   VkFence transfer_fence = vk2::FencePool::get().allocate(true);
+//   function(cmd, transfer_fence, pending_buffer_transfers_);
+//   VK_CHECK(vkEndCommandBuffer(cmd));
+//
+//   auto cmd_buf_submit_info = vk2::init::command_buffer_submit_info(cmd);
+//
+//   auto signal_info = vk2::init::semaphore_submit_info(transfer_queue_manager_->submit_semaphore_,
+//                                                       VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+//                                                       ++transfer_queue_manager_->semaphore_value_);
+//
+//   auto submit = init::queue_submit_info(SPAN1(cmd_buf_submit_info), {}, SPAN1(signal_info));
+//   device_->queue_submit(QueueType::Transfer, SPAN1(submit), transfer_fence);
+//   transfer_queue_manager_->submit_signaled_ = true;
+// }
 
 void VkRender2::init_pipelines() {
   auto& mgr = PipelineManager::get();
@@ -1023,7 +1001,7 @@ void VkRender2::init_pipelines() {
       .shaders = {{"lines/draw_line.vert", ShaderType::Vertex},
                   {"lines/draw_line.frag", ShaderType::Fragment}},
       .topology = PrimitiveTopology::LineList,
-      .rendering = {.color_formats = {to_vkformat(get_device().get_swapchain_info().format)},
+      .rendering = {.color_formats = {to_vkformat(device_->get_swapchain_info().format)},
                     .depth_format = to_vkformat(depth_img_format_)},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(false, CompareOp::GreaterOrEqual),
   });
@@ -1153,7 +1131,7 @@ void VkRender2::bind_bindless_descriptors(CmdEncoder& ctx) {
 }
 
 void VkRender2::immediate_submit(std::function<void(CmdEncoder& ctx)>&& function) {
-  VkFence imm_fence = FencePool::get().allocate(true);
+  VkFence imm_fence = device_->allocate_fence(true);
   VK_CHECK(vkResetCommandBuffer(imm_cmd_buf_, 0));
   auto info = vk2::init::command_buffer_begin_info();
   VK_CHECK(vkBeginCommandBuffer(imm_cmd_buf_, &info));
@@ -1162,9 +1140,9 @@ void VkRender2::immediate_submit(std::function<void(CmdEncoder& ctx)>&& function
   VK_CHECK(vkEndCommandBuffer(imm_cmd_buf_));
   VkCommandBufferSubmitInfo cmd_info = init::command_buffer_submit_info(imm_cmd_buf_);
   VkSubmitInfo2 submit = init::queue_submit_info(SPAN1(cmd_info), {}, {});
-  get_device().queue_submit(QueueType::Graphics, SPAN1(submit), imm_fence);
-  VK_CHECK(vkWaitForFences(device_, 1, &imm_fence, true, 99999999999));
-  FencePool::get().free(imm_fence);
+  device_->queue_submit(QueueType::Graphics, SPAN1(submit), imm_fence);
+  VK_CHECK(vkWaitForFences(device_->device(), 1, &imm_fence, true, 99999999999));
+  device_->free_fence(imm_fence);
 }
 
 void VkRender2::generate_mipmaps(CmdEncoder& ctx, vk2::Image& tex) {
@@ -1326,7 +1304,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
                 top,
                 near,
                 far,
-                curr_frame_2().scene_uniform_buf->device_addr(),
+                curr_frame().scene_uniform_buf->device_addr(),
                 count,
                 mgr->get_draw_info_buf()->resource_info_->handle,
                 draw_pass.get_frame_out_draw_cmd_buf(false)->resource_info_->handle,
@@ -1382,17 +1360,16 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
       cmd.set_cull_mode(CullMode::None);
 
       BasicPushConstants pc{
-          curr_frame_2().scene_uniform_buf->resource_info_->handle,
+          curr_frame().scene_uniform_buf->resource_info_->handle,
           static_vertex_buf_.get_buffer()->resource_info_->handle,
           static_instance_data_buf_.get_buffer()->resource_info_->handle,
           static_object_data_buf_.get_buffer()->resource_info_->handle,
           static_materials_buf_.get_buffer()->resource_info_->handle,
           linear_sampler_->resource_info.handle,
-          get_device()
-              .get_buffer(csm_->get_shadow_data_buffer(curr_frame_num()))
+          device_->get_buffer(csm_->get_shadow_data_buffer(device_->curr_frame_in_flight()))
               ->resource_info_->handle,
           shadow_sampler_.resource_info.handle,
-          get_device().get_image(csm_->get_shadow_map_img())->view().sampled_img_resource().handle,
+          device_->get_image(csm_->get_shadow_map_img())->view().sampled_img_resource().handle,
           ibl_->irradiance_cubemap_tex_->view().sampled_img_resource().handle,
           ibl_->brdf_lut_->view().sampled_img_resource().handle,
           ibl_->prefiltered_env_map_tex_->texture->view().sampled_img_resource().handle,
@@ -1458,7 +1435,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
         PipelineManager::get().bind_graphics(cmd.cmd(), gbuffer_pipeline_);
         GBufferPushConstants pc{
             static_vertex_buf_.get_buffer()->device_addr(),
-            curr_frame_2().scene_uniform_buf->device_addr(),
+            curr_frame().scene_uniform_buf->device_addr(),
             static_instance_data_buf_.get_buffer()->device_addr(),
             static_object_data_buf_.get_buffer()->device_addr(),
             static_materials_buf_.get_buffer()->device_addr(),
@@ -1506,15 +1483,10 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
             depth_img->view().sampled_img_resource().handle,
             shade_out_tex->view().storage_img_resource().handle,
             nearest_sampler_->resource_info.handle,
-            curr_frame_2().scene_uniform_buf->resource_info_->handle,
-            get_device()
-                .get_image(csm_->get_shadow_map_img())
-                ->view()
-                .sampled_img_resource()
-                .handle,
+            curr_frame().scene_uniform_buf->resource_info_->handle,
+            device_->get_image(csm_->get_shadow_map_img())->view().sampled_img_resource().handle,
             shadow_sampler_.resource_info.handle,
-            get_device()
-                .get_buffer(csm_->get_shadow_data_buffer(curr_frame_num()))
+            device_->get_buffer(csm_->get_shadow_data_buffer(device_->curr_frame_in_flight()))
                 ->resource_info_->handle,
             ibl_->irradiance_cubemap_tex_->view().sampled_img_resource().handle,
             ibl_->brdf_lut_->view().sampled_img_resource().handle,
@@ -1557,7 +1529,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
     auto& pp = rg.add_pass("post_process");
     auto draw_out_handle = pp.add("draw_out", {.format = draw_img_format_}, Access::ComputeRead);
     auto final_out_handle =
-        pp.add("final_out", AttachmentInfo{.format = get_device().get_swapchain_info().format},
+        pp.add("final_out", AttachmentInfo{.format = device_->get_swapchain_info().format},
                Access::ComputeWrite);
     pp.set_execute_fn([this, &rg, draw_out_handle, final_out_handle](CmdEncoder& cmd) {
       TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "post_process");
@@ -1587,20 +1559,20 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
   }
 
   if (line_draw_vertices_.size()) {
-    vk2::Buffer* line_draw_buf = get_device().get_buffer(curr_frame_2().line_draw_buf);
+    vk2::Buffer* line_draw_buf = device_->get_buffer(curr_frame().line_draw_buf);
     assert(line_draw_buf);
     size_t required_size = line_draw_vertices_.size() * sizeof(LineVertex);
     if (required_size > line_draw_buf->size()) {
-      curr_frame_2().line_draw_buf = get_device().create_buffer_holder(
+      curr_frame().line_draw_buf = device_->create_buffer_holder(
           BufferCreateInfo{.size = glm::max(line_draw_buf->size() * 2, required_size),
                            .usage = BufferUsage_Storage,
                            .flags = BufferCreateFlags_HostVisible});
-      line_draw_buf = get_device().get_buffer(curr_frame_2().line_draw_buf);
+      line_draw_buf = device_->get_buffer(curr_frame().line_draw_buf);
     }
     memcpy(line_draw_buf->mapped_data(), line_draw_vertices_.data(), required_size);
   }
 
-  if (draw_imgui) {
+  if (draw_imgui_) {
     auto& imgui_p = rg.add_pass("ui");
     RenderResourceHandle csm_debug_img_handle{UINT32_MAX};
     if (csm_enabled.get() && csm_->get_debug_render_enabled()) {
@@ -1629,10 +1601,9 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
         auto rendering_info = init::rendering_info(color_tex->extent_2d(), &color_att, &depth_att);
         vkCmdBeginRenderingKHR(cmd.cmd(), &rendering_info);
         PipelineManager::get().bind_graphics(cmd.cmd(), line_draw_pipeline_);
-        vk2::Buffer* line_draw_buf = get_device().get_buffer(curr_frame_2().line_draw_buf);
-        LinesRenderPushConstants pc{
-            .vtx = line_draw_buf->device_addr(),
-            .scene_buffer = curr_frame_2().scene_uniform_buf->device_addr()};
+        vk2::Buffer* line_draw_buf = device_->get_buffer(curr_frame().line_draw_buf);
+        LinesRenderPushConstants pc{.vtx = line_draw_buf->device_addr(),
+                                    .scene_buffer = curr_frame().scene_uniform_buf->device_addr()};
         cmd.push_constants(sizeof(pc), &pc);
         vkCmdDraw(cmd.cmd(), line_draw_vertices_.size(), 1, 0, 0);
         vkCmdEndRenderingKHR(cmd.cmd());
@@ -1680,8 +1651,8 @@ void VkRender2::StaticMeshDrawManager::remove_draws(StateTracker& state, VkComma
       VkRender2::get().state_,
       VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
       VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT,
-      draw_cmds_buf_.get_buffer()->buffer(), get_device().get_queue(QueueType::Transfer).family_idx,
-      get_device().get_queue(QueueType::Graphics).family_idx, a->draw_cmd_slot.get_offset(),
+      draw_cmds_buf_.get_buffer()->buffer(), device_->get_queue(QueueType::Transfer).family_idx,
+      device_->get_queue(QueueType::Graphics).family_idx, a->draw_cmd_slot.get_offset(),
       a->draw_cmd_slot.get_size());
   draw_cmds_buf_.allocator.free(std::move(a->draw_cmd_slot));
 
@@ -1713,9 +1684,9 @@ VkRender2::StaticMeshDrawManager::Handle VkRender2::StaticMeshDrawManager::add_d
     for (int double_sided = 0; double_sided < 2; double_sided++) {
       for (auto& handle : draw_pass.out_draw_cmds_bufs[double_sided]) {
         u32 required_size = sizeof(u32) + num_draw_cmds_[double_sided];
-        auto* buf = get_device().get_buffer(handle);
+        auto* buf = device_->get_buffer(handle);
         if (required_size > buf->size()) {
-          handle = get_device().create_buffer_holder(BufferCreateInfo{
+          handle = device_->create_buffer_holder(BufferCreateInfo{
               .size = new_size + sizeof(u32),
               .usage = BufferUsage_Indirect | BufferUsage_Storage,
           });
@@ -1726,15 +1697,15 @@ VkRender2::StaticMeshDrawManager::Handle VkRender2::StaticMeshDrawManager::add_d
 
   if (a.draw_cmd_slot.get_offset() + a.draw_cmd_slot.get_size() >= curr_tot_draw_cmd_buf_size) {
     // draw cmd buf resize and copy
-    auto new_buf = get_device().create_buffer_holder(BufferCreateInfo{
+    auto new_buf = device_->create_buffer_holder(BufferCreateInfo{
         .size = new_size,
         .usage = BufferUsage_Storage,
     });
-    VkRender2::get().copy_buffer(cmd, draw_cmds_buf, get_device().get_buffer(new_buf), 0, 0,
+    VkRender2::get().copy_buffer(cmd, draw_cmds_buf, device_->get_buffer(new_buf), 0, 0,
                                  curr_tot_draw_cmd_buf_size);
     state
-        .buffer_barrier(get_device().get_buffer(new_buf)->buffer(),
-                        VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
+        .buffer_barrier(device_->get_buffer(new_buf)->buffer(), VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                        VK_ACCESS_2_TRANSFER_WRITE_BIT)
         .flush_barriers();
     draw_cmds_buf_.buffer = std::move(new_buf);
     draw_cmds_buf = draw_cmds_buf_.get_buffer();
@@ -1766,9 +1737,10 @@ VkRender2::StaticMeshDrawManager::Handle VkRender2::StaticMeshDrawManager::add_d
 }
 
 VkRender2::StaticMeshDrawManager::StaticMeshDrawManager(std::string name,
-                                                        size_t initial_max_draw_cnt)
-    : name_(std::move(name)) {
-  draw_cmds_buf_.buffer = get_device().create_buffer_holder(BufferCreateInfo{
+                                                        size_t initial_max_draw_cnt,
+                                                        vk2::Device* device)
+    : name_(std::move(name)), device_(device) {
+  draw_cmds_buf_.buffer = device_->create_buffer_holder(BufferCreateInfo{
       .size = initial_max_draw_cnt * sizeof(GPUDrawInfo),
       .usage = BufferUsage_Storage,
   });
@@ -1812,23 +1784,22 @@ void VkRender2::execute_static_geo_draws(CmdEncoder& cmd, bool double_sided) {
 VkRender2::StaticMeshDrawManager::DrawPass::DrawPass(std::string draw_pass_name,
                                                      u32 num_single_sided_draws,
                                                      u32 num_double_sided_draws,
-                                                     u32 frames_in_flight)
-    : name(std::move(draw_pass_name)), name_double_sided(name + "_double_sided") {
+                                                     u32 frames_in_flight, vk2::Device* device)
+    : name(std::move(draw_pass_name)), name_double_sided(name + "_double_sided"), device_(device) {
   for (u32 i = 0; i < frames_in_flight; i++) {
     for (int double_sided = 0; double_sided < 2; double_sided++) {
       u32 count = double_sided ? num_double_sided_draws : num_single_sided_draws;
-      out_draw_cmds_bufs[double_sided].emplace_back(
-          get_device().create_buffer_holder(BufferCreateInfo{
-              .size = (count * sizeof(VkDrawIndexedIndirectCommand)) + sizeof(u32),
-              .usage = BufferUsage_Indirect | BufferUsage_Storage,
-          }));
+      out_draw_cmds_bufs[double_sided].emplace_back(device_->create_buffer_holder(BufferCreateInfo{
+          .size = (count * sizeof(VkDrawIndexedIndirectCommand)) + sizeof(u32),
+          .usage = BufferUsage_Indirect | BufferUsage_Storage,
+      }));
     }
   }
 }
 
 void VkRender2::StaticMeshDrawManager::add_draw_pass(const std::string& name) {
   draw_passes_.emplace_back(name_ + "_" + name, num_draw_cmds_[0], num_draw_cmds_[1],
-                            get_device().get_frames_in_flight());
+                            device_->get_frames_in_flight(), device_);
 }
 
 BufferHandle VkRender2::StaticMeshDrawManager::DrawPass::get_frame_out_draw_cmd_buf_handle(
@@ -1838,7 +1809,7 @@ BufferHandle VkRender2::StaticMeshDrawManager::DrawPass::get_frame_out_draw_cmd_
 
 vk2::Buffer* VkRender2::StaticMeshDrawManager::DrawPass::get_frame_out_draw_cmd_buf(
     bool double_sided) const {
-  return get_device().get_buffer(
+  return device_->get_buffer(
       out_draw_cmds_bufs[double_sided][VkRender2::get().curr_frame_in_flight_num()]);
 }
 
@@ -1854,18 +1825,13 @@ void VkRender2::copy_buffer(VkCommandBuffer cmd, vk2::Buffer* src, vk2::Buffer* 
 }
 void VkRender2::copy_buffer(VkCommandBuffer cmd, BufferHandle src, BufferHandle dst,
                             size_t src_offset, size_t dst_offset, size_t size) {
-  copy_buffer(cmd, get_device().get_buffer(src), get_device().get_buffer(dst), src_offset,
-              dst_offset, size);
+  copy_buffer(cmd, device_->get_buffer(src), device_->get_buffer(dst), src_offset, dst_offset,
+              size);
 }
 
 void VkRender2::draw_line(const vec3& p1, const vec3& p2, const vec4& color) {
   line_draw_vertices_.emplace_back(vec4{p1, 0.}, color);
   line_draw_vertices_.emplace_back(vec4{p2, 0.}, color);
-}
-
-void VkRender2::draw_cube(VkCommandBuffer cmd) const {
-  vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
-  vkCmdDraw(cmd, 36, 1, cube_vertices_slot_.get_offset() / sizeof(gfx::Vertex), 0);
 }
 
 void VkRender2::draw_skybox(CmdEncoder& cmd) {
@@ -1883,7 +1849,7 @@ void VkRender2::draw_skybox(CmdEncoder& cmd) {
   }
   struct {
     u32 scene_buffer, tex_idx, sampler_idx;
-  } pc{curr_frame_2().scene_uniform_buf->resource_info_->handle, skybox_handle,
+  } pc{curr_frame().scene_uniform_buf->resource_info_->handle, skybox_handle,
        linear_sampler_->resource_info.handle};
   cmd.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
   cmd.set_cull_mode(CullMode::None);
@@ -1986,4 +1952,22 @@ void VkRender2::free(CmdEncoder& cmd, StaticModelInstanceResources& instance) {
   free(instance);
 }
 
+void VkRender2::render_imgui(VkCommandBuffer cmd, uvec2 draw_extent, VkImageView target_img_view) {
+  VkRenderingAttachmentInfo color_attachment = vk2::init::rendering_attachment_info(
+      target_img_view, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, nullptr);
+  VkRenderingInfo render_info = vk2::init::rendering_info({draw_extent.x, draw_extent.y},
+                                                          &color_attachment, nullptr, nullptr);
+  vkCmdBeginRenderingKHR(cmd, &render_info);
+  ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+  vkCmdEndRenderingKHR(cmd);
+}
+uvec2 VkRender2::window_dims() const {
+  int x, y;
+  glfwGetFramebufferSize(window_, &x, &y);
+  return {x, y};
+}
+float VkRender2::aspect_ratio() const {
+  auto dims = window_dims();
+  return (float)dims.x / (float)dims.y;
+}
 }  // namespace gfx

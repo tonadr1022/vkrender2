@@ -16,8 +16,8 @@
 #include <unordered_set>
 
 #include "Common.hpp"
-#include "FixedVector.hpp"
-#include "Logger.hpp"
+#include "core/FixedVector.hpp"
+#include "core/Logger.hpp"
 #include "imgui.h"
 #include "vk2/Hash.hpp"
 #include "vk2/VkCommon.hpp"
@@ -69,7 +69,6 @@ ShaderManager::LoadProgramResult ShaderManager::load_program(
   // TODO: thread safe
   LoadProgramResult result{};
   if (shader_create_infos.empty()) {
-    LERROR("ShaderManager::load_shader: no shaders");
     return result;
   }
 
@@ -83,16 +82,17 @@ ShaderManager::LoadProgramResult ShaderManager::load_program(
 
     auto& spirv_load_result = spirv_binaries.emplace_back();
     auto glsl_path = full_path.string() + ".glsl";
-    auto spv_path = full_path.string() + std::to_string(new_hash) + ".spv";
+    auto spv_path = full_path.string() + '.' + std::to_string(new_hash) + ".spv";
     if (!std::filesystem::exists(glsl_path)) {
       LERROR("glsl file does not exist for shader: {}", glsl_path);
       return result;
     }
 
-    if (!std::filesystem::exists(spv_path) || force) {
+    if (force || !std::filesystem::exists(spv_path) ||
+        std::filesystem::last_write_time(spv_path) < std::filesystem::last_write_time(glsl_path)) {
       // compile glsl to spirv
       bool success = compile_glsl_to_spirv(glsl_path, convert_shader_stage(cinfo.type),
-                                           spirv_load_result.binary_data, nullptr);
+                                           spirv_load_result.binary_data, cinfo.defines);
       if (!success) {
         return result;
       }
@@ -112,14 +112,11 @@ ShaderManager::LoadProgramResult ShaderManager::load_program(
 
   for (u64 i = 0; i < shader_create_infos.size(); i++) {
     const std::string& path = shader_create_infos[i].path.string();
-    {
-      ZoneScopedN("make module");
-      VkShaderModuleCreateInfo create_info{
-          .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-          .codeSize = spirv_binaries[i].binary_data.size() * sizeof(u32),
-          .pCode = spirv_binaries[i].binary_data.data()};
-      VK_CHECK(vkCreateShaderModule(device_, &create_info, nullptr, &result.modules[i].module));
-    }
+    VkShaderModuleCreateInfo create_info{
+        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = spirv_binaries[i].binary_data.size() * sizeof(u32),
+        .pCode = spirv_binaries[i].binary_data.data()};
+    VK_CHECK(vkCreateShaderModule(device_, &create_info, nullptr, &result.modules[i]));
   }
   result.success = true;
   return result;
@@ -129,7 +126,7 @@ ShaderManager::ShaderManager(VkDevice device, std::filesystem::path shader_cache
                              OnDirtyFileFunc on_dirty_files_fn, std::filesystem::path shader_dir,
                              bool hot_reload)
     : file_watcher_(
-          shader_dir,
+          shader_dir, {".glsl"},
           [this](std::span<std::filesystem::path> dirty_files) {
             if (on_dirty_files_fn_) on_dirty_files_fn_(dirty_files);
           },
@@ -182,14 +179,15 @@ ShaderManager::~ShaderManager() {
     std::ofstream ofs(shader_cache_dir_ / "include_data.txt");
     ofs << include_graph_nodes_.size() << '\n';
     for (const auto& [filename, included_bys] : include_graph_nodes_) {
+      if (!std::filesystem::exists(filename)) continue;
       ofs << filename.string() << ' ' << included_bys.size() << ' ';
       for (const auto& included_by : included_bys) {
+        if (!std::filesystem::exists(included_by)) continue;
         ofs << included_by.string() << ' ';
       }
       ofs << '\n';
     }
   }
-
   glslang::FinalizeProcess();
 }
 
@@ -246,7 +244,6 @@ class IncludeHandler final : public glslang::TShader::Includer {
             : std::filesystem::weakly_canonical(std::filesystem::path(requesting_source));
     file_include_graph_reverse[full_requested_source].emplace(canonical_requesting_source);
     file_include_graph[canonical_requesting_source].emplace(canonical_requested_source);
-    included_files_.insert(canonical_requested_source);
     currentIncluderDir_ = full_requested_source.parent_path();
 
     std::ifstream file{full_requested_source};
@@ -284,13 +281,10 @@ class IncludeHandler final : public glslang::TShader::Includer {
     delete data;
   }
 
-  [[nodiscard]] const std::unordered_set<std::string>& get_paths() const { return included_files_; }
-
   std::unordered_map<std::string, std::unordered_set<std::string>> file_include_graph;
   std::unordered_map<std::string, std::unordered_set<std::string>> file_include_graph_reverse;
 
  private:
-  std::unordered_set<std::string> included_files_;
   // Acts like a stack that we "push" path components to when include{Local, System} are invoked,
   // and "pop" when releaseInclude is invoked
   std::filesystem::path currentIncluderDir_;
@@ -342,7 +336,7 @@ namespace gfx::vk2 {
 
 bool ShaderManager::compile_glsl_to_spirv(const std::string& path, VkShaderStageFlagBits stage,
                                           std::vector<u32>& out_binary,
-                                          std::vector<std::string>* included_files) {
+                                          std::span<const std::string> defines) {
   ZoneScoped;
   LINFO("compiling glsl: {}", path);
   if (!std::filesystem::exists(path)) {
@@ -368,10 +362,13 @@ bool ShaderManager::compile_glsl_to_spirv(const std::string& path, VkShaderStage
   shader.setEnvInput(glslang::EShSourceGlsl, glslang_stage, glslang::EShClientVulkan, 100);
   shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_2);
   shader.setEnvTarget(glslang::EShTargetLanguage::EShTargetSpv, glslang::EShTargetSpv_1_5);
-  std::string preamble = "#extension GL_GOOGLE_include_directive : enable\n";
-  // TODO: defines
-  // preamble += "";
-  shader.setPreamble(preamble.c_str());
+  std::stringstream preamble;
+  preamble << "#extension GL_GOOGLE_include_directive : enable\n";
+  for (const auto& define : defines) {
+    preamble << define << '\n';
+  }
+  std::string pre = preamble.str();
+  shader.setPreamble(pre.c_str());
   shader.setOverrideVersion(460);
 
   IncludeHandler includer(path);
@@ -394,9 +391,6 @@ bool ShaderManager::compile_glsl_to_spirv(const std::string& path, VkShaderStage
       it->second.emplace(included_by);
     }
   }
-  if (included_files) {
-    *included_files = {includer.get_paths().begin(), includer.get_paths().end()};
-  }
 
   glslang::TProgram program;
   program.addShader(&shader);
@@ -413,8 +407,12 @@ bool ShaderManager::compile_glsl_to_spirv(const std::string& path, VkShaderStage
   auto options = glslang::SpvOptions{
       .generateDebugInfo = true,
       .stripDebugInfo = false,
-      .emitNonSemanticShaderDebugInfo = true,
-      .emitNonSemanticShaderDebugSource = true,
+      .disableOptimizer = false,
+      .optimizeSize = true,
+      .disassemble = false,
+      .validate = true,
+      .emitNonSemanticShaderDebugInfo = false,
+      .emitNonSemanticShaderDebugSource = false,
   };
 
   {

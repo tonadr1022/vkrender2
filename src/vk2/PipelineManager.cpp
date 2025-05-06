@@ -8,8 +8,8 @@
 #include <tracy/Tracy.hpp>
 #include <utility>
 
-#include "FixedVector.hpp"
-#include "Logger.hpp"
+#include "core/FixedVector.hpp"
+#include "core/Logger.hpp"
 #include "imgui.h"
 #include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Hash.hpp"
@@ -113,7 +113,7 @@ VkPipeline PipelineManager::create_compute_pipeline(ShaderManager::LoadProgramRe
   VkPipelineShaderStageCreateInfo stage{
       .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
       .stage = VK_SHADER_STAGE_COMPUTE_BIT,
-      .module = result.modules[0].module,
+      .module = result.modules[0],
       .pName = entry_point};
   VkComputePipelineCreateInfo create_info{.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
                                           .stage = stage,
@@ -131,6 +131,7 @@ PipelineManager& PipelineManager::get() {
   assert(instance);
   return *instance;
 }
+
 void PipelineManager::init(VkDevice device, std::filesystem::path shader_dir, bool hot_reload,
                            VkPipelineLayout default_layout) {
   assert(!instance);
@@ -138,6 +139,7 @@ void PipelineManager::init(VkDevice device, std::filesystem::path shader_dir, bo
 }
 
 void PipelineManager::shutdown() {
+  ZoneScoped;
   assert(instance);
   delete instance;
 }
@@ -247,19 +249,17 @@ void PipelineManager::bind_compute(VkCommandBuffer cmd, PipelineHandle handle) {
 VkPipeline PipelineManager::load_graphics_pipeline_impl(const GraphicsPipelineCreateInfo& info,
                                                         u64* out_info_hash, bool force) {
   LINFO("loading graphics pipeline: {}", info.shaders[0].path.string());
-  u32 stage_cnt = 0;
-  for (const auto& s : info.shaders) {
-    if (s.path.empty()) {
-      break;
-    }
-    stage_cnt++;
-  }
-
+  u32 stage_cnt = info.shaders.size();
   std::array<std::vector<std::string>, 2> include_files;
   std::array<u64, 2> create_info_hashes;
   ShaderManager::LoadProgramResult result =
       shader_manager_.load_program(info.shaders, create_info_hashes, force);
   if (!result.success) {
+    for (u32 i = 0; i < stage_cnt; i++) {
+      if (result.modules[i]) {
+        vkDestroyShaderModule(device_, result.modules[i], nullptr);
+      }
+    }
     return {};
   }
   if (out_info_hash) {
@@ -373,13 +373,13 @@ VkPipeline PipelineManager::load_graphics_pipeline_impl(const GraphicsPipelineCr
   stages[0] =
       VkPipelineShaderStageCreateInfo{.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
                                       .stage = VK_SHADER_STAGE_VERTEX_BIT,
-                                      .module = result.modules[0].module,
+                                      .module = result.modules[0],
                                       .pName = "main"};
   if (stage_cnt == 2) {
     stages[1] = VkPipelineShaderStageCreateInfo{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
-        .module = result.modules[1].module,
+        .module = result.modules[1],
         .pName = "main"};
   }
   VkGraphicsPipelineCreateInfo cinfo{
@@ -399,6 +399,11 @@ VkPipeline PipelineManager::load_graphics_pipeline_impl(const GraphicsPipelineCr
       .layout = info.layout ? info.layout : default_pipeline_layout_};
   VkPipeline pipeline{};
   VK_CHECK(vkCreateGraphicsPipelines(device_, nullptr, 1, &cinfo, nullptr, &pipeline));
+
+  for (u32 i = 0; i < stage_cnt; i++) {
+    vkDestroyShaderModule(device_, result.modules[i], nullptr);
+  }
+
   if (!pipeline) return {};
   return pipeline;
 }
@@ -416,12 +421,18 @@ VkPipeline PipelineManager::load_compute_pipeline_impl(const ShaderCreateInfo& i
   if (out_info_hash) {
     *out_info_hash = info_hash[0];
   }
+
   if (!result.success) {
     LINFO("failed to load compute pipeline: {}", info.path.string());
+    if (result.modules[0]) {
+      vkDestroyShaderModule(device_, result.modules[0], nullptr);
+    }
     return {};
   }
 
-  return create_compute_pipeline(result, info.entry_point.c_str());
+  VkPipeline pipeline = create_compute_pipeline(result, info.entry_point.c_str());
+  vkDestroyShaderModule(device_, result.modules[0], nullptr);
+  return pipeline;
 }
 
 void PipelineManager::reload_shaders() {

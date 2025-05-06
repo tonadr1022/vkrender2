@@ -20,8 +20,8 @@
 #include "Scene.hpp"
 #include "StateTracker.hpp"
 #include "ThreadPool.hpp"
-#include "Timer.hpp"
 #include "VkRender2.hpp"
+#include "core/Timer.hpp"
 #include "shaders/common.h.glsl"
 #include "vk2/Device.hpp"
 #include "vk2/StagingBufferPool.hpp"
@@ -37,7 +37,7 @@
 #include <glm/gtx/quaternion.hpp>
 #include <tracy/Tracy.hpp>
 
-#include "Logger.hpp"
+#include "core/Logger.hpp"
 #include "vk2/Buffer.hpp"
 
 // ktx loading inspired/ripped from:

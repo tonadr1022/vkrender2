@@ -2,10 +2,10 @@
 
 #include <filesystem>
 
-#include "BaseRenderer.hpp"
 #include "Camera.hpp"
 #include "Common.hpp"
 #include "Scene.hpp"
+#include "VkRender2.hpp"
 struct GLFWwindow;
 
 struct App {
@@ -25,7 +25,7 @@ struct App {
   void on_file_drop(int count, const char** paths);
   void on_hide_mouse_change(bool new_hide_mouse);
   void on_cursor_event(vec2 pos);
-  void on_imgui();
+  void draw_imgui();
 
   Camera cam_data;
   CameraController cam;
@@ -43,6 +43,7 @@ struct App {
   float dt{};
 
  private:
+  bool running_{};
   void shutdown() const;
   void update(float dt);
   [[nodiscard]] float aspect_ratio() const;

@@ -16,13 +16,16 @@ class StateTracker;
 
 struct RenderGraph;
 struct RenderGraphPass;
-class BaseRenderer;
+class VkRender2;
+namespace vk2 {
+class Device;
+}
 class CSM {
  public:
   using DrawFunc =
       std::function<void(CmdEncoder&, const mat4& vp, bool opaque_alpha, u32 cascade_i)>;
   using AddRenderDependenciesFunc = std::function<void(RenderGraphPass& pass)>;
-  explicit CSM(BaseRenderer* renderer, DrawFunc draw_fn, AddRenderDependenciesFunc add_deps_fn);
+  explicit CSM(vk2::Device* device, DrawFunc draw_fn, AddRenderDependenciesFunc add_deps_fn);
   void add_pass(RenderGraph& rg);
   static constexpr u32 max_cascade_levels{4};
 
@@ -43,8 +46,8 @@ class CSM {
   void on_imgui();
 
   // [[nodiscard]] const vk2::Image& get_debug_img() const { return shadow_map_debug_img_; }
-  [[nodiscard]] BufferHandle get_shadow_data_buffer(u32 frame_num) const {
-    return shadow_data_bufs_[frame_num % shadow_data_bufs_.size()].handle;
+  [[nodiscard]] BufferHandle get_shadow_data_buffer(u32 frame_in_flight) const {
+    return shadow_data_bufs_[frame_in_flight].handle;
   }
   [[nodiscard]] const AttachmentInfo& get_shadow_map_att_info() const {
     return shadow_map_img_att_info_;
@@ -68,10 +71,11 @@ class CSM {
   AddRenderDependenciesFunc add_deps_fn_;
   AttachmentInfo shadow_map_img_att_info_;
   vk2::PipelineHandle shadow_depth_pipline_;
-  vk2::PipelineHandle shadow_depth_alpha_mask_pipline_;
+  vk2::PipelineHandle shadow_depth_alpha_mask_pipeline_;
   vk2::PipelineHandle depth_debug_pipeline_;
   uvec2 shadow_map_res_{};
   u32 cascade_count_{4};
+  // TODO: frames in flight!!!
   std::array<Holder<BufferHandle>, 2> shadow_data_bufs_;
   Format debug_shadow_img_format_{Format::R16G16B16A16Sfloat};
 
@@ -81,7 +85,7 @@ class CSM {
   LightMatrixArray light_matrices_;
   ImageHandle curr_shadow_map_img_;
   std::array<Holder<ImageViewHandle>, max_cascade_levels> shadow_map_img_views_;
-  BaseRenderer* renderer_{};
+  vk2::Device* device_{};
   i32 debug_cascade_idx_{0};
   float shadow_z_near_{.1};
   float shadow_z_far_{225};

@@ -2,10 +2,12 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <functional>
-#include <future>
+#include <mutex>
 #include <span>
+#include <thread>
 
 namespace util {
 class FileWatcher {
@@ -13,7 +15,8 @@ class FileWatcher {
   using OnDirtyFunc = std::function<void(std::span<std::filesystem::path>)>;
   void update();
   FileWatcher() = default;
-  explicit FileWatcher(std::filesystem::path base_path, OnDirtyFunc func,
+  explicit FileWatcher(std::filesystem::path base_path, std::vector<std::string> file_extensions,
+                       OnDirtyFunc func,
                        std::chrono::milliseconds sleep_time = std::chrono::milliseconds(500),
                        bool enabled = true);
 
@@ -28,8 +31,6 @@ class FileWatcher {
   void start();
   void shutdown();
   ~FileWatcher();
-  void add_timestamps(
-      std::span<std::pair<std::string, std::filesystem::file_time_type>> timestamps);
 
   const std::unordered_map<std::filesystem::path, std::filesystem::file_time_type>&
   get_modified_timestamps() const {
@@ -40,11 +41,14 @@ class FileWatcher {
   void update_loop();
   OnDirtyFunc on_dirty_func_;
   std::filesystem::path base_path_;
+  std::vector<std::string> file_extensions_;
   std::atomic<bool> running_;
   std::chrono::milliseconds sleep_time_{500};
   std::unordered_map<std::filesystem::path, std::filesystem::file_time_type> modified_time_stamps_;
   std::vector<std::filesystem::path> dirty_files_;
-  std::future<void> update_task_;
+  std::thread update_thread_;
+  std::condition_variable cv_;
+  std::mutex mtx_;
   bool enabled_{};
 };
 }  // namespace util

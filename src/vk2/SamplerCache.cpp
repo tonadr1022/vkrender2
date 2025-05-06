@@ -65,6 +65,7 @@ void SamplerCache::init(VkDevice device) {
 SamplerCache& SamplerCache::get() { return *instance; }
 
 void SamplerCache::destroy() {
+  ZoneScoped;
   assert(instance);
   instance->clear();
   delete instance;

@@ -30,7 +30,6 @@ struct BufferCreateInfo {
   u64 size{};
   BufferUsageFlags usage{};
   BufferCreateFlags flags{};
-  const char *debug_name{};
 };
 
 class Buffer {

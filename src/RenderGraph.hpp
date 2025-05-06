@@ -10,8 +10,8 @@
 #include <utility>
 #include <vector>
 
-#include "FixedVector.hpp"
 #include "Types.hpp"
+#include "core/FixedVector.hpp"
 #include "vk2/Pool.hpp"
 
 namespace gfx {
@@ -208,12 +208,6 @@ struct RenderGraph {
     VkPipelineStageFlags2 stages;
   };
 
-  // invalidate barriers are when gpu cache needs to be invalidated (read)
-  // flush barriers are when gpu cache needs to be flushed (write)
-
-  // std::vector<Barrier> pass_flush_barriers_;
-  // std::vector<Barrier> pass_invalidate_barriers_;
-
   struct PassSubmissionState {
     void reset();
     std::vector<VkImageMemoryBarrier2> image_barriers;
@@ -260,12 +254,9 @@ struct RenderGraph {
 
   std::unordered_set<uint32_t> dup_prune_set_;
 
-  // owns images
   std::unordered_multimap<ResourceDimensions, Holder<ImageHandle>, ResourceDimensionsHasher>
       img_cache_;
   std::vector<std::pair<ResourceDimensions, Holder<ImageHandle>>> img_cache_used_;
-  // std::unordered_map<ResourceDimensions, vk2::Holder<ImageHandle>, ResourceDimensionsHasher>
-  //     img_cache_used_;
 
   std::vector<ImageHandle> physical_image_attachments_;
   std::vector<BufferHandle> physical_buffers_;
