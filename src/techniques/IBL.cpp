@@ -65,7 +65,6 @@ IBL::IBL(BufferHandle cube_vertex_buf) : cube_vertex_buf_(cube_vertex_buf) {
                       .usage = ImageUsage::General}};
   make_cubemap_views_all_mips(prefiltered_env_map_tex_->texture.value(),
                               prefiltered_env_tex_views_);
-
   integrate_brdf_pipeline_ =
       PipelineManager::get().load_compute({"ibl/integrate_brdf.comp", ShaderType::Compute});
   equirect_to_cube_pipeline2_ =

@@ -167,9 +167,11 @@ class Device {
   VkFence allocate_fence(bool reset);
   void free_fence(VkFence fence);
   void wait_idle();
-  bool is_supported(DeviceFeature feature);
+  [[nodiscard]] bool is_supported(DeviceFeature feature) const;
 
  private:
+  VkPhysicalDeviceVulkan12Features supported_features12_{
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
   Queue queues_[(u32)QueueType::Count];
   Image make_img_impl(const ImageCreateInfo& info);
   void init_impl(const CreateInfo& info);

@@ -248,7 +248,6 @@ void PipelineManager::bind_compute(VkCommandBuffer cmd, PipelineHandle handle) {
 
 VkPipeline PipelineManager::load_graphics_pipeline_impl(const GraphicsPipelineCreateInfo& info,
                                                         u64* out_info_hash, bool force) {
-  LINFO("loading graphics pipeline: {}", info.shaders[0].path.string());
   u32 stage_cnt = info.shaders.size();
   std::array<std::vector<std::string>, 2> include_files;
   std::array<u64, 2> create_info_hashes;
@@ -403,15 +402,16 @@ VkPipeline PipelineManager::load_graphics_pipeline_impl(const GraphicsPipelineCr
   for (u32 i = 0; i < stage_cnt; i++) {
     vkDestroyShaderModule(device_, result.modules[i], nullptr);
   }
-
   if (!pipeline) return {};
+
+  LINFO("loaded graphics pipeline: {}", info.shaders[0].path.string());
+
   return pipeline;
 }
 
 VkPipeline PipelineManager::load_compute_pipeline_impl(const ShaderCreateInfo& info,
                                                        u64* out_info_hash, bool force) {
   ZoneScoped;
-  LINFO("loading compute pipeline: {}", info.path.string());
   std::array<std::vector<std::string>, 1> include_files_arr;
 
   std::array<u64, 1> info_hash;
@@ -432,6 +432,7 @@ VkPipeline PipelineManager::load_compute_pipeline_impl(const ShaderCreateInfo& i
 
   VkPipeline pipeline = create_compute_pipeline(result, info.entry_point.c_str());
   vkDestroyShaderModule(device_, result.modules[0], nullptr);
+  LINFO("loaded compute pipeline: {}", info.path.string());
   return pipeline;
 }
 

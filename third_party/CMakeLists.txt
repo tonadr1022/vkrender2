@@ -36,7 +36,8 @@ FetchContent_Declare(
 FetchContent_Declare(
     vkbootstrap
     GIT_REPOSITORY https://github.com/charles-lunarg/vk-bootstrap
-    GIT_TAG        v1.4.310
+    GIT_TAG        v1.4.314
+
 )
 
 set(VMA_STATIC_VULKAN_FUNCTIONS OFF CACHE BOOL "" FORCE)

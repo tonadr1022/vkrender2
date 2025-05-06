@@ -4,6 +4,7 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 #include <volk.h>
+#include <vulkan/vk_enum_string_helper.h>
 #include <vulkan/vulkan_core.h>
 
 #include <cassert>
@@ -127,27 +128,25 @@ void Device::init_impl(const CreateInfo& info) {
     }
   }
 
-  vkb::PhysicalDeviceSelector phys_selector(instance_, surface_);
-  VkPhysicalDeviceVulkan12Features features12{
-      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
-  features12.bufferDeviceAddress = true;
-  features12.descriptorIndexing = true;
-  features12.runtimeDescriptorArray = true;
-  features12.shaderStorageImageArrayNonUniformIndexing = true;
-  features12.shaderUniformBufferArrayNonUniformIndexing = true;
-  features12.shaderSampledImageArrayNonUniformIndexing = true;
-  features12.shaderStorageBufferArrayNonUniformIndexing = true;
-  features12.shaderInputAttachmentArrayNonUniformIndexing = true;
-  features12.shaderUniformTexelBufferArrayNonUniformIndexing = true;
-  features12.descriptorBindingUniformBufferUpdateAfterBind = true;
-  features12.descriptorBindingStorageImageUpdateAfterBind = true;
-  features12.descriptorBindingSampledImageUpdateAfterBind = true;
-  features12.descriptorBindingStorageBufferUpdateAfterBind = true;
-  features12.descriptorBindingUpdateUnusedWhilePending = true;
-  features12.descriptorBindingPartiallyBound = true;
-  features12.descriptorBindingVariableDescriptorCount = true;
-  features12.runtimeDescriptorArray = true;
-  features12.timelineSemaphore = true;
+  vkb::PhysicalDeviceSelector phys_builder(instance_, surface_);
+  supported_features12_.bufferDeviceAddress = true;
+  supported_features12_.descriptorIndexing = true;
+  supported_features12_.runtimeDescriptorArray = true;
+  supported_features12_.shaderStorageImageArrayNonUniformIndexing = true;
+  supported_features12_.shaderUniformBufferArrayNonUniformIndexing = true;
+  supported_features12_.shaderSampledImageArrayNonUniformIndexing = true;
+  supported_features12_.shaderStorageBufferArrayNonUniformIndexing = true;
+  supported_features12_.shaderInputAttachmentArrayNonUniformIndexing = true;
+  supported_features12_.shaderUniformTexelBufferArrayNonUniformIndexing = true;
+  supported_features12_.descriptorBindingUniformBufferUpdateAfterBind = true;
+  supported_features12_.descriptorBindingStorageImageUpdateAfterBind = true;
+  supported_features12_.descriptorBindingSampledImageUpdateAfterBind = true;
+  supported_features12_.descriptorBindingStorageBufferUpdateAfterBind = true;
+  supported_features12_.descriptorBindingUpdateUnusedWhilePending = true;
+  supported_features12_.descriptorBindingPartiallyBound = true;
+  supported_features12_.descriptorBindingVariableDescriptorCount = true;
+  supported_features12_.runtimeDescriptorArray = true;
+  supported_features12_.timelineSemaphore = true;
   VkPhysicalDeviceFeatures features{};
   features.shaderStorageImageWriteWithoutFormat = true;
   features.depthClamp = true;
@@ -170,37 +169,41 @@ void Device::init_impl(const CreateInfo& info) {
   std::vector<const char*> extensions{
       {VK_KHR_FORMAT_FEATURE_FLAGS_2_EXTENSION_NAME, VK_KHR_COPY_COMMANDS_2_EXTENSION_NAME,
        VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME}};
+  // features12.drawIndirectCount = true;
 
-  // NOT ON MACOS :(
-#ifndef __APPLE__
-  features12.drawIndirectCount = true;
-#endif
-
-  phys_selector.set_minimum_version(min_api_version_major, min_api_version_minor)
-      .set_required_features_12(features12)
-      .set_required_features_11(features11)
-      .add_required_extensions(extensions)
-      .prefer_gpu_device_type(vkb::PreferredDeviceType::discrete)
-      .add_required_extension_features(dynamic_rendering_features)
-      .add_required_extension_features(sync2_features)
-      .set_required_features(features);
-  auto phys_ret = phys_selector.select_devices();
-  if (!phys_ret || phys_ret.value().empty()) {
-    LCRITICAL("Failed to select physical device: {}", phys_ret.error().message());
+  auto pr = phys_builder.set_minimum_version(min_api_version_major, min_api_version_minor)
+                .set_required_features_12(supported_features12_)
+                .set_required_features_11(features11)
+                .add_required_extensions(extensions)
+                .prefer_gpu_device_type(vkb::PreferredDeviceType::discrete)
+                .add_required_extension_features(dynamic_rendering_features)
+                .add_required_extension_features(sync2_features)
+                .set_required_features(features)
+                .select();
+  if (pr.has_value()) {
+    vkb_phys_device_ = pr.value();
+  } else {
+    LCRITICAL("Failed to select physical device: {}", pr.error().message());
     exit(1);
   }
-  bool found_discrete_device = false;
-  for (auto& v : phys_ret.value()) {
-    if (v.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
-      vkb_phys_device_ = v;
-      found_discrete_device = true;
-      break;
+  {
+    VkPhysicalDeviceVulkan12Features features{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    features.drawIndirectCount = true;
+    if (vkb_phys_device_.enable_extension_features_if_present(features)) {
+      supported_features12_.drawIndirectCount = true;
     }
   }
-  if (!found_discrete_device) {
-    vkb_phys_device_ = std::move(phys_ret.value()[0]);
+
+  {
+    const auto& props = vkb_phys_device_.properties;
+    LINFO("[Device Info]\nName: {}\nType: {}\nAPI Version {}.{}.{}", props.deviceName,
+          props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU     ? "Discrete"
+          : props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? "Integrated"
+                                                                       : "CPU",
+          VK_API_VERSION_MAJOR(props.apiVersion), VK_API_VERSION_MINOR(props.apiVersion),
+          VK_API_VERSION_PATCH(props.apiVersion), props.driverVersion);
   }
-  LINFO("Selected Device: {}", vkb_phys_device_.properties.deviceName);
 
   vkb::DeviceBuilder dev_builder(vkb_phys_device_);
   auto dev_ret = dev_builder.build();
@@ -641,8 +644,11 @@ Device::~Device() {
 
 void Device::wait_idle() { vkDeviceWaitIdle(device_); }
 
-bool Device::is_supported(DeviceFeature feature) {
-  switch (feature) { case DeviceFeature::DrawIndirectCount: }
+bool Device::is_supported(DeviceFeature feature) const {
+  switch (feature) {
+    case DeviceFeature::DrawIndirectCount:
+      return supported_features12_.drawIndirectCount;
+  }
   return true;
 }
 

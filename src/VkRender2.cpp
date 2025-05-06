@@ -1211,9 +1211,8 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
             if (!buf) {
               continue;
             }
-            if (portable_) {
+            if (!device_->is_supported(DeviceFeature::DrawIndirectCount)) {
               // TODO: only fill the unfilled portion after culling?
-
               // fill whole buffer with 0 since can't use draw indirect count.
               vkCmdFillBuffer(cmd.cmd(), buf->buffer(), 0, buf->size(), 0);
             } else {
@@ -1603,7 +1602,7 @@ void VkRender2::execute_draw(CmdEncoder& cmd, const vk2::Buffer& buffer, u32 dra
   if (draw_count == 0) return;
   VkBuffer draw_cmd_buf = buffer.buffer();
   constexpr u32 draw_cmd_offset{sizeof(u32)};
-  if (portable_) {
+  if (!device_->is_supported(DeviceFeature::DrawIndirectCount)) {
     vkCmdDrawIndexedIndirect(cmd.cmd(), draw_cmd_buf, draw_cmd_offset, draw_count,
                              sizeof(VkDrawIndexedIndirectCommand));
   } else {

@@ -399,12 +399,6 @@ class VkRender2 final {
   bool draw_imgui_{true};
   bool deferred_enabled_{true};
   bool draw_debug_aabbs_{false};
-// TODO: fix
-#ifdef __APPLE__
-  bool portable_{true};
-#else
-  bool portable_{false};
-#endif
 };
 
 }  // namespace gfx
