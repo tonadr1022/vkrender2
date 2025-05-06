@@ -28,6 +28,8 @@ void destroy(gfx::ImageViewHandle data);
 struct GLFWwindow;
 namespace gfx::vk2 {
 
+enum class DeviceFeature : u8 { DrawIndirectCount };
+
 struct CopyAllocator {
   struct CopyCmd {
     VkCommandPool transfer_cmd_pool{};
@@ -165,6 +167,7 @@ class Device {
   VkFence allocate_fence(bool reset);
   void free_fence(VkFence fence);
   void wait_idle();
+  bool is_supported(DeviceFeature feature);
 
  private:
   Queue queues_[(u32)QueueType::Count];

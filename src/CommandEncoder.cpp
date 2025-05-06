@@ -3,6 +3,7 @@
 #include <volk.h>
 #include <vulkan/vulkan_core.h>
 
+#include "vk2/Buffer.hpp"
 #include "vk2/VkTypes.hpp"
 
 namespace gfx {
@@ -58,4 +59,18 @@ void CmdEncoder::set_cull_mode(CullMode mode) {
   vkCmdSetCullMode(cmd_, vk2::convert_cull_mode(mode));
 }
 
+void CmdEncoder::copy_buffer(const vk2::Buffer& src, const vk2::Buffer& dst, u64 src_offset,
+                             u64 dst_offset, u64 size) const {
+  VkBufferCopy2KHR copy{.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2_KHR,
+                        .srcOffset = src_offset,
+                        .dstOffset = dst_offset,
+                        .size = size};
+
+  VkCopyBufferInfo2KHR copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+                                 .srcBuffer = src.buffer(),
+                                 .dstBuffer = dst.buffer(),
+                                 .regionCount = 1,
+                                 .pRegions = &copy};
+  vkCmdCopyBuffer2KHR(cmd_, &copy_info);
+}
 }  // namespace gfx

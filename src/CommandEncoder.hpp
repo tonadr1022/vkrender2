@@ -10,6 +10,10 @@ struct VkCtx;
 }
 
 namespace gfx {
+namespace vk2 {
+
+class Buffer;
+}
 
 struct CmdEncoder {
   explicit CmdEncoder(VkCommandBuffer cmd, VkPipelineLayout default_pipeline_layout,
@@ -26,6 +30,9 @@ struct CmdEncoder {
   void push_constants(u32 size, void* data);
   void set_viewport_and_scissor(u32 width, u32 height);
   void set_cull_mode(CullMode mode);
+
+  void copy_buffer(const vk2::Buffer& src, const vk2::Buffer& dst, u64 src_offset, u64 dst_offset,
+                   u64 size) const;
 
   [[nodiscard]] VkCommandBuffer cmd() const { return cmd_; }
 

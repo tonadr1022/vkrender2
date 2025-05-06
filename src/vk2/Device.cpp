@@ -641,4 +641,9 @@ Device::~Device() {
 
 void Device::wait_idle() { vkDeviceWaitIdle(device_); }
 
+bool Device::is_supported(DeviceFeature feature) {
+  switch (feature) { case DeviceFeature::DrawIndirectCount: }
+  return true;
+}
+
 }  // namespace gfx::vk2

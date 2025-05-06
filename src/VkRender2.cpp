@@ -584,7 +584,7 @@ void VkRender2::on_imgui() {
 
     ImGui::Checkbox("Deferred Rendering", &deferred_enabled_);
     ImGui::Checkbox("Render prefilter env map skybox", &render_prefilter_mip_skybox_);
-    ImGui::SliderInt("Prefilter Env Map Layer", &prefilter_mip_skybox_level_, 0,
+    ImGui::SliderInt("Prefilter Env Map Layer", &prefilter_mip_skybox_render_mip_level_, 0,
                      ibl_->prefiltered_env_map_tex_->texture->create_info().mip_levels - 1);
   }
 
@@ -634,24 +634,15 @@ VkRender2::~VkRender2() {
   device_->destroy_resources();
 }
 
-SceneHandle VkRender2::load_model(const std::filesystem::path& path, bool dynamic,
-                                  const mat4& transform) {
+SceneHandle VkRender2::load_static_model(const std::filesystem::path& path, bool dynamic,
+                                         const mat4& transform) {
   ZoneScoped;
+  if (!std::filesystem::exists(path)) {
+    return {};
+  }
+
   if (!dynamic) {
     ZoneScopedN("load_scene");
-    auto copy_buffer = [](VkCommandBuffer cmd, const Buffer& src_buffer, const Buffer& dst_buffer,
-                          u64 src_offset, u64 dst_offset, u64 size) {
-      VkBufferCopy2KHR copy{.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2_KHR,
-                            .srcOffset = src_offset,
-                            .dstOffset = dst_offset,
-                            .size = size};
-      VkCopyBufferInfo2KHR copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
-                                     .srcBuffer = src_buffer.buffer(),
-                                     .dstBuffer = dst_buffer.buffer(),
-                                     .regionCount = 1,
-                                     .pRegions = &copy};
-      vkCmdCopyBuffer2KHR(cmd, &copy_info);
-    };
     auto handle_it = static_model_name_to_handle_.find(path);
     StaticModelGPUResourcesHandle resources_handle{};
     StaticModelGPUResources* resources{};
@@ -683,14 +674,22 @@ SceneHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
       static_draw_stats_.materials += res.materials.size();
       auto materials_gpu_slot = static_materials_buf_.allocator.allocate(material_data_size);
 
-      immediate_submit([&, this](VkCommandBuffer cmd) {
-        copy_buffer(cmd, *staging.get_buffer(), *device_->get_buffer(static_materials_buf_.buffer),
-                    material_data_staging_offset, materials_gpu_slot.get_offset(),
-                    material_data_size);
-        copy_buffer(cmd, *staging.get_buffer(), *static_vertex_buf_.get_buffer(),
-                    vertices_staging_offset, vertices_gpu_slot.get_offset(), vertices_size);
-        copy_buffer(cmd, *staging.get_buffer(), *static_index_buf_.get_buffer(),
-                    indices_staging_offset, indices_gpu_slot.get_offset(), indices_size);
+      immediate_submit([&, this](CmdEncoder& cmd) {
+        state_
+            .buffer_barrier(static_vertex_buf_.get_buffer()->buffer(),
+                            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
+            .buffer_barrier(static_index_buf_.get_buffer()->buffer(),
+                            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
+            .buffer_barrier(static_materials_buf_.get_buffer()->buffer(),
+                            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
+            .flush_barriers();
+        cmd.copy_buffer(*staging.get_buffer(), *device_->get_buffer(static_materials_buf_.buffer),
+                        material_data_staging_offset, materials_gpu_slot.get_offset(),
+                        material_data_size);
+        cmd.copy_buffer(*staging.get_buffer(), *static_vertex_buf_.get_buffer(),
+                        vertices_staging_offset, vertices_gpu_slot.get_offset(), vertices_size);
+        cmd.copy_buffer(*staging.get_buffer(), *static_index_buf_.get_buffer(),
+                        indices_staging_offset, indices_gpu_slot.get_offset(), indices_size);
         state_
             .buffer_barrier(static_vertex_buf_.get_buffer()->buffer(),
                             VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
@@ -847,10 +846,10 @@ SceneHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
         staging.copy(instance_resources->object_datas.data(), obj_datas_size);
     u64 instance_datas_staging_offset = staging.copy(instance_datas.data(), instance_datas_size);
 
-    immediate_submit([&, this](VkCommandBuffer cmd) {
+    immediate_submit([&, this](CmdEncoder& cmd) {
       assert(obj_datas_size && instance_datas_size);
       // TODO: track the handles
-      state_.reset(cmd);
+      state_.reset(cmd.cmd());
       if (opaque_cmds_size) {
         instance_resources->opaque_draws_handle = static_opaque_draw_mgr_->add_draws(
             state_, cmd, opaque_cmds_size, opaque_cmds_staging_offset, *staging.get_buffer(),
@@ -867,13 +866,12 @@ SceneHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
             state_, cmd, transparent_cmds_size, transparent_cmds_staging_offset,
             *staging.get_buffer(), num_double_sided_transparent);
       }
-      copy_buffer(cmd, *staging.get_buffer(), *static_object_data_buf_.get_buffer(),
-                  obj_datas_staging_offset, instance_resources->object_data_slot.get_offset(),
-                  obj_datas_size);
-      copy_buffer(cmd, *staging.get_buffer(), *static_instance_data_buf_.get_buffer(),
-                  instance_datas_staging_offset,
-                  instance_resources->instance_data_slot.get_offset(), instance_datas_size);
-
+      cmd.copy_buffer(*staging.get_buffer(), *static_object_data_buf_.get_buffer(),
+                      obj_datas_staging_offset, instance_resources->object_data_slot.get_offset(),
+                      obj_datas_size);
+      cmd.copy_buffer(*staging.get_buffer(), *static_instance_data_buf_.get_buffer(),
+                      instance_datas_staging_offset,
+                      instance_resources->instance_data_slot.get_offset(), instance_datas_size);
       state_
           .buffer_barrier(
               static_object_data_buf_.get_buffer()->buffer(),
@@ -882,19 +880,7 @@ SceneHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
           .buffer_barrier(static_instance_data_buf_.get_buffer()->buffer(),
                           VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT)
           .flush_barriers();
-      // state_
-      //     .queue_transfer_buffer(
-      //         state_,
-      //         VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
-      //         VK_ACCESS_2_SHADER_READ_BIT, static_object_data_buf_.get_buffer()->buffer(),
-      //         queues_.transfer_queue_idx, queues_.graphics_queue_idx)
-      //     .queue_transfer_buffer(state_, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
-      //                            VK_ACCESS_2_SHADER_READ_BIT,
-      //                            static_instance_data_buf_.get_buffer()->buffer(),
-      //                            queues_.transfer_queue_idx, queues_.graphics_queue_idx)
-      //     .flush_barriers();
     });
-
     return {};
   }
   return {};
@@ -1048,7 +1034,6 @@ std::optional<vk2::Image> VkRender2::load_hdr_img(CmdEncoder& ctx,
       .pRegions = &img_copy_info};
   vkCmdCopyBufferToImage2KHR(cmd, &copy_to_img_info);
   transition_image(cmd, tex, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
   return tex;
 }
 
@@ -1645,23 +1630,23 @@ void VkRender2::StaticMeshDrawManager::remove_draws(StateTracker& state, VkComma
     }
   }
 
+  // TODO: subresource
+  state.buffer_barrier(draw_cmds_buf_.get_buffer()->buffer(), VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                       VK_ACCESS_2_TRANSFER_WRITE_BIT);
   vkCmdFillBuffer(cmd, draw_cmds_buf_.get_buffer()->buffer(), a->draw_cmd_slot.get_offset(),
                   a->draw_cmd_slot.get_size(), 0);
-  state.queue_transfer_buffer(
-      VkRender2::get().state_,
+  state.buffer_barrier(
+      draw_cmds_buf_.get_buffer()->buffer(),
       VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-      VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT,
-      draw_cmds_buf_.get_buffer()->buffer(), device_->get_queue(QueueType::Transfer).family_idx,
-      device_->get_queue(QueueType::Graphics).family_idx, a->draw_cmd_slot.get_offset(),
-      a->draw_cmd_slot.get_size());
+      VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT);
   draw_cmds_buf_.allocator.free(std::move(a->draw_cmd_slot));
 
   allocs_.destroy(handle);
 }
 
 VkRender2::StaticMeshDrawManager::Handle VkRender2::StaticMeshDrawManager::add_draws(
-    StateTracker& state, VkCommandBuffer cmd, size_t size, size_t staging_offset,
-    vk2::Buffer& staging, u32 num_double_sided_draws) {
+    StateTracker& state, CmdEncoder& cmd, size_t size, size_t staging_offset, vk2::Buffer& staging,
+    u32 num_double_sided_draws) {
   assert(size > 0);
   Alloc a;
   a.num_double_sided_draws = num_double_sided_draws;
@@ -1701,8 +1686,10 @@ VkRender2::StaticMeshDrawManager::Handle VkRender2::StaticMeshDrawManager::add_d
         .size = new_size,
         .usage = BufferUsage_Storage,
     });
-    VkRender2::get().copy_buffer(cmd, draw_cmds_buf, device_->get_buffer(new_buf), 0, 0,
-                                 curr_tot_draw_cmd_buf_size);
+
+    cmd.copy_buffer(*draw_cmds_buf, *device_->get_buffer(new_buf), 0, 0,
+                    curr_tot_draw_cmd_buf_size);
+
     state
         .buffer_barrier(device_->get_buffer(new_buf)->buffer(), VK_PIPELINE_STAGE_2_TRANSFER_BIT,
                         VK_ACCESS_2_TRANSFER_WRITE_BIT)
@@ -1719,13 +1706,9 @@ VkRender2::StaticMeshDrawManager::Handle VkRender2::StaticMeshDrawManager::add_d
       .buffer_barrier(draw_cmds_buf->buffer(), VK_PIPELINE_STAGE_2_TRANSFER_BIT,
                       VK_ACCESS_2_TRANSFER_WRITE_BIT)
       .flush_barriers();
-  VkBufferCopy2KHR copy = init::buffer_copy(staging_offset, a.draw_cmd_slot.get_offset(), size);
-  VkCopyBufferInfo2KHR buf_copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
-                                     .srcBuffer = staging.buffer(),
-                                     .dstBuffer = draw_cmds_buf->buffer(),
-                                     .regionCount = 1,
-                                     .pRegions = &copy};
-  vkCmdCopyBuffer2KHR(cmd, &buf_copy_info);
+
+  cmd.copy_buffer(staging, *draw_cmds_buf, staging_offset, a.draw_cmd_slot.get_offset(), size);
+
   state
       .buffer_barrier(
           draw_cmds_buf->buffer(),
@@ -1813,22 +1796,6 @@ vk2::Buffer* VkRender2::StaticMeshDrawManager::DrawPass::get_frame_out_draw_cmd_
       out_draw_cmds_bufs[double_sided][VkRender2::get().curr_frame_in_flight_num()]);
 }
 
-void VkRender2::copy_buffer(VkCommandBuffer cmd, vk2::Buffer* src, vk2::Buffer* dst,
-                            size_t src_offset, size_t dst_offset, size_t size) {
-  VkBufferCopy2KHR copy = init::buffer_copy(src_offset, dst_offset, size);
-  VkCopyBufferInfo2KHR buf_copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
-                                     .srcBuffer = src->buffer(),
-                                     .dstBuffer = dst->buffer(),
-                                     .regionCount = 1,
-                                     .pRegions = &copy};
-  vkCmdCopyBuffer2KHR(cmd, &buf_copy_info);
-}
-void VkRender2::copy_buffer(VkCommandBuffer cmd, BufferHandle src, BufferHandle dst,
-                            size_t src_offset, size_t dst_offset, size_t size) {
-  copy_buffer(cmd, device_->get_buffer(src), device_->get_buffer(dst), src_offset, dst_offset,
-              size);
-}
-
 void VkRender2::draw_line(const vec3& p1, const vec3& p2, const vec4& color) {
   line_draw_vertices_.emplace_back(vec4{p1, 0.}, color);
   line_draw_vertices_.emplace_back(vec4{p2, 0.}, color);
@@ -1838,8 +1805,9 @@ void VkRender2::draw_skybox(CmdEncoder& cmd) {
   PipelineManager::get().bind_graphics(cmd.cmd(), skybox_pipeline_);
   u32 skybox_handle{};
   if (render_prefilter_mip_skybox_) {
-    assert(ibl_->prefiltered_env_tex_views_.size() > (size_t)prefilter_mip_skybox_level_);
-    skybox_handle = ibl_->prefiltered_env_tex_views_[prefilter_mip_skybox_level_]
+    assert(ibl_->prefiltered_env_tex_views_.size() >
+           (size_t)prefilter_mip_skybox_render_mip_level_);
+    skybox_handle = ibl_->prefiltered_env_tex_views_[prefilter_mip_skybox_render_mip_level_]
                         ->sampled_img_resource()
                         .handle;
   } else {

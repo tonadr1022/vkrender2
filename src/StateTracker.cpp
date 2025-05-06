@@ -88,7 +88,6 @@ StateTracker& StateTracker::buffer_barrier(VkBuffer buffer, VkPipelineStageFlags
         BufferState{buffer, VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT});
     it = std::prev(tracked_buffers_.end());
   }
-  // LINFO("{} {}", string_VkPipelineStageFlags2(dst_stage), string_VkAccessFlags2(dst_access));
   buffer_barriers_.emplace_back(VkBufferMemoryBarrier2{
       .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
       .srcStageMask = it->curr_stage,

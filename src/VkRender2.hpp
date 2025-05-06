@@ -76,8 +76,8 @@ class VkRender2 final {
   explicit VkRender2(const InitInfo& info, bool& succes);
   ~VkRender2();
 
-  SceneHandle load_model(const std::filesystem::path& path, bool dynamic = false,
-                         const mat4& transform = mat4{1});
+  SceneHandle load_static_model(const std::filesystem::path& path, bool dynamic = false,
+                                const mat4& transform = mat4{1});
 
   // TODO: private
   void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
@@ -196,7 +196,7 @@ class VkRender2 final {
     void add_draw_pass(const std::string& name);
 
     // TODO: this is a little jank
-    Handle add_draws(StateTracker& state, VkCommandBuffer cmd, size_t size, size_t staging_offset,
+    Handle add_draws(StateTracker& state, CmdEncoder& cmd, size_t size, size_t staging_offset,
                      vk2::Buffer& staging, u32 num_double_sided_draws);
     void remove_draws(StateTracker& state, VkCommandBuffer cmd, Handle handle);
 
@@ -366,27 +366,13 @@ class VkRender2 final {
   u32 debug_mode_{DEBUG_MODE_NONE};
   const char* debug_mode_to_string(u32 mode);
   std::filesystem::path env_tex_path_;
-  i32 prefilter_mip_skybox_level_{};
-  // TODO: enum loser
-  bool render_prefilter_mip_skybox_{};
-  void make_cubemap_views_all_mips(const vk2::Image& texture,
-                                   std::vector<std::optional<vk2::ImageView>>& views);
+  i32 prefilter_mip_skybox_render_mip_level_{};
   void generate_mipmaps(StateTracker& state, VkCommandBuffer cmd, vk2::Image& tex);
-
   Holder<BufferHandle> cube_vertex_buf_;
-
   void add_rendering_passes(RenderGraph& rg);
-  void copy_buffer(VkCommandBuffer cmd, BufferHandle src, BufferHandle dst, size_t src_offset,
-                   size_t dst_offset, size_t size);
-  void copy_buffer(VkCommandBuffer cmd, vk2::Buffer* src, vk2::Buffer* dst, size_t src_offset,
-                   size_t dst_offset, size_t size);
+
   // AttachmentInfo swapchain_att_info_;
-// TODO: fix
-#ifdef __APPLE__
-  bool portable_{true};
-#else
-  bool portable_{false};
-#endif
+
   u32 tonemap_type_{1};
   const char* tonemap_type_names_[2] = {"Optimized Filmic", "ACES Film"};
   struct FrustumCullSettings {
@@ -408,9 +394,17 @@ class VkRender2 final {
   PerFrameData& curr_frame() {
     return per_frame_data_[device_->curr_frame_num() % device_->get_frames_in_flight()];
   }
+
+  bool render_prefilter_mip_skybox_{};
   bool draw_imgui_{true};
   bool deferred_enabled_{true};
   bool draw_debug_aabbs_{false};
+// TODO: fix
+#ifdef __APPLE__
+  bool portable_{true};
+#else
+  bool portable_{false};
+#endif
 };
 
 }  // namespace gfx
