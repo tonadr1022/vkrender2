@@ -4,6 +4,8 @@
 
 #include <cstring>
 #include <filesystem>
+#include <future>
+#include <shared_mutex>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -127,23 +129,23 @@ class PipelineManager {
   void bind_graphics(VkCommandBuffer cmd, PipelineHandle handle);
   void bind_compute(VkCommandBuffer cmd, PipelineHandle handle);
 
-  [[nodiscard]] PipelineHandle load_compute(const ShaderCreateInfo &info);
+  [[nodiscard]] PipelineHandle load(const ShaderCreateInfo &info);
   [[nodiscard]] PipelineHandle load(const GraphicsPipelineCreateInfo &info);
+
   Pipeline *get(PipelineHandle handle);
   void reload_shaders();
   void reload_pipeline(PipelineHandle handle, bool force);
   void on_imgui();
 
  private:
-  VkPipeline load_graphics_pipeline_impl(const GraphicsPipelineCreateInfo &info, u64 *out_info_hash,
-                                         bool force);
-  VkPipeline load_compute_pipeline_impl(const ShaderCreateInfo &info, u64 *out_info_hash,
-                                        bool force);
+  void reload_pipeline_unsafe(PipelineHandle handle, bool force);
+  // concurrent
+  void on_dirty_files(std::span<std::filesystem::path> dirty_files);
+  // end concurrent
+
   explicit PipelineManager(VkDevice device, std::filesystem::path shader_dir, bool hot_reload,
                            VkPipelineLayout default_layout);
   ~PipelineManager();
-  VkPipeline create_compute_pipeline(ShaderManager::LoadProgramResult &result,
-                                     const char *entry_point = "main");
   [[nodiscard]] std::string get_shader_path(const std::string &path) const;
 
   enum class PipelineType : u8 {
@@ -158,20 +160,28 @@ class PipelineManager {
     PipelineType type;
   };
 
-  void on_dirty_files(std::span<std::filesystem::path> dirty_files);
-
   std::unordered_map<std::string, std::unordered_set<PipelineHandle>>
       shader_name_to_used_pipelines_;
+  std::shared_mutex mtx_;
   std::unordered_map<PipelineHandle, PipelineAndMetadata> pipelines_;
   std::unordered_map<PipelineHandle, GraphicsPipelineCreateInfo> graphics_pipeline_infos_;
   std::unordered_map<PipelineHandle, ShaderCreateInfo> compute_pipeline_infos_;
 
   std::filesystem::path shader_dir_;
   size_t get_pipeline_hash(const GraphicsPipelineCreateInfo &info);
+  VkPipeline load_graphics_pipeline_impl(const GraphicsPipelineCreateInfo &info, u64 *out_info_hash,
+                                         bool force);
+  VkPipeline load_compute_pipeline_impl(const ShaderCreateInfo &info, u64 *out_info_hash,
+                                        bool force);
 
   ShaderManager shader_manager_;
   std::filesystem::path cache_path_;
   VkPipelineLayout default_pipeline_layout_{};
   VkDevice device_;
 };
+
+struct PipelineTask {
+  std::future<void> future;
+};
+
 }  // namespace gfx::vk2

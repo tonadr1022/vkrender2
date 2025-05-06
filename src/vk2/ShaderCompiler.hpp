@@ -2,7 +2,6 @@
 #include <vulkan/vulkan_core.h>
 
 #include <filesystem>
-#include <mutex>
 #include <span>
 #include <unordered_map>
 #include <unordered_set>
@@ -51,7 +50,6 @@ class ShaderManager {
     std::vector<uint32_t> binary_data;
   };
   VkDevice device_;
-  std::mutex mtx_;
 
   std::unordered_map<std::filesystem::path, std::unordered_set<std::filesystem::path>>
       include_graph_nodes_;

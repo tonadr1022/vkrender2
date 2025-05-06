@@ -332,6 +332,10 @@ class VkRender2 final {
     u32 instance_id;
   };
 
+  vk2::PipelineTask make_pipeline_task(const vk2::ShaderCreateInfo& info,
+                                       vk2::PipelineHandle* out_handle);
+  vk2::PipelineTask make_pipeline_task(const vk2::GraphicsPipelineCreateInfo& info,
+                                       vk2::PipelineHandle* out_handle);
   std::filesystem::path default_env_map_path_;
   std::unique_ptr<CSM> csm_;
   vk2::Sampler shadow_sampler_;

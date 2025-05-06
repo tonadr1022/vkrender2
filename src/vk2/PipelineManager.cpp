@@ -8,6 +8,7 @@
 #include <tracy/Tracy.hpp>
 #include <utility>
 
+#include "ThreadPool.hpp"
 #include "core/FixedVector.hpp"
 #include "core/Logger.hpp"
 #include "imgui.h"
@@ -107,22 +108,6 @@ constexpr VkPipelineColorBlendAttachmentState convert_color_blend_attachment(
 }
 }  // namespace
 
-VkPipeline PipelineManager::create_compute_pipeline(ShaderManager::LoadProgramResult& result,
-                                                    const char* entry_point) {
-  ZoneScoped;
-  VkPipelineShaderStageCreateInfo stage{
-      .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-      .stage = VK_SHADER_STAGE_COMPUTE_BIT,
-      .module = result.modules[0],
-      .pName = entry_point};
-  VkComputePipelineCreateInfo create_info{.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-                                          .stage = stage,
-                                          .layout = default_pipeline_layout_};
-  VkPipeline pipeline{};
-  VK_CHECK(vkCreateComputePipelines(device_, nullptr, 1, &create_info, nullptr, &pipeline));
-  return pipeline;
-}
-
 namespace {
 PipelineManager* instance{};
 }
@@ -144,33 +129,41 @@ void PipelineManager::shutdown() {
   delete instance;
 }
 
-// TODO: multithread
-PipelineHandle PipelineManager::load_compute(const ShaderCreateInfo& info) {
+PipelineHandle PipelineManager::load(const ShaderCreateInfo& info) {
   // handle is the hash of the create info
+  if (info.type != ShaderType::Compute) {
+    return {};
+  }
   u64 handle;
   VkPipeline pipeline = load_compute_pipeline_impl(info, &handle, false);
   if (!pipeline) {
     return PipelineHandle{};
   }
-  pipelines_.emplace(handle,
-                     PipelineAndMetadata{.pipeline = {.pipeline = pipeline, .owns_layout = false},
-                                         .shader_paths = {info.path.string()},
-                                         .type = PipelineType::Compute});
-  compute_pipeline_infos_.emplace(PipelineHandle{handle}, info);
   auto full_path = get_shader_path(info.path) + ".glsl";
-  shader_name_to_used_pipelines_[full_path].emplace(handle);
+
+  {
+    std::scoped_lock lock(mtx_);
+    pipelines_.emplace(handle,
+                       PipelineAndMetadata{.pipeline = {.pipeline = pipeline, .owns_layout = false},
+                                           .shader_paths = {info.path.string()},
+                                           .type = PipelineType::Compute});
+    compute_pipeline_infos_.emplace(PipelineHandle{handle}, info);
+    shader_name_to_used_pipelines_[full_path].emplace(handle);
+  }
 
   return PipelineHandle{handle};
 }
 
 Pipeline* PipelineManager::get(PipelineHandle handle) {
   ZoneScoped;
+  std::shared_lock lock(mtx_);
   auto it = pipelines_.find(handle);
   return it != pipelines_.end() ? &it->second.pipeline : nullptr;
 }
 
 PipelineManager::~PipelineManager() {
   ZoneScoped;
+  std::shared_lock lock(mtx_);
   for (auto& [handle, metadata] : pipelines_) {
     assert(metadata.pipeline.pipeline);
     if (metadata.pipeline.pipeline) {
@@ -222,17 +215,20 @@ PipelineHandle PipelineManager::load(const GraphicsPipelineCreateInfo& cinfo) {
     }
     shader_paths.emplace_back(shader_info.path.string());
   }
-  pipelines_.emplace(handle,
-                     PipelineAndMetadata{.pipeline = {.pipeline = pipeline, .owns_layout = false},
-                                         .shader_paths = shader_paths,
-                                         .type = PipelineType::Graphics});
-  graphics_pipeline_infos_.emplace(PipelineHandle{handle}, info);
-  for (auto& path : shader_paths) {
-    if (path.empty()) {
-      continue;
+  {
+    std::scoped_lock lock(mtx_);
+    pipelines_.emplace(handle,
+                       PipelineAndMetadata{.pipeline = {.pipeline = pipeline, .owns_layout = false},
+                                           .shader_paths = shader_paths,
+                                           .type = PipelineType::Graphics});
+    graphics_pipeline_infos_.emplace(PipelineHandle{handle}, info);
+    for (auto& path : shader_paths) {
+      if (path.empty()) {
+        continue;
+      }
+      auto full_glsl_path = get_shader_path(path + ".glsl");
+      shader_name_to_used_pipelines_[full_glsl_path].emplace(handle);
     }
-    auto full_glsl_path = get_shader_path(path + ".glsl");
-    shader_name_to_used_pipelines_[full_glsl_path].emplace(handle);
   }
 
   return PipelineHandle{handle};
@@ -430,19 +426,80 @@ VkPipeline PipelineManager::load_compute_pipeline_impl(const ShaderCreateInfo& i
     return {};
   }
 
-  VkPipeline pipeline = create_compute_pipeline(result, info.entry_point.c_str());
+  VkPipelineShaderStageCreateInfo stage{
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+      .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+      .module = result.modules[0],
+      .pName = info.entry_point.c_str()};
+  VkComputePipelineCreateInfo create_info{.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+                                          .stage = stage,
+                                          .layout = default_pipeline_layout_};
+  VkPipeline pipeline{};
+  VK_CHECK(vkCreateComputePipelines(device_, nullptr, 1, &create_info, nullptr, &pipeline));
+
   vkDestroyShaderModule(device_, result.modules[0], nullptr);
+  if (!pipeline) {
+    return VK_NULL_HANDLE;
+  }
+
   LINFO("loaded compute pipeline: {}", info.path.string());
   return pipeline;
 }
 
 void PipelineManager::reload_shaders() {
-  for (auto& [handle, pipeline] : pipelines_) {
-    reload_pipeline(handle, true);
+  ZoneScoped;
+  std::shared_lock lock(mtx_);
+  std::vector<std::future<void>> reload_futures;
+  reload_futures.reserve(pipelines_.size());
+  for (const auto& [handle, pipeline] : pipelines_) {
+    reload_futures.emplace_back(
+        threads::pool.submit_task([&, this]() { reload_pipeline_unsafe(handle, true); }));
+  }
+  for (auto& f : reload_futures) {
+    f.wait();
   }
 }
 
 void PipelineManager::reload_pipeline(PipelineHandle handle, bool force) {
+  std::shared_lock lock(mtx_);
+  reload_pipeline_unsafe(handle, force);
+}
+
+void PipelineManager::on_dirty_files(std::span<std::filesystem::path> dirty_files) {
+  std::shared_lock lock(mtx_);
+  for (auto& file : dirty_files) {
+    if (file.extension() == ".glsl") {
+      auto it = shader_name_to_used_pipelines_.find(file.string());
+      if (it != shader_name_to_used_pipelines_.end()) {
+        for (PipelineHandle handle : it->second) {
+          reload_pipeline(handle, false);
+        }
+      }
+    }
+  }
+}
+
+size_t PipelineManager::get_pipeline_hash(const GraphicsPipelineCreateInfo& info) {
+  size_t hash{};
+  for (const auto& shader_info : info.shaders) {
+    detail::hashing::hash_combine(hash, shader_info.path.string());
+    detail::hashing::hash_combine(hash, shader_info.entry_point);
+    for (const auto& define : shader_info.defines) {
+      detail::hashing::hash_combine(hash, define);
+    }
+  }
+
+  return hash;
+}
+
+void PipelineManager::on_imgui() {
+  if (ImGui::Button("Reload All Shaders")) {
+    reload_shaders();
+  }
+  shader_manager_.on_imgui();
+}
+
+void PipelineManager::reload_pipeline_unsafe(PipelineHandle handle, bool force) {
   auto pipeline_it = pipelines_.find(handle);
   if (pipeline_it == pipelines_.end()) {
     assert(0);
@@ -478,38 +535,4 @@ void PipelineManager::reload_pipeline(PipelineHandle handle, bool force) {
   if (it != graphics_pipeline_infos_.end()) {
   }
 }
-
-void PipelineManager::on_dirty_files(std::span<std::filesystem::path> dirty_files) {
-  for (auto& file : dirty_files) {
-    if (file.extension() == ".glsl") {
-      auto it = shader_name_to_used_pipelines_.find(file.string());
-      if (it != shader_name_to_used_pipelines_.end()) {
-        for (PipelineHandle handle : it->second) {
-          reload_pipeline(handle, false);
-        }
-      }
-    }
-  }
-}
-
-size_t PipelineManager::get_pipeline_hash(const GraphicsPipelineCreateInfo& info) {
-  size_t hash{};
-  for (const auto& shader_info : info.shaders) {
-    detail::hashing::hash_combine(hash, shader_info.path.string());
-    detail::hashing::hash_combine(hash, shader_info.entry_point);
-    for (const auto& define : shader_info.defines) {
-      detail::hashing::hash_combine(hash, define);
-    }
-  }
-
-  return hash;
-}
-
-void PipelineManager::on_imgui() {
-  if (ImGui::Button("Reload All Shaders")) {
-    reload_shaders();
-  }
-  shader_manager_.on_imgui();
-}
-
 }  // namespace gfx::vk2
