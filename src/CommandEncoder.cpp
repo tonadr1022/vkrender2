@@ -56,7 +56,7 @@ void CmdEncoder::set_viewport_and_scissor(u32 width, u32 height) {
 }
 
 void CmdEncoder::set_cull_mode(CullMode mode) {
-  vkCmdSetCullMode(cmd_, vk2::convert_cull_mode(mode));
+  vkCmdSetCullModeEXT(cmd_, vk2::convert_cull_mode(mode));
 }
 
 void CmdEncoder::copy_buffer(const vk2::Buffer& src, const vk2::Buffer& dst, u64 src_offset,

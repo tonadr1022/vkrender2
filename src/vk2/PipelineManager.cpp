@@ -258,7 +258,7 @@ VkPipeline PipelineManager::load_graphics_pipeline_impl(const GraphicsPipelineCr
     return {};
   }
   if (out_info_hash) {
-    u64 hash = 0;
+    size_t hash = 0;
     for (auto& h : create_info_hashes) {
       detail::hashing::hash_combine(hash, h);
     }

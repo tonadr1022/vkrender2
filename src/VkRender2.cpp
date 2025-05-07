@@ -320,6 +320,8 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
       [this](RenderGraphPass& pass) {
         if (static_opaque_draw_mgr_->should_draw()) {
           for (u32 i = 0; i < csm_->get_num_cascade_levels(); i++) {
+            pass.add_proxy(static_opaque_draw_mgr_->get_draw_passes()[i + 1].name_double_sided,
+                           Access::IndirectRead);
             pass.add_proxy(static_opaque_draw_mgr_->get_draw_passes()[i + 1].name,
                            Access::IndirectRead);
           }
@@ -327,6 +329,9 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
 
         if (static_opaque_alpha_mask_draw_mgr_->should_draw()) {
           for (u32 i = 0; i < csm_->get_num_cascade_levels(); i++) {
+            pass.add_proxy(
+                static_opaque_alpha_mask_draw_mgr_->get_draw_passes()[i + 1].name_double_sided,
+                Access::IndirectRead);
             pass.add_proxy(static_opaque_alpha_mask_draw_mgr_->get_draw_passes()[i + 1].name,
                            Access::IndirectRead);
           }
@@ -640,6 +645,7 @@ SceneHandle VkRender2::load_static_model(const std::filesystem::path& path, bool
                                          const mat4& transform) {
   ZoneScoped;
   if (!std::filesystem::exists(path)) {
+    LERROR("load_static_model: path doesn't exist: {}", path.string());
     return {};
   }
 
@@ -1366,7 +1372,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
       cmd.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
       // TODO: double sided
       PipelineManager::get().bind_graphics(cmd.cmd(), draw_pipeline_);
-      execute_static_geo_draws(cmd, false);
+      execute_static_geo_draws(cmd, false, false);
       draw_skybox(cmd);
       vkCmdEndRenderingKHR(cmd.cmd());
     });
@@ -1431,9 +1437,16 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
             linear_sampler_->resource_info.handle,
         };
         cmd.push_constants(sizeof(pc), &pc);
-        execute_static_geo_draws(cmd, false);
+        // TODO: this is jank lolllll
+        cmd.set_cull_mode(CullMode::Back);
+        execute_static_geo_draws(cmd, false, false);
+        cmd.set_cull_mode(CullMode::None);
+        execute_static_geo_draws(cmd, true, false);
         PipelineManager::get().bind_graphics(cmd.cmd(), gbuffer_alpha_mask_pipeline_);
-        execute_static_geo_draws(cmd, true);
+        cmd.set_cull_mode(CullMode::Back);
+        execute_static_geo_draws(cmd, false, true);
+        cmd.set_cull_mode(CullMode::None);
+        execute_static_geo_draws(cmd, true, true);
         vkCmdEndRenderingKHR(cmd.cmd());
       });
     }
@@ -1482,7 +1495,6 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
             ibl_->prefiltered_env_map_tex_->texture->view().sampled_img_resource().handle,
             linear_sampler_clamp_to_edge_->resource_info.handle};
         PipelineManager::get().bind_compute(cmd.cmd(), deferred_shade_pipeline_);
-
         cmd.push_constants(sizeof(pc), &pc);
         cmd.dispatch((gbuffer_a->create_info().extent.width + 16) / 16,
                      (gbuffer_a->create_info().extent.height + 16) / 16, 1);
@@ -1553,7 +1565,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
     size_t required_size = line_draw_vertices_.size() * sizeof(LineVertex);
     if (required_size > line_draw_buf->size()) {
       curr_frame().line_draw_buf = device_->create_buffer_holder(
-          BufferCreateInfo{.size = glm::max(line_draw_buf->size() * 2, required_size),
+          BufferCreateInfo{.size = glm::max<u64>(line_draw_buf->size() * 2, required_size),
                            .usage = BufferUsage_Storage,
                            .flags = BufferCreateFlags_HostVisible});
       line_draw_buf = device_->get_buffer(curr_frame().line_draw_buf);
@@ -1743,28 +1755,25 @@ BufferHandle VkRender2::StaticMeshDrawManager::get_draw_info_buf_handle() const 
   return draw_cmds_buf_.buffer.handle;
 }
 
-void VkRender2::execute_static_geo_draws(CmdEncoder& cmd, bool double_sided) {
+void VkRender2::execute_static_geo_draws(CmdEncoder& cmd, bool double_sided, bool opaque_alpha) {
   vkCmdBindIndexBuffer(cmd.cmd(), static_index_buf_.get_buffer()->buffer(), 0,
                        VK_INDEX_TYPE_UINT32);
-  if (double_sided) {
-    cmd.set_cull_mode(CullMode::None);
+  if (opaque_alpha) {
+    if (static_opaque_alpha_mask_draw_mgr_->should_draw() &&
+        static_opaque_alpha_mask_draw_mgr_->get_num_draw_cmds(double_sided) > 0) {
+      execute_draw(cmd,
+                   *static_opaque_alpha_mask_draw_mgr_->get_draw_passes()[main_mesh_pass_idx_]
+                        .get_frame_out_draw_cmd_buf(double_sided),
+                   static_opaque_alpha_mask_draw_mgr_->get_num_draw_cmds(double_sided));
+    }
   } else {
-    cmd.set_cull_mode(CullMode::Back);
-  }
-  if (static_opaque_draw_mgr_->should_draw() &&
-      static_opaque_draw_mgr_->get_num_draw_cmds(double_sided) > 0) {
-    execute_draw(
-        cmd,
-        *static_opaque_draw_mgr_->get_draw_passes()[main_mesh_pass_idx_].get_frame_out_draw_cmd_buf(
-            double_sided),
-        static_opaque_draw_mgr_->get_num_draw_cmds(double_sided));
-  }
-  if (static_opaque_alpha_mask_draw_mgr_->should_draw() &&
-      static_opaque_alpha_mask_draw_mgr_->get_num_draw_cmds(double_sided) > 0) {
-    execute_draw(cmd,
-                 *static_opaque_alpha_mask_draw_mgr_->get_draw_passes()[main_mesh_pass_idx_]
-                      .get_frame_out_draw_cmd_buf(double_sided),
-                 static_opaque_alpha_mask_draw_mgr_->get_num_draw_cmds(double_sided));
+    if (static_opaque_draw_mgr_->should_draw() &&
+        static_opaque_draw_mgr_->get_num_draw_cmds(double_sided) > 0) {
+      execute_draw(cmd,
+                   *static_opaque_draw_mgr_->get_draw_passes()[main_mesh_pass_idx_]
+                        .get_frame_out_draw_cmd_buf(double_sided),
+                   static_opaque_draw_mgr_->get_num_draw_cmds(double_sided));
+    }
   }
 }
 

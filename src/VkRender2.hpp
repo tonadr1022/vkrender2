@@ -311,7 +311,7 @@ class VkRender2 final {
   u32 main_mesh_pass_idx_{0};
 
   bool should_draw(const StaticMeshDrawManager& mgr) const;
-  void execute_static_geo_draws(CmdEncoder& cmd, bool double_sided);
+  void execute_static_geo_draws(CmdEncoder& cmd, bool double_sided, bool opaque_alpha);
   void execute_draw(CmdEncoder& cmd, const vk2::Buffer& buffer, u32 draw_count) const;
 
   AABB scene_aabb_{};
