@@ -320,6 +320,8 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
       [this](RenderGraphPass& pass) {
         if (static_opaque_draw_mgr_->should_draw()) {
           for (u32 i = 0; i < csm_->get_num_cascade_levels(); i++) {
+            pass.add_proxy(static_opaque_draw_mgr_->get_draw_passes()[i + 1].name_double_sided,
+                           Access::IndirectRead);
             pass.add_proxy(static_opaque_draw_mgr_->get_draw_passes()[i + 1].name,
                            Access::IndirectRead);
           }
@@ -327,6 +329,9 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
 
         if (static_opaque_alpha_mask_draw_mgr_->should_draw()) {
           for (u32 i = 0; i < csm_->get_num_cascade_levels(); i++) {
+            pass.add_proxy(
+                static_opaque_alpha_mask_draw_mgr_->get_draw_passes()[i + 1].name_double_sided,
+                Access::IndirectRead);
             pass.add_proxy(static_opaque_alpha_mask_draw_mgr_->get_draw_passes()[i + 1].name,
                            Access::IndirectRead);
           }
@@ -640,6 +645,7 @@ SceneHandle VkRender2::load_static_model(const std::filesystem::path& path, bool
                                          const mat4& transform) {
   ZoneScoped;
   if (!std::filesystem::exists(path)) {
+    LERROR("load_static_model: path doesn't exist: {}", path.string());
     return {};
   }
 
@@ -1432,6 +1438,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
         };
         cmd.push_constants(sizeof(pc), &pc);
         execute_static_geo_draws(cmd, false);
+        execute_static_geo_draws(cmd, true);
         PipelineManager::get().bind_graphics(cmd.cmd(), gbuffer_alpha_mask_pipeline_);
         execute_static_geo_draws(cmd, true);
         vkCmdEndRenderingKHR(cmd.cmd());
@@ -1482,7 +1489,6 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
             ibl_->prefiltered_env_map_tex_->texture->view().sampled_img_resource().handle,
             linear_sampler_clamp_to_edge_->resource_info.handle};
         PipelineManager::get().bind_compute(cmd.cmd(), deferred_shade_pipeline_);
-
         cmd.push_constants(sizeof(pc), &pc);
         cmd.dispatch((gbuffer_a->create_info().extent.width + 16) / 16,
                      (gbuffer_a->create_info().extent.height + 16) / 16, 1);
@@ -1553,7 +1559,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
     size_t required_size = line_draw_vertices_.size() * sizeof(LineVertex);
     if (required_size > line_draw_buf->size()) {
       curr_frame().line_draw_buf = device_->create_buffer_holder(
-          BufferCreateInfo{.size = glm::max(line_draw_buf->size() * 2, required_size),
+          BufferCreateInfo{.size = glm::max<u64>(line_draw_buf->size() * 2, required_size),
                            .usage = BufferUsage_Storage,
                            .flags = BufferCreateFlags_HostVisible});
       line_draw_buf = device_->get_buffer(curr_frame().line_draw_buf);

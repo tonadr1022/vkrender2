@@ -6,6 +6,7 @@
 #include "CommandEncoder.hpp"
 #include "StateTracker.hpp"
 #include "VkRender2.hpp"
+#include "core/Logger.hpp"
 #include "shaders/ibl/eq_to_cube_comp_common.h.glsl"
 #include "vk2/Device.hpp"
 #include "vk2/Initializers.hpp"
@@ -212,7 +213,7 @@ void IBL::convolute_cube(CmdEncoder& ctx) {
            SamplerCache::get().get_linear_sampler().resource_info.handle,
            get_device().get_buffer(cube_vertex_buf_)->resource_info_->handle};
       ctx.push_constants(sizeof(pc), &pc);
-      vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
+      ctx.set_cull_mode(CullMode::None);
       vkCmdDraw(cmd, 36, 1, 0, 0);
       vkCmdEndRenderingKHR(cmd);
     }
@@ -283,7 +284,7 @@ void IBL::prefilter_env_map(CmdEncoder& ctx) {
              get_device().get_buffer(cube_vertex_buf_)->resource_info_->handle,
              static_cast<float>(env_cubemap_tex_->extent_2d().width)};
         ctx.push_constants(sizeof(pc), &pc);
-        vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
+        ctx.set_cull_mode(CullMode::None);
         vkCmdDraw(cmd, 36, 1, 0, 0);
         vkCmdEndRenderingKHR(cmd);
       }

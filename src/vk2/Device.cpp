@@ -163,12 +163,17 @@ void Device::init_impl(const CreateInfo& info) {
   VkPhysicalDeviceDynamicRenderingFeatures dynamic_rendering_features{};
   dynamic_rendering_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES;
   dynamic_rendering_features.dynamicRendering = VK_TRUE;
+  VkPhysicalDeviceExtendedDynamicStateFeaturesEXT extended_dynamic_state_features{};
+  extended_dynamic_state_features.sType =
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT;
+  extended_dynamic_state_features.extendedDynamicState = VK_TRUE;
   VkPhysicalDeviceSynchronization2Features sync2_features{};
   sync2_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
   sync2_features.synchronization2 = VK_TRUE;
   std::vector<const char*> extensions{
       {VK_KHR_FORMAT_FEATURE_FLAGS_2_EXTENSION_NAME, VK_KHR_COPY_COMMANDS_2_EXTENSION_NAME,
-       VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME}};
+       VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
+       VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME}};
   // features12.drawIndirectCount = true;
 
   auto pr = phys_builder.set_minimum_version(min_api_version_major, min_api_version_minor)
@@ -178,6 +183,7 @@ void Device::init_impl(const CreateInfo& info) {
                 .prefer_gpu_device_type(vkb::PreferredDeviceType::discrete)
                 .add_required_extension_features(dynamic_rendering_features)
                 .add_required_extension_features(sync2_features)
+                .add_required_extension_features(extended_dynamic_state_features)
                 .set_required_features(features)
                 .select();
   if (pr.has_value()) {
