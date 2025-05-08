@@ -30,17 +30,17 @@ bool load_entire_file(const std::string& path, std::vector<uint32_t>& result);
 
 }  // namespace
 
-namespace gfx::vk2 {
+namespace gfx {
 
 namespace {
 
 VkShaderStageFlagBits convert_shader_stage(ShaderType type) {
   switch (type) {
-    case gfx::vk2::ShaderType::Compute:
+    case gfx::ShaderType::Compute:
       return VK_SHADER_STAGE_COMPUTE_BIT;
-    case gfx::vk2::ShaderType::Fragment:
+    case gfx::ShaderType::Fragment:
       return VK_SHADER_STAGE_FRAGMENT_BIT;
-    case gfx::vk2::ShaderType::Vertex:
+    case gfx::ShaderType::Vertex:
       return VK_SHADER_STAGE_VERTEX_BIT;
     default:
       return VkShaderStageFlagBits{};
@@ -50,12 +50,12 @@ VkShaderStageFlagBits convert_shader_stage(ShaderType type) {
 size_t hash_shader_info(const ShaderCreateInfo& info, bool debug_mode) {
   size_t hash{};
   for (const auto& define : info.defines) {
-    detail::hashing::hash_combine(hash, define);
+    vk2::detail::hashing::hash_combine(hash, define);
   }
-  detail::hashing::hash_combine(hash, info.entry_point);
-  detail::hashing::hash_combine(hash, info.path.string());
-  detail::hashing::hash_combine(hash, (u32)info.type);
-  detail::hashing::hash_combine(hash, debug_mode);
+  vk2::detail::hashing::hash_combine(hash, info.entry_point);
+  vk2::detail::hashing::hash_combine(hash, info.path.string());
+  vk2::detail::hashing::hash_combine(hash, (u32)info.type);
+  vk2::detail::hashing::hash_combine(hash, debug_mode);
   return hash;
 }
 
@@ -285,7 +285,7 @@ constexpr EShLanguage vk_shader_stage_to_glslang(VkShaderStageFlagBits stage) {
 
 }  // namespace
 
-}  // namespace gfx::vk2
+}  // namespace gfx
 
 namespace {
 
@@ -392,7 +392,7 @@ std::optional<std::string> load_entire_file(const std::string& path) {
 
 }  // namespace
 
-namespace gfx::vk2 {
+namespace gfx {
 
 bool ShaderManager::compile_glsl_to_spirv(const std::string& path, VkShaderStageFlagBits stage,
                                           std::vector<u32>& out_binary,
@@ -496,4 +496,4 @@ bool ShaderManager::compile_glsl_to_spirv(const std::string& path, VkShaderStage
 
 void ShaderManager::invalidate_cache() { include_graph_nodes_.clear(); }
 
-}  // namespace gfx::vk2
+}  // namespace gfx

@@ -42,6 +42,18 @@
 
 // ktx loading inspired/ripped from:
 // https://github.com/JuanDiegoMontoya/Frogfood/blob/be82e484baab02b7ce3e80d36eb7c9291d97ebcb/src/Fvog/detail/ApiToEnum2.cpp#L4
+namespace {
+
+enum class PBRImageUsage : u8 {
+  BaseColor,
+  Normal,
+  MetallicRoughness,
+  OccRoughnessMetallic,
+  Emissive,
+  Occlusion
+};
+
+}  // namespace
 namespace gfx {
 
 namespace {
@@ -365,28 +377,19 @@ struct CpuImageData {
       ktx_data;
 };
 
-enum class ImageUsage : u8 {
-  BaseColor,
-  Normal,
-  MetallicRoughness,
-  OccRoughnessMetallic,
-  Emissive,
-  Occlusion
-};
-
 void load_cpu_img_data(const fastgltf::Asset& asset, const fastgltf::Image& image,
                        const std::filesystem::path& directory, CpuImageData& result,
-                       ImageUsage usage) {
+                       PBRImageUsage usage) {
   ZoneScoped;
   auto get_vk_format = [&](bool is_ktx) {
     switch (usage) {
-      case ImageUsage::BaseColor:
-      case ImageUsage::Emissive:
+      case PBRImageUsage::BaseColor:
+      case PBRImageUsage::Emissive:
         return is_ktx ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_R8G8B8A8_SRGB;
-      case ImageUsage::MetallicRoughness:
-      case ImageUsage::Occlusion:
-      case ImageUsage::Normal:
-      case ImageUsage::OccRoughnessMetallic:
+      case PBRImageUsage::MetallicRoughness:
+      case PBRImageUsage::Occlusion:
+      case PBRImageUsage::Normal:
+      case PBRImageUsage::OccRoughnessMetallic:
         return is_ktx ? VK_FORMAT_BC7_UNORM_BLOCK : VK_FORMAT_R8G8B8A8_UNORM;
     }
   };
@@ -418,12 +421,12 @@ void load_cpu_img_data(const fastgltf::Asset& asset, const fastgltf::Image& imag
       ZoneScopedN("Transcode KTX 2 Texture");
       ktx_transcode_fmt_e ktx_transcode_format{};
       switch (usage) {
-        case ImageUsage::BaseColor:
-        case ImageUsage::Emissive:
-        case ImageUsage::MetallicRoughness:
-        case ImageUsage::Occlusion:
-        case ImageUsage::Normal:
-        case ImageUsage::OccRoughnessMetallic:
+        case PBRImageUsage::BaseColor:
+        case PBRImageUsage::Emissive:
+        case PBRImageUsage::MetallicRoughness:
+        case PBRImageUsage::Occlusion:
+        case PBRImageUsage::Normal:
+        case PBRImageUsage::OccRoughnessMetallic:
           ktx_transcode_format = KTX_TTF_BC7_RGBA;
           break;
       }
@@ -538,10 +541,10 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
   fastgltf::Asset gltf = std::move(load_ret.get());
   result = LoadedSceneBaseData{};
 
-  std::vector<ImageUsage> img_usages(gltf.images.size(), ImageUsage::BaseColor);
+  std::vector<PBRImageUsage> img_usages(gltf.images.size(), PBRImageUsage::BaseColor);
   {
     ZoneScopedN("determine usages");
-    auto set_usage = [&img_usages](const fastgltf::Texture& tex, ImageUsage usage) {
+    auto set_usage = [&img_usages](const fastgltf::Texture& tex, PBRImageUsage usage) {
       std::size_t idx = tex.basisuImageIndex.value_or(tex.imageIndex.value_or(UINT32_MAX));
       if (idx != UINT32_MAX) {
         img_usages[idx] = usage;
@@ -550,22 +553,23 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
     for (const auto& gltf_mat : gltf.materials) {
       if (gltf_mat.pbrData.baseColorTexture.has_value()) {
         set_usage(gltf.textures[gltf_mat.pbrData.baseColorTexture.value().textureIndex],
-                  ImageUsage::BaseColor);
+                  PBRImageUsage::BaseColor);
       }
       if (gltf_mat.pbrData.metallicRoughnessTexture.has_value()) {
         set_usage(gltf.textures[gltf_mat.pbrData.metallicRoughnessTexture.value().textureIndex],
-                  ImageUsage::MetallicRoughness);
+                  PBRImageUsage::MetallicRoughness);
       }
       if (gltf_mat.emissiveTexture.has_value()) {
         set_usage(gltf.textures[gltf_mat.emissiveTexture.value().textureIndex],
-                  ImageUsage::Emissive);
+                  PBRImageUsage::Emissive);
       }
       if (gltf_mat.normalTexture.has_value()) {
-        set_usage(gltf.textures[gltf_mat.normalTexture.value().textureIndex], ImageUsage::Normal);
+        set_usage(gltf.textures[gltf_mat.normalTexture.value().textureIndex],
+                  PBRImageUsage::Normal);
       }
       if (gltf_mat.occlusionTexture.has_value()) {
         set_usage(gltf.textures[gltf_mat.occlusionTexture.value().textureIndex],
-                  ImageUsage::Occlusion);
+                  PBRImageUsage::Occlusion);
       }
       if (gltf_mat.packedOcclusionRoughnessMetallicTextures) {
         if (gltf_mat.packedOcclusionRoughnessMetallicTextures->occlusionRoughnessMetallicTexture
@@ -573,7 +577,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
           set_usage(gltf.textures[gltf_mat.packedOcclusionRoughnessMetallicTextures
                                       ->occlusionRoughnessMetallicTexture.value()
                                       .textureIndex],
-                    ImageUsage::OccRoughnessMetallic);
+                    PBRImageUsage::OccRoughnessMetallic);
         }
       }
     }
@@ -617,7 +621,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
         ktxTexture_GetImageOffset(ktxTexture(ktx), level, 0, 0, &level_offset);
         u32 w = std::max(img.w >> level, 1u);
         u32 h = std::max(img.h >> level, 1u);
-        size_t size = vk2::img_to_buffer_size(img.format, {w, h, 1});
+        size_t size = img_to_buffer_size(img.format, {w, h, 1});
         tot += size;
         img_upload_infos.emplace_back(
             ImgUploadInfo{.extent = {w, h, 1},
@@ -628,18 +632,18 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
                           .img_idx = static_cast<u32>(result->textures.size())});
         staging_offset += size;
       }
-      result->textures.emplace_back(vk2::get_device().create_image_holder(
-          vk2::ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
-                               .format = img.format,
-                               .extent = VkExtent3D{img.w, img.h, 1},
-                               .mip_levels = ktx->numLevels,
-                               .usage = vk2::ImageUsage::ReadOnly}));
+      result->textures.emplace_back(
+          get_device().create_image_holder(ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
+                                                           .format = img.format,
+                                                           .extent = VkExtent3D{img.w, img.h, 1},
+                                                           .mip_levels = ktx->numLevels,
+                                                           .usage = ImageUsage::ReadOnly}));
 
       assert(tot == ktx->dataSize);
       (void)tot;
     } else {
       // TODO: mip gen?
-      size_t size = vk2::img_to_buffer_size(img.format, {img.w, img.h, 1});
+      size_t size = img_to_buffer_size(img.format, {img.w, img.h, 1});
       assert(img.non_ktx_data);
       assert(!img.ktx_data);
       img_upload_infos.emplace_back(
@@ -649,12 +653,12 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
                         .staging_offset = staging_offset,
                         .level = 0,
                         .img_idx = static_cast<u32>(result->textures.size())});
-      result->textures.emplace_back(vk2::get_device().create_image_holder(
-          vk2::ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
-                               .format = img.format,
-                               .extent = VkExtent3D{img.w, img.h, 1},
-                               .mip_levels = 1,
-                               .usage = vk2::ImageUsage::ReadOnly}));
+      result->textures.emplace_back(
+          get_device().create_image_holder(ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
+                                                           .format = img.format,
+                                                           .extent = VkExtent3D{img.w, img.h, 1},
+                                                           .mip_levels = 1,
+                                                           .usage = ImageUsage::ReadOnly}));
       staging_offset += size;
     }
   }
@@ -669,7 +673,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
     u64 img_i{};
     u64 curr_staging_offset = 0;
     u64 start_copy_idx{};
-    vk2::Buffer* img_staging_buf = vk2::StagingBufferPool::get().acquire(batch_upload_size);
+    Buffer* img_staging_buf = StagingBufferPool::get().acquire(batch_upload_size);
     // u64 end_copy_idx{};
     StateTracker state;
     auto flush_uploads = [&]() {
@@ -687,15 +691,14 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
         state.reset(cmd);
         for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
           const auto& img_upload = img_upload_infos[i];
-          state.transition(
-              vk2::get_device().get_image(result->textures[img_upload.img_idx])->image(),
-              VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+          state.transition(get_device().get_image(result->textures[img_upload.img_idx])->image(),
+                           VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         }
         state.flush_barriers();
         for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
           const auto& img_upload = img_upload_infos[i];
-          const auto& texture = *vk2::get_device().get_image(result->textures[img_upload.img_idx]);
+          const auto& texture = *get_device().get_image(result->textures[img_upload.img_idx]);
           VkBufferImageCopy2 img_copy{
               .sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
               .bufferOffset = img_upload.staging_offset - curr_staging_offset,
@@ -722,14 +725,14 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
         }
         for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
           state.transition(
-              vk2::get_device().get_image(result->textures[img_upload_infos[i].img_idx])->image(),
+              get_device().get_image(result->textures[img_upload_infos[i].img_idx])->image(),
               VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
               VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
               VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
         }
         state.flush_barriers();
         // transfers.emplace(img_staging_buf, fence);
-        img_staging_buf = vk2::StagingBufferPool::get().acquire(batch_upload_size);
+        img_staging_buf = StagingBufferPool::get().acquire(batch_upload_size);
       });
 
       curr_staging_offset += max_batch_upload_size;
@@ -791,7 +794,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
         const auto& tex = gltf.textures[info.textureIndex];
         auto gltf_idx = tex.basisuImageIndex.value_or(tex.imageIndex.value_or(UINT32_MAX));
         if (gltf_idx != UINT32_MAX) {
-          return vk2::get_device()
+          return get_device()
               .get_image(result->textures[gltf_idx])
               ->view()
               .sampled_img_resource()

@@ -43,4 +43,4 @@ struct SceneLoadData {
   std::vector<u32> root_node_indices;
 };
 
-VK2_DEFINE_HANDLE(Scene);
+VK2_DEFINE_HANDLE(Model);

@@ -4,7 +4,6 @@
 layout(push_constant) uniform SkyboxPC {
     uint scene_buffer;
     uint tex_idx;
-    uint sampler_idx;
 };
 
 #endif

@@ -18,7 +18,6 @@
 #include "VkBootstrap.h"
 #include "VkCommon.hpp"
 #include "core/Logger.hpp"
-#include "vk2/SamplerCache.hpp"
 #include "vk2/VkTypes.hpp"
 
 namespace {
@@ -47,23 +46,30 @@ debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
 
 }  // namespace
 
+// TODO: let pool have ctx that can destroy
 template <>
 void destroy(gfx::ImageHandle data) {
-  gfx::vk2::get_device().destroy(data);
+  gfx::get_device().destroy(data);
 }
 
 template <>
 void destroy(gfx::BufferHandle data) {
-  gfx::vk2::get_device().destroy(data);
+  gfx::get_device().destroy(data);
 }
 
 template <>
 void destroy(gfx::ImageViewHandle data) {
-  gfx::vk2::get_device().destroy(data);
+  gfx::get_device().destroy(data);
 }
+
+template <>
+void destroy(gfx::SamplerHandle data) {
+  gfx::get_device().destroy(data);
+}
+
 namespace gfx {}  // namespace gfx
 
-namespace gfx::vk2 {
+namespace gfx {
 
 namespace {
 Device* g_device{};
@@ -180,7 +186,7 @@ void Device::init_impl(const CreateInfo& info) {
 
   // features12.drawIndirectCount = true;
 
-  auto pr = phys_builder.set_minimum_version(min_api_version_major, min_api_version_minor)
+  auto pr = phys_builder.set_minimum_version(vk2::min_api_version_major, vk2::min_api_version_minor)
                 .set_required_features_12(supported_features12_)
                 .set_required_features_11(features11)
                 .add_required_extensions(extensions)
@@ -310,10 +316,10 @@ void Device::init_impl(const CreateInfo& info) {
     int w, h;
     glfwGetWindowSize(window_, &w, &h);
     swapchain_.surface = surface_;
-    create_swapchain(swapchain_, SwapchainDesc{.width = static_cast<u32>(w),
-                                               .height = static_cast<u32>(h),
-                                               .buffer_count = frames_in_flight,
-                                               .vsync = info.vsync});
+    create_swapchain(swapchain_, vk2::SwapchainDesc{.width = static_cast<u32>(w),
+                                                    .height = static_cast<u32>(h),
+                                                    .buffer_count = frames_in_flight,
+                                                    .vsync = info.vsync});
   }
   {
     for (u32 i = 0; i < frames_in_flight; i++) {
@@ -323,6 +329,8 @@ void Device::init_impl(const CreateInfo& info) {
     }
   }
   assert(device_ && device());
+  ResourceAllocator::init(device_, allocator_);
+  null_sampler_ = get_or_create_sampler({.address_mode = AddressMode::MirroredRepeat});
 }
 
 Device& get_device() { return Device::get(); }
@@ -400,6 +408,14 @@ ImageViewHandle Device::create_image_view(const Image& image, const ImageViewCre
 }
 
 void Device::destroy(ImageHandle handle) { img_pool_.destroy(handle); }
+
+void Device::destroy(SamplerHandle handle) {
+  if (auto* samp = sampler_pool_.get(handle); samp) {
+    vkDestroySampler(device_, samp->sampler_, nullptr);
+  }
+  sampler_pool_.destroy(handle);
+}
+
 void Device::destroy(ImageViewHandle handle) { img_view_pool_.destroy(handle); }
 void Device::destroy(BufferHandle handle) { buffer_pool_.destroy(handle); }
 
@@ -451,7 +467,7 @@ CopyAllocator::CopyCmd CopyAllocator::allocate(u64 size) {
   }
   // make new
   if (!cmd.is_valid()) {
-    // cmd.transfer_cmd_pool = get_device().create_command_pool();
+    cmd.transfer_cmd_pool = device_->create_command_pool(QueueType::Graphics, 0);
   }
   return cmd;
 }
@@ -516,7 +532,7 @@ void Device::init_imgui() {
     init_info.Instance = instance_;
     init_info.PhysicalDevice = vkb_phys_device_.physical_device;
     init_info.Device = device_;
-    init_info.Queue = vk2::get_device().get_queue(vk2::QueueType::Graphics).queue;
+    init_info.Queue = get_queue(QueueType::Graphics).queue;
     init_info.DescriptorPool = imgui_descriptor_pool_;
     // TODO: fix
     init_info.MinImageCount = 3;
@@ -537,7 +553,7 @@ void Device::init_imgui() {
 
 AttachmentInfo Device::get_swapchain_info() const {
   return AttachmentInfo{.dims = {swapchain_.dims.x, swapchain_.dims.y, 1},
-                        .format = vkformat_to_format(swapchain_.format)};
+                        .format = vk2::vkformat_to_format(swapchain_.format)};
 }
 
 VkImage Device::get_swapchain_img(u32 idx) const { return swapchain_.imgs[idx]; }
@@ -631,10 +647,12 @@ void Device::free_fence(VkFence fence) { free_fences_.push_back(fence); }
 
 Device::~Device() {
   ZoneScoped;
-  vk2::PipelineManager::shutdown();
-  vk2::SamplerCache::destroy();
-  vk2::ResourceAllocator::get().set_frame_num(UINT32_MAX, 0);
-  vk2::ResourceAllocator::shutdown();
+  PipelineManager::shutdown();
+  ResourceAllocator::get().set_frame_num(UINT32_MAX, 0);
+  for (auto& it : sampler_cache_) {
+    destroy(it.second.first);
+  }
+  ResourceAllocator::shutdown();
 
   for (auto& d : per_frame_data_) {
     vkDestroySemaphore(device_, d.render_semaphore, nullptr);
@@ -686,4 +704,92 @@ void Device::set_name(VkPipeline pipeline, const char* name) {
   (void)name;
 #endif
 }
-}  // namespace gfx::vk2
+
+namespace {
+VkFilter get_filter(FilterMode mode) {
+  switch (mode) {
+    case gfx::FilterMode::Linear:
+      return VK_FILTER_LINEAR;
+    case gfx::FilterMode::Nearest:
+      return VK_FILTER_NEAREST;
+    default:
+      assert(0);
+      return VK_FILTER_MAX_ENUM;
+  }
+}
+VkSamplerMipmapMode get_mipmap_mode(FilterMode mode) {
+  switch (mode) {
+    case gfx::FilterMode::Linear:
+      return VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    case gfx::FilterMode::Nearest:
+      return VK_SAMPLER_MIPMAP_MODE_NEAREST;
+  }
+}
+
+VkSamplerAddressMode get_address_mode(AddressMode mode) {
+  switch (mode) {
+    case AddressMode::Repeat:
+      return VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    case AddressMode::MirroredRepeat:
+      return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
+    case AddressMode::ClampToEdge:
+      return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    case AddressMode::ClampToBorder:
+      return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    case AddressMode::MirrorClampToEdge:
+      return VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE;
+  }
+}
+
+}  // namespace
+
+SamplerHandle Device::get_or_create_sampler(const SamplerCreateInfo& info) {
+  ZoneScoped;
+  auto h =
+      std::make_tuple(info.address_mode, info.min_filter, info.mag_filter, info.anisotropy_enable,
+                      info.max_anisotropy, info.compare_enable, info.compare_op);
+  auto hash = vk2::detail::hashing::hash<decltype(h)>{}(h);
+  auto it = sampler_cache_.find(hash);
+  if (it != sampler_cache_.end()) {
+    // ref cnt
+    it->second.second++;
+    return it->second.first;
+  }
+  VkSamplerCreateInfo cinfo{.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+                            .magFilter = get_filter(info.mag_filter),
+                            .minFilter = get_filter(info.min_filter),
+                            .mipmapMode = get_mipmap_mode(info.mipmap_mode),
+                            .addressModeU = get_address_mode(info.address_mode),
+                            .addressModeV = get_address_mode(info.address_mode),
+                            .addressModeW = get_address_mode(info.address_mode),
+                            .anisotropyEnable = info.anisotropy_enable,
+                            .maxAnisotropy = info.max_anisotropy,
+                            .compareEnable = info.compare_enable,
+                            .compareOp = static_cast<VkCompareOp>(info.compare_op),
+                            .minLod = info.min_lod,
+                            .maxLod = info.max_lod,
+                            .borderColor = static_cast<VkBorderColor>(info.border_color)};
+  auto handle = sampler_pool_.alloc();
+  Sampler* sampler = sampler_pool_.get(handle);
+  VK_CHECK(vkCreateSampler(device_, &cinfo, nullptr, &sampler->sampler_));
+  assert(sampler->sampler_);
+  sampler->bindless_info_ = ResourceAllocator::get().allocate_sampler_descriptor(sampler->sampler_);
+  sampler_cache_.emplace(hash, std::make_pair(handle, 1));
+  return handle;
+}
+
+u32 Device::get_bindless_idx(SamplerHandle sampler) {
+  if (auto* samp = sampler_pool_.get(sampler); samp != nullptr) {
+    return samp->bindless_info_.handle;
+  }
+  return 0;
+}
+
+VkSampler Device::get_sampler_vk(SamplerHandle sampler) {
+  if (auto* samp = sampler_pool_.get(sampler); samp != nullptr) {
+    return samp->sampler_;
+  }
+  return nullptr;
+}
+
+}  // namespace gfx

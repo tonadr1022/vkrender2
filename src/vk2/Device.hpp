@@ -26,9 +26,27 @@ template <>
 void destroy(gfx::ImageViewHandle data);
 
 struct GLFWwindow;
-namespace gfx::vk2 {
+namespace gfx {
+class Device;
 
 enum class DeviceFeature : u8 { DrawIndirectCount };
+
+class Sampler {
+ public:
+  Sampler() = default;
+  Sampler(const Sampler&) = default;
+  Sampler(Sampler&&) = default;
+  Sampler& operator=(const Sampler&) = default;
+  Sampler& operator=(Sampler&&) = default;
+  Sampler(VkSampler sampler, BindlessResourceInfo bindless_info)
+      : sampler_(sampler), bindless_info_(bindless_info) {}
+
+ private:
+  VkSampler sampler_{};
+  BindlessResourceInfo bindless_info_{};
+  friend class Pool;
+  friend class Device;
+};
 
 struct CopyAllocator {
   struct CopyCmd {
@@ -43,6 +61,7 @@ struct CopyAllocator {
   void destroy();
 
  private:
+  Device* device_{};
   std::mutex free_list_mtx_;
   std::vector<CopyCmd> free_copy_cmds_;
 };
@@ -119,6 +138,15 @@ class Device {
   Pool<ImageHandle, Image> img_pool_;
   Pool<ImageViewHandle, ImageView> img_view_pool_;
   Pool<BufferHandle, Buffer> buffer_pool_;
+  Pool<SamplerHandle, Sampler> sampler_pool_;
+  SamplerHandle null_sampler_;
+  SamplerHandle get_or_create_sampler(const SamplerCreateInfo& info);
+  u32 get_bindless_idx(SamplerHandle sampler);
+  // TODO: remove
+  VkSampler get_sampler_vk(SamplerHandle sampler);
+
+  // contains hash -> [handle, ref count]
+  std::unordered_map<uint64_t, std::pair<SamplerHandle, u32>> sampler_cache_;
 
   // TODO: better args
   BufferHandle create_buffer(const BufferCreateInfo& info);
@@ -129,6 +157,7 @@ class Device {
   Holder<ImageViewHandle> create_image_view_holder(const Image& image,
                                                    const ImageViewCreateInfo& info);
   void destroy(ImageHandle handle);
+  void destroy(SamplerHandle handle);
   void destroy(ImageViewHandle handle);
   void destroy(BufferHandle handle);
   void set_name(VkPipeline pipeline, const char* name);
@@ -182,7 +211,7 @@ class Device {
   std::vector<VkFence> free_fences_;
   VkSurfaceKHR surface_;
   VkDevice device_;
-  Swapchain swapchain_;
+  vk2::Swapchain swapchain_;
   GLFWwindow* window_;
   vkb::Instance instance_;
   vkb::PhysicalDevice vkb_phys_device_;
@@ -196,4 +225,4 @@ class Device {
 
 Device& get_device();  // forward declaration
 
-}  // namespace gfx::vk2
+}  // namespace gfx

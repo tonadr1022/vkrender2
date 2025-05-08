@@ -177,7 +177,7 @@ RenderResourceHandle RenderGraphPass::add(const std::string& name, Access access
 void RenderGraphPass::add(const std::string& name, BufferHandle buffer, Access access) {
   uint32_t handle = graph_.get_or_add_buffer_resource(name);
   RenderResource& res = *graph_.get_resource(handle);
-  auto* buf = vk2::get_device().get_buffer(buffer);
+  auto* buf = get_device().get_buffer(buffer);
   assert(buf);
   if (!buf) {
     return;
@@ -210,8 +210,8 @@ VoidResult RenderGraph::validate() {
 
 VoidResult RenderGraph::bake() {
   ZoneScoped;
-  swapchain_img_ = vk2::get_device().acquire_next_image();
-  desc_ = vk2::get_device().get_swapchain_info();
+  swapchain_img_ = get_device().acquire_next_image();
+  desc_ = get_device().get_swapchain_info();
   // validate
   // go through each input and make sure it's an output of a previous pass if it needs to read from
   // it for (auto& pass : passes_) {
@@ -297,7 +297,7 @@ VoidResult RenderGraph::bake() {
 
   if (log_) {
     for (auto& res : resources_) {
-      if (res.get_type() == ResourceType::Texture) {
+      if (res.get_type() == RenderResource::Type::Texture) {
         LINFO("{} {}", res.name, res.physical_idx);
         if (res.physical_idx < physical_resource_dims_.size()) {
           auto& dims = physical_resource_dims_[res.physical_idx];
@@ -513,14 +513,15 @@ void RenderGraph::execute(CmdEncoder& cmd) {
           for (u32 k = 0; k < physical_image_attachments_.size(); k++) {
             auto& img = physical_image_attachments_[k];
             if (!img.is_valid()) continue;
-            auto* i = vk2::get_device().get_image(img);
+            auto* i = get_device().get_image(img);
             if (i && i->image() == b.image) {
               idx = k;
               break;
             }
           }
           for (auto& resource : resources_) {
-            if (resource.get_type() == ResourceType::Texture && resource.physical_idx == idx) {
+            if (resource.get_type() == RenderResource::Type::Texture &&
+                resource.physical_idx == idx) {
               std::print("resource barrier: {}\t", resource.name);
             }
           }
@@ -603,7 +604,7 @@ void RenderGraph::execute(CmdEncoder& cmd) {
 
         VkExtent3D dims{glm::min(tex->create_info().extent.width, desc_.dims.x),
                         glm::min(tex->create_info().extent.height, desc_.dims.y), 1};
-        vk2::blit_img(cmd.cmd(), tex->image(), swapchain_img_, dims, VK_IMAGE_ASPECT_COLOR_BIT);
+        blit_img(cmd.cmd(), tex->image(), swapchain_img_, dims, VK_IMAGE_ASPECT_COLOR_BIT);
 
         // write after read barrier
         state.layout = img_barriers[0].newLayout;
@@ -699,7 +700,7 @@ uint32_t RenderGraph::get_or_add_buffer_resource(const std::string& name) {
   auto it = resource_to_idx_map_.find(name);
   if (it != resource_to_idx_map_.end()) {
     uint32_t idx = it->second;
-    if (resources_[idx].get_type() != ResourceType::Buffer) {
+    if (resources_[idx].get_type() != RenderResource::Type::Buffer) {
       LERROR("resource already exists and is not a buffer: {}", name);
       exit(1);
     }
@@ -708,7 +709,7 @@ uint32_t RenderGraph::get_or_add_buffer_resource(const std::string& name) {
 
   uint32_t idx = resources_.size();
   resource_to_idx_map_.emplace(name, idx);
-  resources_.emplace_back(ResourceType::Buffer, idx);
+  resources_.emplace_back(RenderResource::Type::Buffer, idx);
   resources_[idx].name = name;
   return idx;
 }
@@ -721,7 +722,7 @@ uint32_t RenderGraph::get_or_add_texture_resource(const std::string& name) {
 
   uint32_t idx = resources_.size();
   resource_to_idx_map_.emplace(name, idx);
-  resources_.emplace_back(ResourceType::Texture, idx);
+  resources_.emplace_back(RenderResource::Type::Texture, idx);
   resources_[idx].name = name;
   return idx;
 }
@@ -736,7 +737,7 @@ RenderResource* RenderGraph::get_resource(uint32_t idx) {
 
 ResourceDimensions RenderGraph::get_resource_dims(const RenderResource& resource) const {
   ResourceDimensions dims{};
-  if (resource.get_type() == ResourceType::Buffer) {
+  if (resource.get_type() == RenderResource::Type::Buffer) {
     dims.buffer_info = resource.buffer_info;
   } else {
     assert(desc_.dims.x > 0 && desc_.dims.y > 0);
@@ -863,7 +864,7 @@ void RenderGraph::setup_attachments() {
   for (size_t i = 0; i < physical_resource_dims_.size(); i++) {
     auto& dims = physical_resource_dims_[i];
     if (dims.is_image()) {
-      vk2::ImageCreateInfo info{};
+      ImageCreateInfo info{};
       info.extent = VkExtent3D{dims.width, dims.height, dims.depth};
       info.array_layers = dims.layers;
       info.mip_levels = dims.levels;
@@ -884,7 +885,7 @@ void RenderGraph::setup_attachments() {
         bool need_new_img{true};
         if (it != img_cache_.end()) {
           bool valid_extent{false};
-          auto* img = vk2::get_device().get_image(it->second);
+          auto* img = get_device().get_image(it->second);
           if (img) {
             const auto& cinfo = img->create_info();
             if (dims.size_class == SizeClass::SwapchainRelative) {
@@ -913,7 +914,7 @@ void RenderGraph::setup_attachments() {
         if (need_new_img) {
           image_pipeline_states_.erase(physical_image_attachments_[i]);
           LINFO("making new image: {}", i);
-          img_cache_used_.emplace_back(dims, vk2::get_device().create_image_holder(info));
+          img_cache_used_.emplace_back(dims, get_device().create_image_holder(info));
           // if (!inserted) {
           //   it->second = vk2::get_device().create_image_holder(info);
           // }
@@ -1050,8 +1051,7 @@ void RenderGraph::physical_pass_setup_barriers(u32 pass_i) {
 
     if (phys_dims.is_image()) {
       // queue families ignored
-      const auto* image =
-          vk2::get_device().get_image(physical_image_attachments_[barrier.resource_idx]);
+      const auto* image = get_device().get_image(physical_image_attachments_[barrier.resource_idx]);
       assert(image);
       if (!image) {
         LERROR("no image");
@@ -1092,7 +1092,7 @@ void RenderGraph::physical_pass_setup_barriers(u32 pass_i) {
       auto* pstate = get_resource_pipeline_state(barrier.resource_idx);
       assert(pstate);
       auto& resource_state = *pstate;
-      const auto* buffer = vk2::get_device().get_buffer(physical_buffers_[barrier.resource_idx]);
+      const auto* buffer = get_device().get_buffer(physical_buffers_[barrier.resource_idx]);
       if (!buffer) {
         LERROR("no buffer");
         exit(1);
@@ -1121,8 +1121,7 @@ void RenderGraph::physical_pass_setup_barriers(u32 pass_i) {
 
     // set the image layout transition for the pass
     if (res_dims.is_image()) {
-      const auto* image =
-          vk2::get_device().get_image(physical_image_attachments_[barrier.resource_idx]);
+      const auto* image = get_device().get_image(physical_image_attachments_[barrier.resource_idx]);
       assert(image);
       if (!image) continue;
       assert(resource_state.layout == barrier.layout);
@@ -1143,10 +1142,10 @@ ImageHandle RenderGraph::get_texture_handle(RenderResource* resource) {
 ImageHandle RenderGraph::get_texture_handle(RenderResourceHandle resource) {
   return get_texture_handle(get_resource(resource));
 }
-vk2::Image* RenderGraph::get_texture(uint32_t idx) { return get_texture(get_resource(idx)); }
-vk2::Image* RenderGraph::get_texture(RenderResource* resource) {
+Image* RenderGraph::get_texture(uint32_t idx) { return get_texture(get_resource(idx)); }
+Image* RenderGraph::get_texture(RenderResource* resource) {
   if (!resource) return nullptr;
-  return vk2::get_device().get_image(physical_image_attachments_[resource->physical_idx]);
+  return get_device().get_image(physical_image_attachments_[resource->physical_idx]);
 }
 
 void RenderGraph::print_barrier(const VkImageMemoryBarrier2& barrier) const {

@@ -1,5 +1,6 @@
 #pragma once
 
+// TODO: remove this
 #include <vulkan/vulkan_core.h>
 
 #include <cstdint>
@@ -495,19 +496,6 @@ enum ImageUsageFlagBits : ImageUsageFlags {
   ImageUsageDepthStencilAttachmentBit = 0x00000020,
 };
 
-using BufferUsageFlags = uint32_t;
-enum BufferUsageFlagBits : BufferUsageFlags {
-  BufferUsageTransferSrcBit = 0x1,
-  BufferUsageTransferDstBit = 0x2,
-  BufferUsageUniformBufferBit = 0x00000010,
-  BufferUsageStorageBufferBit = 0x00000020,
-  BufferUsageIndexBufferBit = 0x00000040,
-  BufferUsageVertexBufferBit = 0x00000080,
-  BufferUsageIndirectBufferBit = 0x00000100,
-  BufferUsageDeviceAddressBit = 0x00020000,
-  // TODO: rest
-};
-
 enum Access : uint16_t {
   None = 1ULL << 0,
   ColorWrite = 1ULL << 1,
@@ -539,17 +527,48 @@ struct AttachmentInfo {
   u32 layers{1};
   u32 levels{1};
 };
+enum class PipelineBindPoint : u8 { Graphics, Compute };
 
-namespace vk2 {
+enum class FilterMode : u8 { Nearest, Linear };
+
+enum class BorderColor : u8 {
+  FloatTransparentBlack,
+  IntTransparentBlack,
+  FloatOpaqueBlack,
+  IntOpaqueBlack,
+  FLoatOpaqueWhite,
+  IntOpaqueWhite
+};
+enum class AddressMode : u8 {
+  Repeat,
+  MirroredRepeat,
+  ClampToEdge,
+  ClampToBorder,
+  MirrorClampToEdge
+};
+
+struct SamplerCreateInfo {
+  FilterMode min_filter{FilterMode::Nearest};
+  FilterMode mag_filter{FilterMode::Nearest};
+  FilterMode mipmap_mode{FilterMode::Nearest};
+  float min_lod{-1000.f};
+  float max_lod{1000.f};
+  AddressMode address_mode{AddressMode::Repeat};
+  BorderColor border_color{BorderColor::FloatTransparentBlack};
+  bool anisotropy_enable{};
+  float max_anisotropy{};
+  bool compare_enable{};
+  CompareOp compare_op{};
+};
 class ImageView;
 class Image;
 class Buffer;
-}  // namespace vk2
+class Sampler;
 
-using ImageViewHandle = GenerationalHandle<class ::gfx::vk2::ImageView>;
-using ImageHandle = GenerationalHandle<class ::gfx::vk2::Image>;
-using BufferHandle = GenerationalHandle<class ::gfx::vk2::Buffer>;
-// using PipelineHandle = u64;
+using ImageViewHandle = GenerationalHandle<class ::gfx::ImageView>;
+using ImageHandle = GenerationalHandle<class ::gfx::Image>;
+using BufferHandle = GenerationalHandle<class ::gfx::Buffer>;
+using SamplerHandle = GenerationalHandle<class ::gfx::Sampler>;
 // TODO: move
 VK2_DEFINE_HANDLE_WITH_NAME(Pipeline, PipelineAndMetadata);
 }  // namespace gfx

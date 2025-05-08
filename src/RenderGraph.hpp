@@ -54,28 +54,22 @@ struct ResourceDimensionsHasher {
   std::size_t operator()(const ResourceDimensions& dims) const;
 };
 
-struct BufferUsage {
-  std::string name;
-  size_t size{};
-  BufferUsageFlags usage{};
-};
-
 struct TextureUsage {
   std::string name;
 };
 
 struct PassCreateInfo {};
 
-enum class ResourceType : uint8_t { Buffer, Texture };
 struct RenderGraph;
 
 struct RenderResource {
+  enum class Type : uint8_t { Buffer, Texture };
   static constexpr uint32_t unused = UINT32_MAX;
-  RenderResource(ResourceType type, uint32_t idx) : type_(type), idx_(idx) {}
-  RenderResource(std::string name, uint32_t phyisical_idx, ResourceType type, uint32_t idx)
+  RenderResource(Type type, uint32_t idx) : type_(type), idx_(idx) {}
+  RenderResource(std::string name, uint32_t phyisical_idx, Type type, uint32_t idx)
       : name(std::move(name)), physical_idx(phyisical_idx), type_(type), idx_(idx) {}
 
-  [[nodiscard]] ResourceType get_type() const { return type_; }
+  [[nodiscard]] Type get_type() const { return type_; }
   [[nodiscard]] uint32_t get_idx() const { return idx_; }
 
   void read_in_pass(uint32_t pass) { read_passes_.emplace_back(pass); }
@@ -93,7 +87,7 @@ struct RenderResource {
   ImageHandle img_handle;
 
  private:
-  ResourceType type_;
+  Type type_;
   uint32_t idx_{unused};
   // TODO: flat set
   util::fixed_vector<uint16_t, 20> written_passes_;
@@ -188,8 +182,8 @@ struct RenderGraph {
   uint32_t get_or_add_buffer_resource(const std::string& name);
   uint32_t get_or_add_texture_resource(const std::string& name);
   RenderResource* get_resource(RenderResourceHandle idx);
-  vk2::Image* get_texture(RenderResourceHandle idx);
-  vk2::Image* get_texture(RenderResource* resource);
+  Image* get_texture(RenderResourceHandle idx);
+  Image* get_texture(RenderResource* resource);
   ImageHandle get_texture_handle(RenderResource* resource);
   ImageHandle get_texture_handle(RenderResourceHandle resource);
   void set_resource(const std::string& name, BufferHandle handle);

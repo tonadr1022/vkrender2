@@ -5,14 +5,12 @@
 
 #include "CommandEncoder.hpp"
 #include "StateTracker.hpp"
+#include "Types.hpp"
 #include "VkRender2.hpp"
 #include "shaders/ibl/eq_to_cube_comp_common.h.glsl"
 #include "vk2/Device.hpp"
 #include "vk2/Initializers.hpp"
-#include "vk2/SamplerCache.hpp"
 #include "vk2/ShaderCompiler.hpp"
-
-using namespace gfx::vk2;
 
 namespace {
 
@@ -38,25 +36,25 @@ void IBL::load_env_map(CmdEncoder& ctx, const std::filesystem::path& path) {
   prefilter_env_map(ctx);
 }
 
-IBL::IBL(BufferHandle cube_vertex_buf) : cube_vertex_buf_(cube_vertex_buf) {
+IBL::IBL(Device* device, BufferHandle cube_vertex_buf)
+    : device_(device), cube_vertex_buf_(cube_vertex_buf) {
   u32 skybox_res = 1024;
   u32 convoluted_res = 32;
-  irradiance_cubemap_tex_ =
-      vk2::Image{ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_CUBE,
-                                 .format = VK_FORMAT_R16G16B16A16_SFLOAT,
-                                 .extent = {convoluted_res, convoluted_res, 1},
-                                 .mip_levels = 1,
-                                 .array_layers = 6,
-                                 .usage = ImageUsage::General}};
-  env_cubemap_tex_ = vk2::Image{ImageCreateInfo{.name = "env cubemap",
-                                                .view_type = VK_IMAGE_VIEW_TYPE_CUBE,
-                                                .format = VK_FORMAT_R16G16B16A16_SFLOAT,
-                                                .extent = {skybox_res, skybox_res, 1},
-                                                .mip_levels = get_mip_levels({skybox_res}),
-                                                .array_layers = 6,
-                                                .usage = ImageUsage::General}};
+  irradiance_cubemap_tex_ = Image{ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_CUBE,
+                                                  .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                                                  .extent = {convoluted_res, convoluted_res, 1},
+                                                  .mip_levels = 1,
+                                                  .array_layers = 6,
+                                                  .usage = ImageUsage::General}};
+  env_cubemap_tex_ = Image{ImageCreateInfo{.name = "env cubemap",
+                                           .view_type = VK_IMAGE_VIEW_TYPE_CUBE,
+                                           .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                                           .extent = {skybox_res, skybox_res, 1},
+                                           .mip_levels = get_mip_levels({skybox_res}),
+                                           .array_layers = 6,
+                                           .usage = ImageUsage::General}};
   u32 prefiltered_env_map_res = 256;
-  prefiltered_env_map_tex_ = vk2::TextureCubeAndViews{
+  prefiltered_env_map_tex_ = TextureCubeAndViews{
       ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_CUBE,
                       .format = VK_FORMAT_R16G16B16A16_SFLOAT,
                       .extent = {prefiltered_env_map_res, prefiltered_env_map_res, 1},
@@ -66,9 +64,8 @@ IBL::IBL(BufferHandle cube_vertex_buf) : cube_vertex_buf_(cube_vertex_buf) {
   make_cubemap_views_all_mips(prefiltered_env_map_tex_->texture.value(),
                               prefiltered_env_tex_views_);
 
-  auto make_cubemap_views =
-      [](const vk2::Image& tex) -> std::array<std::optional<vk2::ImageView>, 6> {
-    std::array<std::optional<vk2::ImageView>, 6> result;
+  auto make_cubemap_views = [](const Image& tex) -> std::array<std::optional<ImageView>, 6> {
+    std::array<std::optional<ImageView>, 6> result;
     for (u32 i = 0; i < 6; i++) {
       result[i] = ImageView{tex, ImageViewCreateInfo{
                                      .format = tex.format(),
@@ -88,17 +85,17 @@ IBL::IBL(BufferHandle cube_vertex_buf) : cube_vertex_buf_(cube_vertex_buf) {
 
   cubemap_tex_views_ = make_cubemap_views(env_cubemap_tex_.value());
   convoluted_cubemap_tex_views_ = make_cubemap_views(irradiance_cubemap_tex_.value());
-  brdf_lut_ = vk2::Image{ImageCreateInfo{.name = "brdf lut",
-                                         .view_type = VK_IMAGE_VIEW_TYPE_2D,
-                                         .format = VK_FORMAT_R16G16_SFLOAT,
-                                         .extent = {512, 512, 1},
-                                         .mip_levels = 1,
-                                         .array_layers = 1,
-                                         .usage = ImageUsage::General}};
+  brdf_lut_ = Image{ImageCreateInfo{.name = "brdf lut",
+                                    .view_type = VK_IMAGE_VIEW_TYPE_2D,
+                                    .format = VK_FORMAT_R16G16_SFLOAT,
+                                    .extent = {512, 512, 1},
+                                    .mip_levels = 1,
+                                    .array_layers = 1,
+                                    .usage = ImageUsage::General}};
 }
 
-void IBL::make_cubemap_views_all_mips(const vk2::Image& texture,
-                                      std::vector<std::optional<vk2::ImageView>>& views) {
+void IBL::make_cubemap_views_all_mips(const Image& texture,
+                                      std::vector<std::optional<ImageView>>& views) {
   for (u32 mip = 0; mip < texture.create_info().mip_levels; mip++) {
     views.emplace_back(ImageView{texture, ImageViewCreateInfo{
                                               .format = texture.format(),
@@ -116,6 +113,14 @@ void IBL::make_cubemap_views_all_mips(const vk2::Image& texture,
 }
 
 void IBL::init_post_pipeline_load() {
+  if (!linear_sampler_.is_valid()) {
+    linear_sampler_ = device_->get_or_create_sampler(SamplerCreateInfo{
+        .min_filter = FilterMode::Linear,
+        .mag_filter = FilterMode::Linear,
+        .mipmap_mode = FilterMode::Linear,
+        .address_mode = AddressMode::Repeat,
+    });
+  }
   VkRender2::get().immediate_submit([this](CmdEncoder& ctx) {
     VkCommandBuffer cmd = ctx.cmd();
     VkRender2::get().bind_bindless_descriptors(ctx);
@@ -128,17 +133,13 @@ void IBL::init_post_pipeline_load() {
     PipelineManager::get().bind_compute(cmd, integrate_brdf_pipeline_);
     struct {
       u32 tex_idx, sampler_idx;
-    } pc{
-        brdf_lut_->view().storage_img_resource().handle,
-        SamplerCache::get()
-            .get_or_create_sampler(SamplerCreateInfo{
-                .min_filter = VK_FILTER_LINEAR,
-                .mag_filter = VK_FILTER_LINEAR,
-                .mipmap_mode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
-                .address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-            })
-            .resource_info.handle,
-    };
+    } pc{brdf_lut_->view().storage_img_resource().handle,
+         device_->get_bindless_idx(device_->get_or_create_sampler(SamplerCreateInfo{
+             .min_filter = FilterMode::Linear,
+             .mag_filter = FilterMode::Linear,
+             .mipmap_mode = FilterMode::Linear,
+             .address_mode = AddressMode::Repeat,
+         }))};
 
     ctx.push_constants(sizeof(pc), &pc);
     vkCmdDispatch(cmd, brdf_lut_->extent_2d().width / 16, brdf_lut_->extent_2d().height / 16, 1);
@@ -154,8 +155,14 @@ void IBL::equirect_to_cube(CmdEncoder& ctx) {
   VkRender2::get().bind_bindless_descriptors(ctx);
   transition_image(cmd, *env_cubemap_tex_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
   PipelineManager::get().bind_compute(cmd, equirect_to_cube_pipeline2_);
+  // TODO: define linear sampler idx in the shader
+
   EquirectToCubeComputePushConstants pc{
-      .sampler_idx = SamplerCache::get().get_linear_sampler().resource_info.handle,
+      .sampler_idx = device_->get_bindless_idx(
+          device_->get_or_create_sampler(SamplerCreateInfo{.min_filter = FilterMode::Linear,
+                                                           .mag_filter = FilterMode::Linear,
+                                                           .mipmap_mode = FilterMode::Linear,
+                                                           .address_mode = AddressMode::Repeat})),
       .tex_idx = env_equirect_tex_->view().sampled_img_resource().handle,
       .out_tex_idx = env_cubemap_tex_->view().storage_img_resource().handle};
   ctx.push_constants(sizeof(pc), &pc);
@@ -172,10 +179,10 @@ void IBL::convolute_cube(CmdEncoder& ctx) {
     transition_image(cmd, *irradiance_cubemap_tex_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
     for (u32 i = 0; i < 6; i++) {
-      auto color_attachment = init::rendering_attachment_info(
+      auto color_attachment = vk2::init::rendering_attachment_info(
           convoluted_cubemap_tex_views_[i]->view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
       auto rendering_info =
-          init::rendering_info(irradiance_cubemap_tex_->extent_2d(), &color_attachment);
+          vk2::init::rendering_info(irradiance_cubemap_tex_->extent_2d(), &color_attachment);
       vkCmdBeginRenderingKHR(cmd, &rendering_info);
       ctx.set_viewport_and_scissor(irradiance_cubemap_tex_->extent_2d().width,
                                    irradiance_cubemap_tex_->extent_2d().height);
@@ -184,7 +191,7 @@ void IBL::convolute_cube(CmdEncoder& ctx) {
         mat4 vp;
         u32 in_tex_idx, sampler_idx, vertex_buffer_idx;
       } pc{PROJ * VIEW_MATRICES[i], env_cubemap_tex_->view().sampled_img_resource().handle,
-           SamplerCache::get().get_linear_sampler().resource_info.handle,
+           device_->get_bindless_idx(linear_sampler_),
            get_device().get_buffer(cube_vertex_buf_)->resource_info_->handle};
       ctx.push_constants(sizeof(pc), &pc);
       ctx.set_cull_mode(CullMode::None);
@@ -200,12 +207,12 @@ void IBL::prefilter_env_map(CmdEncoder& ctx) {
                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
   // make image views
-  std::vector<std::array<std::optional<vk2::ImageView>, 6>> cube_mip_views;
+  std::vector<std::array<std::optional<ImageView>, 6>> cube_mip_views;
   u32 mip_levels = prefiltered_env_map_tex_->texture->create_info().mip_levels;
   for (u32 mip = 0; mip < mip_levels; mip++) {
     auto& texture = prefiltered_env_map_tex_->texture.value();
-    std::array<std::optional<vk2::ImageView>, 6> mip_views;
-    cube_mip_views.emplace_back(std::array<std::optional<vk2::ImageView>, 6>{});
+    std::array<std::optional<ImageView>, 6> mip_views;
+    cube_mip_views.emplace_back(std::array<std::optional<ImageView>, 6>{});
     for (u32 layer = 0; layer < 6; layer++) {
       cube_mip_views.back()[layer] =
           ImageView{texture, ImageViewCreateInfo{
@@ -227,13 +234,13 @@ void IBL::prefilter_env_map(CmdEncoder& ctx) {
     for (u32 mip = 0; mip < mip_levels; mip++) {
       float roughness = (float)mip / (float)(mip_levels - 1);
       for (u32 i = 0; i < 6; i++) {
-        auto color_attachment = init::rendering_attachment_info(
+        auto color_attachment = vk2::init::rendering_attachment_info(
             cube_mip_views[mip][i]->view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         u32 size = prefiltered_env_map_tex_->texture->extent_2d().width;
         unsigned int mip_width = size * std::pow(0.5, mip);
         unsigned int mip_height = size * std::pow(0.5, mip);
         auto rendering_info =
-            init::rendering_info(VkExtent2D{mip_width, mip_height}, &color_attachment);
+            vk2::init::rendering_info(VkExtent2D{mip_width, mip_height}, &color_attachment);
         vkCmdBeginRenderingKHR(cmd, &rendering_info);
         ctx.set_viewport_and_scissor(mip_width, mip_height);
         PipelineManager::get().bind_graphics(cmd, prefilter_env_map_pipeline_);
@@ -246,15 +253,12 @@ void IBL::prefilter_env_map(CmdEncoder& ctx) {
         } pc{PROJ * VIEW_MATRICES[i],
              roughness,
              env_cubemap_tex_->view().sampled_img_resource().handle,
-
-             SamplerCache::get()
-                 .get_or_create_sampler({
-                     .min_filter = VK_FILTER_LINEAR,
-                     .mag_filter = VK_FILTER_LINEAR,
-                     .mipmap_mode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
-                     .address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-                 })
-                 .resource_info.handle,
+             device_->get_bindless_idx(device_->get_or_create_sampler(SamplerCreateInfo{
+                 .min_filter = FilterMode::Linear,
+                 .mag_filter = FilterMode::Linear,
+                 .mipmap_mode = FilterMode::Linear,
+                 .address_mode = AddressMode::Repeat,
+             })),
              get_device().get_buffer(cube_vertex_buf_)->resource_info_->handle,
              static_cast<float>(env_cubemap_tex_->extent_2d().width)};
         ctx.push_constants(sizeof(pc), &pc);
@@ -267,7 +271,7 @@ void IBL::prefilter_env_map(CmdEncoder& ctx) {
 
   transition_image(cmd, *irradiance_cubemap_tex_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
-void IBL::load_pipelines(vk2::PipelineLoader& loader) {
+void IBL::load_pipelines(PipelineLoader& loader) {
   loader.add_compute("ibl/integrate_brdf.comp", &integrate_brdf_pipeline_);
   loader.add_compute("ibl/eq_to_cube.comp", &equirect_to_cube_pipeline2_);
   loader.add_compute("ibl/cube_convolute.comp", &convolute_cube_pipeline_);

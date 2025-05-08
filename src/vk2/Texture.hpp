@@ -9,7 +9,7 @@
 #include "vk2/Resource.hpp"
 #include "vk_mem_alloc.h"
 
-namespace gfx::vk2 {
+namespace gfx {
 
 enum class ImageUsage : u8 {
   // general computation, i.e. StorageImage
@@ -109,8 +109,8 @@ class Image {
 
 struct TextureCubeAndViews {
   explicit TextureCubeAndViews(const ImageCreateInfo& info);
-  std::optional<vk2::Image> texture;
-  std::array<std::optional<vk2::ImageView>, 6> img_views;
+  std::optional<Image> texture;
+  std::array<std::optional<ImageView>, 6> img_views;
 };
 
 void blit_img(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent3D extent,
@@ -143,4 +143,4 @@ bool format_is_block_compreesed(VkFormat format);
 u64 block_compressed_image_size(VkFormat format, uvec3 extent);
 u64 img_to_buffer_size(VkFormat format, uvec3 extent);
 
-}  // namespace gfx::vk2
+}  // namespace gfx

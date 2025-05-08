@@ -5,7 +5,6 @@
 #include "CommandEncoder.hpp"
 #include "Types.hpp"
 #include "vk2/Pool.hpp"
-#include "vk2/SamplerCache.hpp"
 #include "vk2/Texture.hpp"
 
 struct AABB;
@@ -16,18 +15,17 @@ class StateTracker;
 struct RenderGraph;
 struct RenderGraphPass;
 class VkRender2;
-namespace vk2 {
 class Device;
+
 class PipelineLoader;
-}  // namespace vk2
 
 class CSM {
  public:
   using DrawFunc =
       std::function<void(CmdEncoder&, const mat4& vp, bool opaque_alpha, u32 cascade_i)>;
   using AddRenderDependenciesFunc = std::function<void(RenderGraphPass& pass)>;
-  explicit CSM(vk2::Device* device, DrawFunc draw_fn, AddRenderDependenciesFunc add_deps_fn);
-  void load_pipelines(vk2::PipelineLoader& loader);
+  explicit CSM(Device* device, DrawFunc draw_fn, AddRenderDependenciesFunc add_deps_fn);
+  void load_pipelines(PipelineLoader& loader);
   void add_pass(RenderGraph& rg);
   static constexpr u32 max_cascade_levels{4};
 
@@ -42,7 +40,7 @@ class CSM {
     return light_proj_matrices_[cascade_level];
   }
 
-  void debug_shadow_pass(RenderGraph& rg, const vk2::Sampler& linear_sampler);
+  void debug_shadow_pass(RenderGraph& rg, SamplerHandle linear_sampler);
   void prepare_frame(RenderGraph& rg, u32 frame_num, const mat4& cam_view, vec3 light_dir,
                      float aspect_ratio, float fov_deg, const AABB& aabb, vec3 view_pos);
   void on_imgui();
@@ -58,7 +56,7 @@ class CSM {
   [[nodiscard]] ImageHandle get_shadow_map_img() const { return shadow_map_img_; }
 
   [[nodiscard]] u32 get_num_cascade_levels() const { return cascade_count_; }
-  void imgui_pass(CmdEncoder& cmd, const vk2::Sampler& sampler, const vk2::Image& tex);
+  void imgui_pass(CmdEncoder& cmd, SamplerHandle sampler, const Image& tex);
 
   [[nodiscard]] bool get_debug_render_enabled() const { return debug_render_enabled_; }
 
@@ -87,7 +85,7 @@ class CSM {
   LightMatrixArray light_matrices_;
   ImageHandle curr_shadow_map_img_;
   std::array<Holder<ImageViewHandle>, max_cascade_levels> shadow_map_img_views_;
-  vk2::Device* device_{};
+  Device* device_{};
   i32 debug_cascade_idx_{0};
   float shadow_z_near_{.1};
   float shadow_z_far_{225};

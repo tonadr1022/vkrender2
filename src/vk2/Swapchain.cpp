@@ -52,7 +52,7 @@ VkSwapchainKHR create_swapchain(const UpdateSwapchainInfo& info, VkFormat format
 
 void Swapchain::init(const UpdateSwapchainInfo& info, VkSwapchainKHR old) {
   VkSurfaceCapabilitiesKHR surface_caps;
-  vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vk2::get_device().get_physical_device(), info.surface,
+  vkGetPhysicalDeviceSurfaceCapabilitiesKHR(get_device().get_physical_device(), info.surface,
                                             &surface_caps);
   VkSwapchainKHR new_swapchain = create_swapchain(info, format, old, surface_caps);
   assert(new_swapchain);
@@ -66,7 +66,7 @@ void Swapchain::init(const UpdateSwapchainInfo& info, VkSwapchainKHR old) {
 
   if (acquire_semaphores.size() == 0) {
     for (size_t i = 0; i < imgs.size(); i++) {
-      acquire_semaphores.emplace_back(vk2::get_device().create_semaphore(false));
+      acquire_semaphores.emplace_back(get_device().create_semaphore(false));
     }
   }
 }
@@ -112,20 +112,20 @@ void Swapchain::init(const UpdateSwapchainInfo& info) { init(info, nullptr); }
 
 void create_swapchain(Swapchain& swapchain, const SwapchainDesc& desc) {
   VkSurfaceCapabilitiesKHR surface_caps;
-  VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vk2::get_device().get_physical_device(),
+  VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(get_device().get_physical_device(),
                                                      swapchain.surface, &surface_caps));
   u32 format_count{};
-  VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(vk2::get_device().get_physical_device(),
+  VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(get_device().get_physical_device(),
                                                 swapchain.surface, &format_count, nullptr));
   std::vector<VkSurfaceFormatKHR> available_surface_formats(format_count);
-  VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(vk2::get_device().get_physical_device(),
+  VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(get_device().get_physical_device(),
                                                 swapchain.surface, &format_count,
                                                 available_surface_formats.data()));
   u32 present_mode_count;
   VK_CHECK(vkGetPhysicalDeviceSurfacePresentModesKHR(
-      vk2::get_device().get_physical_device(), swapchain.surface, &present_mode_count, nullptr));
+      get_device().get_physical_device(), swapchain.surface, &present_mode_count, nullptr));
   std::vector<VkPresentModeKHR> available_present_modes(present_mode_count);
-  VK_CHECK(vkGetPhysicalDeviceSurfacePresentModesKHR(vk2::get_device().get_physical_device(),
+  VK_CHECK(vkGetPhysicalDeviceSurfacePresentModesKHR(get_device().get_physical_device(),
                                                      swapchain.surface, &present_mode_count,
                                                      available_present_modes.data()));
 

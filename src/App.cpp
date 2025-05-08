@@ -68,10 +68,10 @@ App::App(const InitInfo& info) : cam(cam_data, .1) {
     ((App*)glfwGetWindowUserPointer(win))->on_cursor_event({xpos, ypos});
   });
 
-  vk2::Device::init({info.name, window, info.vsync});
+  Device::init({info.name, window, info.vsync});
   bool success;
   VkRender2::init(VkRender2::InitInfo{.window = window,
-                                      .device = &vk2::Device::get(),
+                                      .device = &Device::get(),
                                       .resource_dir = resource_dir,
                                       .name = info.name,
                                       .vsync = info.vsync},
@@ -172,7 +172,7 @@ void App::shutdown() const {
   // since the window of the app closes faster
   glfwDestroyWindow(window);
   VkRender2::shutdown();
-  vk2::Device::destroy();
+  Device::destroy();
   glfwTerminate();
 }
 

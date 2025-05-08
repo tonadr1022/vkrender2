@@ -159,7 +159,7 @@ void calc_csm_light_space_matrices(std::span<mat4> matrices, std::span<mat4> pro
 
 namespace gfx {
 
-CSM::CSM(vk2::Device* device, DrawFunc draw_fn, AddRenderDependenciesFunc add_deps_fn)
+CSM::CSM(Device* device, DrawFunc draw_fn, AddRenderDependenciesFunc add_deps_fn)
     : draw_fn_(std::move(draw_fn)),
       add_deps_fn_(std::move(add_deps_fn)),
       shadow_map_res_(uvec2{4096}),
@@ -177,13 +177,13 @@ CSM::CSM(vk2::Device* device, DrawFunc draw_fn, AddRenderDependenciesFunc add_de
                               .layers = cascade_count_};
 }
 
-void CSM::imgui_pass(CmdEncoder&, const vk2::Sampler& sampler, const vk2::Image& tex) {
+void CSM::imgui_pass(CmdEncoder&, SamplerHandle sampler, const Image& tex) {
   if (tex.image() != curr_debug_img_) {
     curr_debug_img_ = tex.image();
     if (imgui_set_) {
       ImGui_ImplVulkan_RemoveTexture(imgui_set_);
     }
-    imgui_set_ = ImGui_ImplVulkan_AddTexture(sampler.sampler, tex.view().view(),
+    imgui_set_ = ImGui_ImplVulkan_AddTexture(device_->get_sampler_vk(sampler), tex.view().view(),
                                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     curr_debug_img_size_ = {tex.extent_2d().width, tex.extent_2d().height};
   }
@@ -291,7 +291,7 @@ void CSM::add_pass(RenderGraph& rg) {
       for (u32 i = 0; i < cascade_count_; i++) {
         shadow_map_img_views_[i] =
             get_device().create_image_view_holder(*get_device().get_image(curr_shadow_map_img_),
-                                                  vk2::ImageViewCreateInfo{
+                                                  ImageViewCreateInfo{
                                                       to_vkformat(Format::D32Sfloat),
                                                       VkImageSubresourceRange{
                                                           .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
@@ -317,33 +317,30 @@ void CSM::add_pass(RenderGraph& rg) {
       cmd.set_cull_mode(CullMode::None);
       cmd.set_viewport_and_scissor(sm_img->extent_2d().width, sm_img->extent_2d().height);
       if (depth_bias_enabled_) {
-        vkCmdSetDepthBias(cmd.cmd(), depth_bias_constant_factor_, 0.0f, depth_bias_slope_factor_);
+        cmd.set_depth_bias(depth_bias_constant_factor_, 0.0f, depth_bias_slope_factor_);
       } else {
-        vkCmdSetDepthBias(cmd.cmd(), 0, 0.0f, 0);
+        cmd.set_depth_bias(0, 0, 0);
       }
 
       {
         TracyVkZone(cmd.get_tracy_ctx(), cmd.cmd(), "opaque");
-        vkCmdBindPipeline(cmd.cmd(), VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          PipelineManager::get().get(shadow_depth_pipline_)->pipeline);
+        cmd.bind_pipeline(PipelineBindPoint::Graphics, shadow_depth_pipline_);
         draw_fn_(cmd, light_matrices_[i], false, i);
       }
       {
         TracyVkZone(cmd.get_tracy_ctx(), cmd.cmd(), "opaque_alpha_mask");
         if (alpha_cutout_enabled_) {
-          vkCmdBindPipeline(
-              cmd.cmd(), VK_PIPELINE_BIND_POINT_GRAPHICS,
-              PipelineManager::get().get(shadow_depth_alpha_mask_pipeline_)->pipeline);
+          cmd.bind_pipeline(PipelineBindPoint::Graphics, shadow_depth_alpha_mask_pipeline_);
         }
         draw_fn_(cmd, light_matrices_[i], true, i);
       }
-      vkCmdEndRenderingKHR(cmd.cmd());
+      cmd.end_rendering();
     }
     init::end_debug_utils_label(cmd.cmd());
   });
 }
 
-void CSM::debug_shadow_pass(RenderGraph& rg, const vk2::Sampler& linear_sampler) {
+void CSM::debug_shadow_pass(RenderGraph& rg, SamplerHandle linear_sampler) {
   if (debug_render_enabled_) {
     auto& pass = rg.add_pass("debug_csm");
     auto shadow_map_debug_img_handle =
@@ -372,7 +369,7 @@ void CSM::debug_shadow_pass(RenderGraph& rg, const vk2::Sampler& linear_sampler)
         u32 sampler_idx;
         u32 array_idx;
       } pc{get_device().get_image(shadow_map_img_)->view().sampled_img_resource().handle,
-           linear_sampler.resource_info.handle, static_cast<u32>(debug_cascade_idx_)};
+           device_->get_bindless_idx(linear_sampler), static_cast<u32>(debug_cascade_idx_)};
       cmd.push_constants(sizeof(pc), &pc);
       vkCmdDraw(cmd.cmd(), 3, 1, 0, 0);
       vkCmdEndRenderingKHR(cmd.cmd());
@@ -380,7 +377,7 @@ void CSM::debug_shadow_pass(RenderGraph& rg, const vk2::Sampler& linear_sampler)
   }
 }
 
-void CSM::load_pipelines(vk2::PipelineLoader& loader) {
+void CSM::load_pipelines(PipelineLoader& loader) {
   GraphicsPipelineCreateInfo shadow_depth_info{
       .shaders = {{"shadow_depth.vert", ShaderType::Vertex},
                   {"shadow_depth.frag", ShaderType::Fragment, {"#define ALPHA_MASK_ENABLED 1\n"}}},

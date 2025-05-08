@@ -20,7 +20,6 @@
 #include "vk2/Buffer.hpp"
 #include "vk2/Device.hpp"
 #include "vk2/PipelineManager.hpp"
-#include "vk2/SamplerCache.hpp"
 #include "vk2/Texture.hpp"
 
 struct GLFWwindow;
@@ -31,24 +30,24 @@ struct VkCtx;
 namespace gfx {
 
 struct LinearStagingBuffer {
-  explicit LinearStagingBuffer(vk2::Buffer* buffer) : buffer_(buffer) {}
+  explicit LinearStagingBuffer(Buffer* buffer) : buffer_(buffer) {}
 
   u64 copy(const void* data, u64 size) {
     memcpy((char*)buffer_->mapped_data() + offset_, data, size);
     offset_ += size;
     return offset_ - size;
   }
-  [[nodiscard]] vk2::Buffer* get_buffer() const { return buffer_; }
+  [[nodiscard]] Buffer* get_buffer() const { return buffer_; }
 
  private:
   u64 offset_{};
-  vk2::Buffer* buffer_{};
+  Buffer* buffer_{};
 };
 
 struct FreeListBuffer {
   Holder<BufferHandle> buffer;
   util::FreeListAllocator allocator;
-  [[nodiscard]] vk2::Buffer* get_buffer() const { return vk2::get_device().get_buffer(buffer); }
+  [[nodiscard]] Buffer* get_buffer() const { return get_device().get_buffer(buffer); }
 };
 
 struct SceneDrawInfo {
@@ -65,7 +64,7 @@ class VkRender2 final {
  public:
   struct InitInfo {
     GLFWwindow* window;
-    vk2::Device* device;
+    Device* device;
     std::filesystem::path resource_dir;
     const char* name = "App";
     bool vsync{true};
@@ -76,7 +75,7 @@ class VkRender2 final {
   explicit VkRender2(const InitInfo& info, bool& succes);
   ~VkRender2();
 
-  SceneHandle load_model(const std::filesystem::path& path, bool dynamic = false,
+  ModelHandle load_model(const std::filesystem::path& path, bool dynamic = false,
                          const mat4& transform = mat4{1});
 
   // TODO: private
@@ -89,9 +88,9 @@ class VkRender2 final {
   void new_frame();
   void set_imgui_enabled(bool imgui_enabled) { draw_imgui_ = imgui_enabled; }
   bool get_imgui_enabled() const { return draw_imgui_; }
-  std::optional<vk2::Image> load_hdr_img(CmdEncoder& ctx, const std::filesystem::path& path,
-                                         bool flip = false);
-  void generate_mipmaps(CmdEncoder& ctx, vk2::Image& tex);
+  std::optional<Image> load_hdr_img(CmdEncoder& ctx, const std::filesystem::path& path,
+                                    bool flip = false);
+  void generate_mipmaps(CmdEncoder& ctx, Image& tex);
   void draw_line(const vec3& p1, const vec3& p2, const vec4& color);
 
   /**
@@ -114,7 +113,7 @@ class VkRender2 final {
   void draw_box(const mat4& model, const AABB& aabb, const vec4& color = vec4{1.f});
 
  private:
-  vk2::Device* device_;
+  Device* device_;
   GLFWwindow* window_;
   std::filesystem::path resource_dir_;
 
@@ -122,12 +121,12 @@ class VkRender2 final {
     VkCommandPool cmd_pool;
     VkCommandBuffer main_cmd_buffer;
     tracy::VkCtx* tracy_vk_ctx{};
-    std::optional<vk2::Buffer> scene_uniform_buf;
+    std::optional<Buffer> scene_uniform_buf;
     Holder<BufferHandle> line_draw_buf;
   };
   std::vector<PerFrameData> per_frame_data_;
   u64 curr_frame_in_flight_num() const {
-    return vk2::get_device().curr_frame_num() % vk2::get_device().get_frames_in_flight();
+    return device_->curr_frame_num() % get_device().get_frames_in_flight();
   }
   void on_imgui();
   static constexpr u32 max_draws{100'000};
@@ -166,8 +165,7 @@ class VkRender2 final {
 
   struct StaticMeshDrawManager {
     using Handle = GenerationalHandle<struct Alloc>;
-    explicit StaticMeshDrawManager(std::string name, size_t initial_max_draw_cnt,
-                                   vk2::Device* device);
+    explicit StaticMeshDrawManager(std::string name, size_t initial_max_draw_cnt, Device* device);
     StaticMeshDrawManager(const StaticMeshDrawManager&) = delete;
     StaticMeshDrawManager(StaticMeshDrawManager&&) = delete;
     StaticMeshDrawManager& operator=(const StaticMeshDrawManager&) = delete;
@@ -180,7 +178,7 @@ class VkRender2 final {
 
     struct DrawPass {
       explicit DrawPass(std::string name, u32 num_single_sided_draws, u32 num_double_sided_draws,
-                        u32 frames_in_flight, vk2::Device* device);
+                        u32 frames_in_flight, Device* device);
       std::string name;
       // lol this is jank but i don't want a string alloc every time. need to make a special hashed
       // string that combines multiple strings at once
@@ -188,15 +186,15 @@ class VkRender2 final {
 
       std::array<std::vector<Holder<BufferHandle>>, 2> out_draw_cmds_bufs;
       [[nodiscard]] BufferHandle get_frame_out_draw_cmd_buf_handle(bool double_sided) const;
-      [[nodiscard]] vk2::Buffer* get_frame_out_draw_cmd_buf(bool double_sided) const;
-      vk2::Device* device_;
+      [[nodiscard]] Buffer* get_frame_out_draw_cmd_buf(bool double_sided) const;
+      Device* device_;
       bool enabled{true};
     };
     void add_draw_pass(const std::string& name);
 
     // TODO: this is a little jank
     Handle add_draws(StateTracker& state, CmdEncoder& cmd, size_t size, size_t staging_offset,
-                     vk2::Buffer& staging, u32 num_double_sided_draws);
+                     Buffer& staging, u32 num_double_sided_draws);
     void remove_draws(StateTracker& state, VkCommandBuffer cmd, Handle handle);
 
     [[nodiscard]] const std::string& get_name() const { return name_; }
@@ -204,7 +202,7 @@ class VkRender2 final {
       return num_draw_cmds_[double_sided];
     }
     [[nodiscard]] BufferHandle get_draw_info_buf_handle() const;
-    [[nodiscard]] vk2::Buffer* get_draw_info_buf() const;
+    [[nodiscard]] Buffer* get_draw_info_buf() const;
 
     bool draw_enabled{true};
     [[nodiscard]] bool should_draw() const {
@@ -219,7 +217,7 @@ class VkRender2 final {
     Pool<Handle, Alloc> allocs_;
     FreeListBuffer draw_cmds_buf_;
     u32 num_draw_cmds_[2] = {};  // idx 1 is double sided
-    vk2::Device* device_{};
+    Device* device_{};
   };
 
   struct StaticModelGPUResources {
@@ -311,18 +309,18 @@ class VkRender2 final {
 
   bool should_draw(const StaticMeshDrawManager& mgr) const;
   void execute_static_geo_draws(CmdEncoder& cmd, bool double_sided, bool opaque_alpha);
-  void execute_draw(CmdEncoder& cmd, const vk2::Buffer& buffer, u32 draw_count) const;
+  void execute_draw(CmdEncoder& cmd, const Buffer& buffer, u32 draw_count) const;
 
   AABB scene_aabb_{};
 
   StateTracker state_;
 
-  std::optional<vk2::Sampler> linear_sampler_;
-  std::optional<vk2::Sampler> nearest_sampler_;
-  std::optional<vk2::Sampler> linear_sampler_clamp_to_edge_;
+  SamplerHandle linear_sampler_;
+  SamplerHandle nearest_sampler_;
+  SamplerHandle linear_sampler_clamp_to_edge_;
 
   struct DefaultData {
-    std::optional<vk2::Image> white_img;
+    std::optional<Image> white_img;
   } default_data_;
   gfx::DefaultMaterialData default_mat_data_;
 
@@ -331,15 +329,15 @@ class VkRender2 final {
     u32 instance_id;
   };
 
-  vk2::PipelineTask make_pipeline_task(const vk2::ComputePipelineCreateInfo& info,
-                                       PipelineHandle* out_handle);
-  vk2::PipelineTask make_pipeline_task(const vk2::GraphicsPipelineCreateInfo& info,
-                                       PipelineHandle* out_handle);
+  PipelineTask make_pipeline_task(const ComputePipelineCreateInfo& info,
+                                  PipelineHandle* out_handle);
+  PipelineTask make_pipeline_task(const GraphicsPipelineCreateInfo& info,
+                                  PipelineHandle* out_handle);
   std::filesystem::path default_env_map_path_;
   std::unique_ptr<CSM> csm_;
-  vk2::Sampler shadow_sampler_;
+  SamplerHandle shadow_sampler_;
   std::optional<IBL> ibl_;
-  gfx::RenderGraph rg_;
+  RenderGraph rg_;
   PipelineHandle img_pipeline_;
   PipelineHandle draw_pipeline_;
   PipelineHandle cull_objs_pipeline_;
@@ -356,7 +354,7 @@ class VkRender2 final {
   Format depth_img_format_{Format::D32Sfloat};
   VkPipelineLayout default_pipeline_layout_{};
 
-  std::vector<vk2::Buffer> free_staging_buffers_;
+  std::vector<Buffer> free_staging_buffers_;
 
   std::unordered_map<u64, VkDescriptorSet> imgui_desc_sets_;
   VkDescriptorSet get_imgui_set(VkSampler sampler, VkImageView view);
@@ -370,7 +368,7 @@ class VkRender2 final {
   const char* debug_mode_to_string(u32 mode);
   std::filesystem::path env_tex_path_;
   i32 prefilter_mip_skybox_render_mip_level_{};
-  void generate_mipmaps(StateTracker& state, VkCommandBuffer cmd, vk2::Image& tex);
+  void generate_mipmaps(StateTracker& state, VkCommandBuffer cmd, Image& tex);
   Holder<BufferHandle> cube_vertex_buf_;
   void add_rendering_passes(RenderGraph& rg);
 

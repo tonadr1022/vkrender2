@@ -9,7 +9,7 @@
 #include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Device.hpp"
 
-namespace gfx::vk2 {
+namespace gfx {
 
 Buffer::Buffer(const BufferCreateInfo &cinfo, std::string name) : name_(std::move(name)) {
   if (cinfo.size == 0) {
@@ -57,7 +57,7 @@ Buffer::Buffer(const BufferCreateInfo &cinfo, std::string name) : name_(std::mov
   if (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) {
     VkBufferDeviceAddressInfo info{.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
                                    .buffer = buffer_};
-    buffer_address_ = vkGetBufferDeviceAddress(vk2::get_device().device(), &info);
+    buffer_address_ = vkGetBufferDeviceAddress(get_device().device(), &info);
     assert(buffer_address_);
   }
 
@@ -97,4 +97,4 @@ Buffer::~Buffer() {
   }
 }
 
-}  // namespace gfx::vk2
+}  // namespace gfx

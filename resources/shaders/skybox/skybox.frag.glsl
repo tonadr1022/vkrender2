@@ -17,6 +17,6 @@ void main() {
     // gl_FragDepth = 0.0;
     #endif
 
-    vec4 color = texture(vk2_samplerCube(tex_idx, sampler_idx), in_uv);
+    vec4 color = texture(vk2_samplerCube(tex_idx, LINEAR_SAMPLER_BINDLESS_IDX), in_uv);
     out_frag_color = vec4(color.rgb, 1.);
 }

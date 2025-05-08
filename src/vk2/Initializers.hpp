@@ -9,16 +9,16 @@
 #define SPAN1(x) std::span(std::addressof(x), 1)
 #define ARR_SPAN(x) std::span(x, COUNTOF(x))
 
-namespace gfx::vk2 {
+namespace gfx {
 class ImageView;
-}  // namespace gfx::vk2
+}  // namespace gfx
 namespace gfx::vk2::init {
 VkDependencyInfo dependency_info(std::span<VkBufferMemoryBarrier2> buffer_barriers,
                                  std::span<VkImageMemoryBarrier2> img_barriers);
 
 VkRenderingAttachmentInfo rendering_attachment_info(VkImageView texture, VkImageLayout layout,
                                                     VkClearValue* clear_value = nullptr);
-VkRenderingAttachmentInfo rendering_attachment_info(vk2::ImageView& texture, VkImageLayout layout,
+VkRenderingAttachmentInfo rendering_attachment_info(ImageView& texture, VkImageLayout layout,
                                                     VkClearValue* clear_value = nullptr);
 VkBufferCopy2KHR buffer_copy(VkDeviceSize src_offset, VkDeviceSize dst_offset, VkDeviceSize size);
 

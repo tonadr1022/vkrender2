@@ -4,6 +4,7 @@
 #include <vulkan/vulkan_core.h>
 
 #include "vk2/Buffer.hpp"
+#include "vk2/PipelineManager.hpp"
 #include "vk2/VkTypes.hpp"
 
 namespace gfx {
@@ -59,8 +60,8 @@ void CmdEncoder::set_cull_mode(CullMode mode) {
   vkCmdSetCullModeEXT(cmd_, vk2::convert_cull_mode(mode));
 }
 
-void CmdEncoder::copy_buffer(const vk2::Buffer& src, const vk2::Buffer& dst, u64 src_offset,
-                             u64 dst_offset, u64 size) const {
+void CmdEncoder::copy_buffer(const Buffer& src, const Buffer& dst, u64 src_offset, u64 dst_offset,
+                             u64 size) const {
   VkBufferCopy2KHR copy{.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2_KHR,
                         .srcOffset = src_offset,
                         .dstOffset = dst_offset,
@@ -73,4 +74,24 @@ void CmdEncoder::copy_buffer(const vk2::Buffer& src, const vk2::Buffer& dst, u64
                                  .pRegions = &copy};
   vkCmdCopyBuffer2KHR(cmd_, &copy_info);
 }
+
+void CmdEncoder::set_depth_bias(float constant_factor, float bias, float slope_factor) {
+  vkCmdSetDepthBias(cmd_, constant_factor, bias, slope_factor);
+}
+
+void CmdEncoder::bind_pipeline(PipelineBindPoint bind_point, PipelineHandle pipeline) {
+  VkPipelineBindPoint bp{};
+  switch (bind_point) {
+    case PipelineBindPoint::Graphics:
+      bp = VK_PIPELINE_BIND_POINT_GRAPHICS;
+      break;
+    case PipelineBindPoint::Compute:
+      bp = VK_PIPELINE_BIND_POINT_COMPUTE;
+      break;
+  }
+  vkCmdBindPipeline(cmd_, bp, PipelineManager::get().get(pipeline)->pipeline);
+}
+
+void CmdEncoder::end_rendering() { vkCmdEndRenderingKHR(cmd_); }
+
 }  // namespace gfx

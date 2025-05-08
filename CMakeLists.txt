@@ -30,7 +30,6 @@ src/vk2/Definitions.cpp
 src/vk2/Device.cpp
 src/vk2/Initializers.cpp
 src/vk2/PipelineManager.cpp
-src/vk2/SamplerCache.cpp
 src/vk2/ShaderCompiler.cpp
 src/vk2/Texture.cpp
 src/SceneLoader.cpp

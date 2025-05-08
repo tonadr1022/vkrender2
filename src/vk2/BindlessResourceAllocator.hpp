@@ -3,21 +3,19 @@
 #include <vulkan/vulkan_core.h>
 
 #include <deque>
+#include <vector>
 
 #include "Common.hpp"
-#include "util/IndexAllocator.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/Resource.hpp"
 #include "vk2/Texture.hpp"
 
-namespace gfx::vk2 {
+namespace gfx {
 
 class ResourceAllocator {
  public:
-  void bind_desc_sets(VkCommandBuffer cmd);
   static constexpr u32 max_resource_descriptors{100'000};
   static constexpr u32 max_sampler_descriptors{128};
-
   static constexpr u32 bindless_storage_image_binding{0};
   static constexpr u32 bindless_storage_buffer_binding{1};
   static constexpr u32 bindless_sampled_image_binding{2};
@@ -71,14 +69,25 @@ class ResourceAllocator {
 
   VkDevice device_;
   VmaAllocator allocator_;
-  util::IndexAllocator storage_image_allocator_{max_resource_descriptors};
-  util::IndexAllocator storage_buffer_allocator_{max_resource_descriptors};
-  util::IndexAllocator sampled_image_allocator_{max_resource_descriptors};
-  util::IndexAllocator sampler_allocator_{max_sampler_descriptors};
+
+  struct IndexAllocator {
+    explicit IndexAllocator(u32 size = 64);
+    void free(u32 idx);
+    [[nodiscard]] u32 alloc();
+
+   private:
+    std::vector<u32> free_list_;
+    u32 next_index_{};
+  };
+
+  IndexAllocator storage_image_allocator_{max_resource_descriptors};
+  IndexAllocator storage_buffer_allocator_{max_resource_descriptors};
+  IndexAllocator sampled_image_allocator_{max_resource_descriptors};
+  IndexAllocator sampler_allocator_{max_sampler_descriptors};
   VkDescriptorPool main_pool_{};
   VkDescriptorSet main_set_{};
   VkDescriptorSetLayout main_set_layout_{};
   u32 buffer_count_{};
   u64 frame_num_{};
 };
-}  // namespace gfx::vk2
+}  // namespace gfx

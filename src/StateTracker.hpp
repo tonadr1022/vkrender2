@@ -8,10 +8,10 @@
 
 #include "Common.hpp"
 
-namespace gfx::vk2 {
+namespace gfx {
 class Buffer;
 class Image;
-}  // namespace gfx::vk2
+}  // namespace gfx
 
 namespace gfx {
 
@@ -25,17 +25,17 @@ struct BufferBarrier {
   VkBuffer buffer;
   u64 offset{0};
   u64 size{VK_WHOLE_SIZE};
-  BufferBarrier(vk2::Buffer& buffer, u32 src_queue, u32 dst_queue, u64 offset = 0,
+  BufferBarrier(Buffer& buffer, u32 src_queue, u32 dst_queue, u64 offset = 0,
                 u64 size = VK_WHOLE_SIZE);
   BufferBarrier() = default;
 };
 
 VkBufferMemoryBarrier2 buffer_memory_barrier(const BufferBarrier& t);
-void transition_image(VkCommandBuffer cmd, vk2::Image& image, VkImageLayout old_layout,
+void transition_image(VkCommandBuffer cmd, Image& image, VkImageLayout old_layout,
                       VkImageLayout new_layout,
                       VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
 
-void transition_image(VkCommandBuffer cmd, vk2::Image& image, VkImageLayout new_layout,
+void transition_image(VkCommandBuffer cmd, Image& image, VkImageLayout new_layout,
                       VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
 constexpr VkImageSubresourceRange default_image_subresource_range{
     .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
@@ -45,7 +45,7 @@ constexpr VkImageSubresourceRange default_image_subresource_range{
     .layerCount = VK_REMAINING_ARRAY_LAYERS};
 
 void transition_image_discard(
-    VkCommandBuffer cmd, vk2::Image& image, VkImageLayout layout, VkPipelineStageFlags2 stage,
+    VkCommandBuffer cmd, Image& image, VkImageLayout layout, VkPipelineStageFlags2 stage,
     VkAccessFlags2 access, const VkImageSubresourceRange& range = default_image_subresource_range);
 
 class StateTracker {
@@ -64,22 +64,21 @@ class StateTracker {
   StateTracker& transition(VkImage image, VkPipelineStageFlags2 dst_stage,
                            VkAccessFlags2 dst_access, VkImageLayout new_layout,
                            VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
-  StateTracker& transition(vk2::Image& image, VkPipelineStageFlags2 dst_stage,
-                           VkAccessFlags2 dst_access, VkImageLayout new_layout,
+  StateTracker& transition(Image& image, VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access,
+                           VkImageLayout new_layout,
                            VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
-  StateTracker& transition_img_to_copy_dst(vk2::Image& image,
+  StateTracker& transition_img_to_copy_dst(Image& image,
                                            VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
   StateTracker& transition_buffer_to_transfer_dst(VkBuffer buffer);
 
   StateTracker& transition(VkImage image, VkPipelineStageFlags2 dst_stage,
                            VkAccessFlags2 dst_access, VkImageLayout new_layout,
                            const VkImageSubresourceRange& range);
-  StateTracker& transition(vk2::Image& image, VkPipelineStageFlags2 dst_stage,
-                           VkAccessFlags2 dst_access, VkImageLayout new_layout,
-                           const VkImageSubresourceRange& range);
+  StateTracker& transition(Image& image, VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access,
+                           VkImageLayout new_layout, const VkImageSubresourceRange& range);
   StateTracker& buffer_barrier(VkBuffer buffer, VkPipelineStageFlags2 dst_stage,
                                VkAccessFlags2 dst_access);
-  StateTracker& buffer_barrier(const vk2::Buffer& buffer, VkPipelineStageFlags2 dst_stage,
+  StateTracker& buffer_barrier(const Buffer& buffer, VkPipelineStageFlags2 dst_stage,
                                VkAccessFlags2 dst_access);
   void barrier();
 

@@ -10,7 +10,7 @@
 namespace util {
 
 struct IndexAllocator {
-  explicit IndexAllocator(u32 size = 64, bool expandable = true);
+  explicit IndexAllocator(u32 size = 64);
   void free(u32 idx);
   [[nodiscard]] u32 alloc();
 

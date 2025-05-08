@@ -9,7 +9,7 @@
 #include "vk2/Resource.hpp"
 #include "vk2/Texture.hpp"
 #include "vk2/VkCommon.hpp"
-namespace gfx::vk2 {
+namespace gfx {
 
 ResourceAllocator::ResourceAllocator(VkDevice device, VmaAllocator allocator)
     : device_(device), allocator_(allocator) {
@@ -315,4 +315,17 @@ void ResourceAllocator::enqueue_delete_sempahore(VkSemaphore semaphore) {
   semaphore_delete_q_.emplace_back(semaphore, frame_num_);
 }
 
-}  // namespace gfx::vk2
+u32 ResourceAllocator::IndexAllocator::alloc() {
+  if (free_list_.empty()) {
+    return next_index_++;
+  }
+  auto ret = free_list_.back();
+  free_list_.pop_back();
+  return ret;
+}
+
+void ResourceAllocator::IndexAllocator::free(u32 idx) { free_list_.push_back(idx); }
+
+ResourceAllocator::IndexAllocator::IndexAllocator(u32 size) { free_list_.reserve(size); }
+
+}  // namespace gfx

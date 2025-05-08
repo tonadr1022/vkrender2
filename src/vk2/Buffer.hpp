@@ -8,7 +8,7 @@
 
 #include "Common.hpp"
 #include "vk2/Resource.hpp"
-namespace gfx::vk2 {
+namespace gfx {
 
 using BufferUsageFlags = u8;
 enum BufferUsage : u8 {
@@ -68,4 +68,4 @@ struct BufferDeleteInfo {
   std::optional<BindlessResourceInfo> resource_info;
 };
 
-}  // namespace gfx::vk2
+}  // namespace gfx

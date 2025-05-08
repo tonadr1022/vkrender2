@@ -11,7 +11,7 @@
 #include "vk2/Resource.hpp"
 #include "vk2/VkCommon.hpp"
 
-namespace gfx::vk2 {
+namespace gfx {
 uint32_t get_mip_levels(VkExtent2D size) {
   return static_cast<uint32_t>(std::floor(std::log2(std::max(size.width, size.height)))) + 1;
 }
@@ -55,7 +55,7 @@ ImageView::ImageView(const Image& texture, const ImageViewCreateInfo& info) : cr
                                          .format = info.format,
                                          .components = info.components,
                                          .subresourceRange = info.range};
-  VK_CHECK(vkCreateImageView(vk2::get_device().device(), &view_info, nullptr, &view_));
+  VK_CHECK(vkCreateImageView(get_device().device(), &view_info, nullptr, &view_));
 
   if ((format_is_color(info.format) && (texture.create_info().override_usage_flags == 0 &&
                                         texture.create_info().usage == ImageUsage::General)) ||
@@ -128,7 +128,7 @@ Image::Image(const ImageCreateInfo& create_info) {
                          .usage = usage_,
                          .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
   image_ = nullptr;
-  VK_CHECK(vmaCreateImage(vk2::get_device().allocator(), &info, &alloc_create_info, &image_,
+  VK_CHECK(vmaCreateImage(get_device().allocator(), &info, &alloc_create_info, &image_,
                           &allocation_, nullptr));
   if (!image_) {
     return;
@@ -481,4 +481,4 @@ TextureCubeAndViews::TextureCubeAndViews(const ImageCreateInfo& info) {
   }
 }
 
-}  // namespace gfx::vk2
+}  // namespace gfx

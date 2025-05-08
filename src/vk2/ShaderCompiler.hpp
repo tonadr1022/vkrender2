@@ -10,7 +10,7 @@
 #include "Common.hpp"
 #include "util/FileWatcher.hpp"
 
-namespace gfx::vk2 {
+namespace gfx {
 
 enum class ShaderType : u8 { None, Vertex, Fragment, Compute };
 
@@ -68,4 +68,4 @@ class ShaderManager {
   bool shader_debug_mode_{true};
 };
 
-}  // namespace gfx::vk2
+}  // namespace gfx

@@ -131,7 +131,7 @@ VkRenderingAttachmentInfo rendering_attachment_info(VkImageView texture, VkImage
           .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
           .clearValue = clear_value != nullptr ? *clear_value : VkClearValue{}};
 }
-VkRenderingAttachmentInfo rendering_attachment_info(vk2::ImageView& texture, VkImageLayout layout,
+VkRenderingAttachmentInfo rendering_attachment_info(ImageView& texture, VkImageLayout layout,
                                                     VkClearValue* clear_value) {
   return rendering_attachment_info(texture.view(), layout, clear_value);
 }

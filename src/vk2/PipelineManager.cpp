@@ -19,7 +19,7 @@
 #include "vk2/VkCommon.hpp"
 #include "vk2/VkTypes.hpp"
 
-namespace gfx::vk2 {
+namespace gfx {
 
 namespace {
 
@@ -262,7 +262,7 @@ PipelineManager::LoadPipelineResult PipelineManager::load_graphics_pipeline_impl
     return res;
   }
   for (u32 i = 0; i < stage_cnt; i++) {
-    detail::hashing::hash_combine(res.hash, create_info_hashes[i]);
+    vk2::detail::hashing::hash_combine(res.hash, create_info_hashes[i]);
   }
 
   VkPipelineInputAssemblyStateCreateInfo input_assembly{
@@ -273,7 +273,7 @@ PipelineManager::LoadPipelineResult PipelineManager::load_graphics_pipeline_impl
       .depthClampEnable = info.rasterization.depth_clamp,
       .rasterizerDiscardEnable = info.rasterization.rasterize_discard_enable,
       .polygonMode = convert_polygon_mode(info.rasterization.polygon_mode),
-      .cullMode = convert_cull_mode(info.rasterization.cull_mode),
+      .cullMode = vk2::convert_cull_mode(info.rasterization.cull_mode),
       .frontFace = convert_front_face(info.rasterization.front_face),
       .depthBiasEnable = info.rasterization.depth_bias,
       .depthBiasConstantFactor = info.rasterization.depth_bias_constant_factor,
@@ -477,10 +477,10 @@ void PipelineManager::on_dirty_files(std::span<std::filesystem::path> dirty_file
 size_t PipelineManager::get_pipeline_hash(const GraphicsPipelineCreateInfo& info) {
   size_t hash{};
   for (const auto& shader_info : info.shaders) {
-    detail::hashing::hash_combine(hash, shader_info.path.string());
-    detail::hashing::hash_combine(hash, shader_info.entry_point);
+    vk2::detail::hashing::hash_combine(hash, shader_info.path.string());
+    vk2::detail::hashing::hash_combine(hash, shader_info.entry_point);
     for (const auto& define : shader_info.defines) {
-      detail::hashing::hash_combine(hash, define);
+      vk2::detail::hashing::hash_combine(hash, define);
     }
   }
 
@@ -557,4 +557,4 @@ PipelineLoader& PipelineLoader::reserve(size_t tasks) {
   return *this;
 }
 
-}  // namespace gfx::vk2
+}  // namespace gfx

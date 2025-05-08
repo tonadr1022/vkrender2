@@ -13,7 +13,7 @@
 #include "Types.hpp"
 #include "vk2/ShaderCompiler.hpp"
 
-namespace gfx::vk2 {
+namespace gfx {
 
 struct Pipeline {
   VkPipeline pipeline;
@@ -205,4 +205,4 @@ class PipelineLoader {
   std::vector<std::future<void>> load_futures_;
 };
 
-}  // namespace gfx::vk2
+}  // namespace gfx
