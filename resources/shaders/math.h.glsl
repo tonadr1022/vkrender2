@@ -23,22 +23,6 @@ vec3 decode_oct(vec2 e) {
     return normalize(v);
 }
 
-vec3 tosrgb(vec3 c) {
-    return pow(c.xyz, vec3(1.0 / 2.2));
-}
-
-vec4 tosrgb(vec4 c) {
-    return vec4(pow(c.xyz, vec3(1.0 / 2.2)), c.w);
-}
-
-vec3 fromsrgb(vec3 c) {
-    return pow(c.xyz, vec3(2.2));
-}
-
-vec4 fromsrgb(vec4 c) {
-    return vec4(pow(c.xyz, vec3(2.2)), c.w);
-}
-
 // Optimized filmic operator by Jim Hejl and Richard Burgess-Dawson
 // http://filmicworlds.com/blog/filmic-tonemapping-operators/
 vec3 tonemap(vec3 c) {

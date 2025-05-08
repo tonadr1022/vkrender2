@@ -18,7 +18,6 @@
 #include "Common.hpp"
 #include "core/FixedVector.hpp"
 #include "core/Logger.hpp"
-#include "imgui.h"
 #include "vk2/Hash.hpp"
 #include "vk2/VkCommon.hpp"
 
@@ -28,7 +27,6 @@
 namespace {
 
 bool load_entire_file(const std::string& path, std::vector<uint32_t>& result);
-std::optional<std::string> load_entire_file(const std::filesystem::path& path);
 
 }  // namespace
 
@@ -49,7 +47,7 @@ VkShaderStageFlagBits convert_shader_stage(ShaderType type) {
   }
 }
 
-size_t hash_shader_info(const ShaderCreateInfo& info) {
+size_t hash_shader_info(const ShaderCreateInfo& info, bool debug_mode) {
   size_t hash{};
   for (const auto& define : info.defines) {
     detail::hashing::hash_combine(hash, define);
@@ -57,6 +55,7 @@ size_t hash_shader_info(const ShaderCreateInfo& info) {
   detail::hashing::hash_combine(hash, info.entry_point);
   detail::hashing::hash_combine(hash, info.path.string());
   detail::hashing::hash_combine(hash, (u32)info.type);
+  detail::hashing::hash_combine(hash, debug_mode);
   return hash;
 }
 
@@ -77,7 +76,7 @@ ShaderManager::LoadProgramResult ShaderManager::load_program(
   u32 out_create_info_hash_idx = 0;
   for (const auto& cinfo : shader_create_infos) {
     auto full_path = cinfo.path.is_relative() ? shader_dir_ / cinfo.path : cinfo.path;
-    size_t new_hash = hash_shader_info(cinfo);
+    size_t new_hash = hash_shader_info(cinfo, shader_debug_mode_);
     out_create_info_hashes[out_create_info_hash_idx++] = new_hash;
 
     auto& spirv_load_result = spirv_binaries.emplace_back();
@@ -88,24 +87,48 @@ ShaderManager::LoadProgramResult ShaderManager::load_program(
       return result;
     }
 
-    if (force || !std::filesystem::exists(spv_path) ||
-        std::filesystem::last_write_time(spv_path) < std::filesystem::last_write_time(glsl_path)) {
-      // compile glsl to spirv
-      bool success = compile_glsl_to_spirv(glsl_path, convert_shader_stage(cinfo.type),
-                                           spirv_load_result.binary_data, cinfo.defines);
-      if (!success) {
+    bool need_new_spirv =
+        force || !std::filesystem::exists(spv_path) ||
+        std::filesystem::last_write_time(spv_path) < std::filesystem::last_write_time(glsl_path);
+    if (!need_new_spirv) {
+      auto it = spirv_include_timestamps_.find(spv_path);
+      if (it == spirv_include_timestamps_.end()) {
+        need_new_spirv = true;
+      } else {
+        for (auto& [filename, write_time] : it->second) {
+          if (std::filesystem::last_write_time(filename) > write_time) {
+            need_new_spirv = true;
+            break;
+          }
+        }
+      }
+    }
+
+    if (need_new_spirv) {
+      std::unordered_set<std::string> all_included_files;
+      if (!compile_glsl_to_spirv(glsl_path, convert_shader_stage(cinfo.type),
+                                 spirv_load_result.binary_data, all_included_files,
+                                 cinfo.defines)) {
         return result;
       }
 
-      // write the spirv
-      std::ofstream file(spv_path, std::ios::binary);
-      if (!file.is_open()) {
-        return result;
+      {
+        std::ofstream file(spv_path, std::ios::binary);
+        if (!file.is_open()) {
+          return result;
+        }
+        file.write(reinterpret_cast<const char*>(spirv_load_result.binary_data.data()),
+                   spirv_load_result.binary_data.size() * sizeof(u32));
       }
-      file.write(reinterpret_cast<const char*>(spirv_load_result.binary_data.data()),
-                 spirv_load_result.binary_data.size() * sizeof(u32));
+
+      std::vector<std::pair<std::string, std::filesystem::file_time_type>> write_times;
+      write_times.reserve(all_included_files.size());
+      for (const auto& included_file : all_included_files) {
+        write_times.emplace_back(included_file, std::filesystem::last_write_time(included_file));
+      }
+      spirv_include_timestamps_[spv_path] = std::move(write_times);
+
     } else {
-      // exists already, load spirv
       load_entire_file(spv_path, spirv_load_result.binary_data);
     }
   }
@@ -145,7 +168,7 @@ void ShaderManager::init() {
   }
 
   {
-    std::ifstream ifs(shader_cache_dir_ / "include_data.txt");
+    std::ifstream ifs(shader_cache_dir_ / include_graph_data_filename);
     if (ifs.is_open()) {
       u64 node_count;
       ifs >> node_count;
@@ -165,6 +188,35 @@ void ShaderManager::init() {
       }
     }
   }
+  {
+    std::ifstream ifs(shader_cache_dir_ / spirv_include_write_times_filename);
+    if (ifs.is_open()) {
+      u64 num_spirv_files;
+      ifs >> num_spirv_files;
+      spirv_include_timestamps_.reserve(num_spirv_files);
+      std::string spv_filename;
+      u64 num_includes;
+      std::string included_filename;
+      u64 included_write_time;
+      std::vector<std::pair<std::string, std::filesystem::file_time_type>> write_times;
+      for (u64 spirv_file_i = 0; spirv_file_i < num_spirv_files; spirv_file_i++) {
+        if (!(ifs >> spv_filename >> num_includes)) {
+          break;
+        }
+        write_times.clear();
+        write_times.reserve(num_includes);
+        for (u64 include_i = 0; include_i < num_includes; include_i++) {
+          if (!(ifs >> included_filename >> included_write_time)) {
+            break;
+          }
+          write_times.emplace_back(
+              included_filename,
+              std::filesystem::file_time_type(std::chrono::nanoseconds(included_write_time)));
+        }
+        spirv_include_timestamps_.emplace(spv_filename, std::move(write_times));
+      }
+    }
+  }
 
   glslang::InitializeProcess();
 
@@ -176,16 +228,31 @@ void ShaderManager::init() {
 ShaderManager::~ShaderManager() {
   ZoneScoped;
   {
-    std::ofstream ofs(shader_cache_dir_ / "include_data.txt");
-    ofs << include_graph_nodes_.size() << '\n';
-    for (const auto& [filename, included_bys] : include_graph_nodes_) {
-      if (!std::filesystem::exists(filename)) continue;
-      ofs << filename.string() << ' ' << included_bys.size() << ' ';
-      for (const auto& included_by : included_bys) {
-        if (!std::filesystem::exists(included_by)) continue;
-        ofs << included_by.string() << ' ';
+    std::ofstream ofs(shader_cache_dir_ / include_graph_data_filename);
+    if (ofs.is_open()) {
+      ofs << include_graph_nodes_.size() << '\n';
+      for (const auto& [filename, included_bys] : include_graph_nodes_) {
+        if (!std::filesystem::exists(filename)) continue;
+        ofs << filename.string() << ' ' << included_bys.size() << ' ';
+        for (const auto& included_by : included_bys) {
+          if (!std::filesystem::exists(included_by)) continue;
+          ofs << included_by.string() << ' ';
+        }
+        ofs << '\n';
       }
-      ofs << '\n';
+    }
+  }
+  {
+    std::ofstream ofs(shader_cache_dir_ / spirv_include_write_times_filename);
+    if (ofs.is_open()) {
+      ofs << spirv_include_timestamps_.size() << '\n';
+      for (auto& [spv_filename, write_times] : spirv_include_timestamps_) {
+        ofs << spv_filename << ' ' << write_times.size() << '\n';
+        for (auto& [included_filename, writetime] : write_times) {
+          ofs << included_filename << ' '
+              << static_cast<size_t>(writetime.time_since_epoch().count()) << ' ';
+        }
+      }
     }
   }
   glslang::FinalizeProcess();
@@ -235,17 +302,7 @@ class IncludeHandler final : public glslang::TShader::Includer {
     ZoneScoped;
     assert(std::filesystem::path(requested_source).is_relative());
     auto full_requested_source = currentIncluderDir_ / requested_source;
-    auto canonical_requested_source =
-        std::filesystem::weakly_canonical(std::filesystem::path(full_requested_source)).string();
-
-    std::filesystem::path canonical_requesting_source =
-        include_depth == 1
-            ? source_path_
-            : std::filesystem::weakly_canonical(std::filesystem::path(requesting_source));
-    file_include_graph_reverse[full_requested_source].emplace(canonical_requesting_source);
-    file_include_graph[canonical_requesting_source].emplace(canonical_requested_source);
     currentIncluderDir_ = full_requested_source.parent_path();
-
     std::ifstream file{full_requested_source};
     if (!file) {
       throw std::runtime_error("File not found");
@@ -254,10 +311,19 @@ class IncludeHandler final : public glslang::TShader::Includer {
                                                      std::istreambuf_iterator<char>());
     auto* content = content_ptr.get();
     auto source_path_ptr = std::make_unique<std::string>(requested_source);
-    // auto sourcePath = sourcePathPtr.get();
-
     contentStrings_.emplace_back(std::move(content_ptr));
     sourcePathStrings_.emplace_back(std::move(source_path_ptr));
+
+    auto canonical_requested_source =
+        std::filesystem::weakly_canonical(std::filesystem::path(full_requested_source)).string();
+    all_included_files.emplace(canonical_requested_source);
+
+    std::filesystem::path canonical_requesting_source =
+        include_depth == 1
+            ? source_path_
+            : std::filesystem::weakly_canonical(std::filesystem::path(requesting_source));
+    file_include_graph_reverse[full_requested_source].emplace(canonical_requesting_source);
+    // file_include_graph[canonical_requesting_source].emplace(canonical_requested_source);
 
     return new glslang::TShader::Includer::IncludeResult(requested_source, content->c_str(),
                                                          content->size(), nullptr);
@@ -281,8 +347,9 @@ class IncludeHandler final : public glslang::TShader::Includer {
     delete data;
   }
 
-  std::unordered_map<std::string, std::unordered_set<std::string>> file_include_graph;
+  // std::unordered_map<std::string, std::unordered_set<std::string>> file_include_graph;
   std::unordered_map<std::string, std::unordered_set<std::string>> file_include_graph_reverse;
+  std::unordered_set<std::string> all_included_files;
 
  private:
   // Acts like a stack that we "push" path components to when include{Local, System} are invoked,
@@ -312,22 +379,15 @@ bool load_entire_file(const std::string& path, std::vector<uint32_t>& result) {
   return true;
 }
 
-std::optional<std::string> load_entire_file(const std::filesystem::path& path) {
-  ZoneScoped;
-  std::ifstream file{path, std::ios::binary};
+std::optional<std::string> load_entire_file(const std::string& path) {
+  std::ifstream file(path, std::ios::in | std::ios::binary);
   if (!file) {
     return std::nullopt;
   }
 
-  file.seekg(0, std::ios::end);
-  std::size_t size = file.tellg();
-  file.seekg(0, std::ios::beg);
-
-  std::string content(size, '\0');
-  if (!file.read(content.data(), size)) {
-    return std::nullopt;
-  }
-  return content;
+  std::ostringstream contents;
+  contents << file.rdbuf();
+  return contents.str();
 }
 
 }  // namespace
@@ -336,6 +396,7 @@ namespace gfx::vk2 {
 
 bool ShaderManager::compile_glsl_to_spirv(const std::string& path, VkShaderStageFlagBits stage,
                                           std::vector<u32>& out_binary,
+                                          std::unordered_set<std::string>& all_included_files,
                                           std::span<const std::string> defines) {
   ZoneScoped;
   LINFO("compiling glsl: {}", path);
@@ -343,7 +404,7 @@ bool ShaderManager::compile_glsl_to_spirv(const std::string& path, VkShaderStage
     LERROR("path does not exist: {}", path);
   }
   constexpr auto compiler_messages =
-      EShMessages(EShMessages::EShMsgSpvRules | EShMessages::EShMsgVulkanRules);
+      EShMessages(EShMsgSpvRules | EShMsgVulkanRules | EShMsgDebugInfo);
   auto glslang_stage = vk_shader_stage_to_glslang(stage);
 
   glslang::TShader shader(glslang_stage);
@@ -353,33 +414,39 @@ bool ShaderManager::compile_glsl_to_spirv(const std::string& path, VkShaderStage
     return false;
   }
   const auto& glsl_text = glsl_text_result.value();
-  // TODO: fix this
-  char* shader_source = new char[glsl_text.size() + 1];
-  std::memcpy(shader_source, glsl_text.c_str(), glsl_text.size());
-  shader_source[glsl_text.size()] = '\0';
-  int ss = strlen(shader_source);
-  shader.setStringsWithLengths(&shader_source, &ss, 1);
+  const char* sources[] = {glsl_text.c_str()};
+  int lengths[] = {static_cast<int>(glsl_text.size())};
+  const char* names[] = {path.c_str()};
+  shader.setStringsWithLengthsAndNames(sources, lengths, names, 1);
   shader.setEnvInput(glslang::EShSourceGlsl, glslang_stage, glslang::EShClientVulkan, 100);
   shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_2);
   shader.setEnvTarget(glslang::EShTargetLanguage::EShTargetSpv, glslang::EShTargetSpv_1_5);
-  std::stringstream preamble;
-  preamble << "#extension GL_GOOGLE_include_directive : enable\n";
-  for (const auto& define : defines) {
-    preamble << define << '\n';
+  std::string preamble;
+  if (defines.size()) {
+    std::stringstream ss;
+    for (const auto& define : defines) {
+      ss << define << "\n";
+    }
+    preamble = ss.str();
   }
-  std::string pre = preamble.str();
-  shader.setPreamble(pre.c_str());
+
+  if (preamble.size()) {
+    shader.setPreamble(preamble.c_str());
+  }
+
   shader.setOverrideVersion(460);
 
   IncludeHandler includer(path);
   bool success = shader.parse(GetDefaultResources(), 460, EProfile::ECoreProfile, false, false,
                               compiler_messages, includer);
   if (!success) {
+    LERROR("path: {}", path);
     LERROR("Failed to parse GLSL shader:\nShader info log:\n{}\nInfo Debug log:\n{}",
            shader.getInfoLog(), shader.getInfoDebugLog());
     return false;
   }
 
+  all_included_files.insert(includer.all_included_files.begin(), includer.all_included_files.end());
   auto& dep_graph = includer.file_include_graph_reverse;
   for (const auto& [filename, included_bys] : dep_graph) {
     auto it = include_graph_nodes_.find(filename);
@@ -407,12 +474,11 @@ bool ShaderManager::compile_glsl_to_spirv(const std::string& path, VkShaderStage
   auto options = glslang::SpvOptions{
       .generateDebugInfo = true,
       .stripDebugInfo = false,
-      .disableOptimizer = false,
-      .optimizeSize = true,
-      .disassemble = false,
-      .validate = true,
-      .emitNonSemanticShaderDebugInfo = false,
-      .emitNonSemanticShaderDebugSource = false,
+      .disableOptimizer = true,
+      .optimizeSize = false,
+      .disassemble = true,
+      .emitNonSemanticShaderDebugInfo = true,
+      .emitNonSemanticShaderDebugSource = true,
   };
 
   {
@@ -426,11 +492,6 @@ bool ShaderManager::compile_glsl_to_spirv(const std::string& path, VkShaderStage
     }
   }
   return true;
-}
-
-void ShaderManager::on_imgui() {
-  ImGui::Checkbox("shader debug mode", &shader_debug_mode_);
-  ImGui::Text("size: %zul", include_graph_nodes_.size());
 }
 
 void ShaderManager::invalidate_cache() { include_graph_nodes_.clear(); }

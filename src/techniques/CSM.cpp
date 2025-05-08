@@ -171,31 +171,6 @@ CSM::CSM(vk2::Device* device, DrawFunc draw_fn, AddRenderDependenciesFunc add_de
         .usage = BufferUsage_Storage,
     });
   }
-  GraphicsPipelineCreateInfo shadow_depth_info{
-      .shaders = {{"shadow_depth.vert", ShaderType::Vertex},
-                  {"shadow_depth.frag", ShaderType::Fragment, {"#define ALPHA_MASK_ENABLED"}}},
-      .rendering = {.depth_format = to_vkformat(Format::D32Sfloat)},
-      .rasterization = {.depth_clamp = true, .depth_bias = true},
-      .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::Less),
-      .dynamic_state = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
-                        VK_DYNAMIC_STATE_DEPTH_BIAS, VK_DYNAMIC_STATE_CULL_MODE},
-      .name = "shadow depth",
-  };
-  auto shadow_depth_alpha_info = shadow_depth_info;
-  shadow_depth_alpha_info.shaders.pop_back();
-  shadow_depth_alpha_info.name = "shadow depth alpha";
-  shadow_depth_alpha_mask_pipeline_ = PipelineManager::get().load(std::move(shadow_depth_info));
-  shadow_depth_pipline_ = PipelineManager::get().load(std::move(shadow_depth_alpha_info));
-
-  depth_debug_pipeline_ = PipelineManager::get().load(GraphicsPipelineCreateInfo{
-      .shaders = {{"fullscreen_quad.vert", ShaderType::Vertex},
-                  {"debug/depth_debug.frag", ShaderType::Fragment}},
-      .rendering = {.color_formats = {to_vkformat(debug_shadow_img_format_)}},
-      .rasterization = {.cull_mode = CullMode::Front},
-      .depth_stencil = GraphicsPipelineCreateInfo::depth_disable(),
-      .name = "depth debug",
-  });
-
   shadow_map_img_att_info_ = {.size_class = SizeClass::Absolute,
                               .dims = {shadow_map_res_, 1},
                               .format = Format::D32Sfloat,
@@ -404,4 +379,34 @@ void CSM::debug_shadow_pass(RenderGraph& rg, const vk2::Sampler& linear_sampler)
     });
   }
 }
+
+void CSM::load_pipelines(vk2::PipelineLoader& loader) {
+  GraphicsPipelineCreateInfo shadow_depth_info{
+      .shaders = {{"shadow_depth.vert", ShaderType::Vertex},
+                  {"shadow_depth.frag", ShaderType::Fragment, {"#define ALPHA_MASK_ENABLED 1\n"}}},
+      .rendering = {.depth_format = to_vkformat(Format::D32Sfloat)},
+      .rasterization = {.depth_clamp = true, .depth_bias = true},
+      .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::Less),
+      .dynamic_state = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
+                        VK_DYNAMIC_STATE_DEPTH_BIAS, VK_DYNAMIC_STATE_CULL_MODE},
+      .name = "shadow depth",
+  };
+  auto d2 = shadow_depth_info;
+  loader.add_graphics(shadow_depth_info, &shadow_depth_alpha_mask_pipeline_);
+  d2.shaders.pop_back();
+  d2.name = "shadow depth alpha";
+  loader.add_graphics(d2, &shadow_depth_pipline_);
+
+  loader.add_graphics(
+      GraphicsPipelineCreateInfo{
+          .shaders = {{"fullscreen_quad.vert", ShaderType::Vertex},
+                      {"debug/depth_debug.frag", ShaderType::Fragment}},
+          .rendering = {.color_formats = {to_vkformat(debug_shadow_img_format_)}},
+          .rasterization = {.cull_mode = CullMode::Front},
+          .depth_stencil = GraphicsPipelineCreateInfo::depth_disable(),
+          .name = "depth debug",
+      },
+      &depth_debug_pipeline_);
+}
+
 }  // namespace gfx

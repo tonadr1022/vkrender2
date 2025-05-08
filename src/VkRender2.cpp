@@ -9,7 +9,6 @@
 
 #include <cassert>
 #include <filesystem>
-#include <future>
 #include <memory>
 #include <tracy/Tracy.hpp>
 #include <tracy/TracyVulkan.hpp>
@@ -154,7 +153,6 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   vk2::ResourceAllocator::init(device_->device(), device_->allocator());
   main_set_ = vk2::ResourceAllocator::get().main_set();
   main_set2_ = vk2::ResourceAllocator::get().main_set2_;
-
   imm_cmd_pool_ = device_->create_command_pool(QueueType::Graphics,
                                                VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
   imm_cmd_buf_ = device_->create_command_buffer(imm_cmd_pool_);
@@ -313,58 +311,44 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
                         .address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
                         .border_color = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE});
 
-  std::vector<std::future<PipelineHandle>> futures;
-  futures.reserve(20);
-  std::vector<PipelineTask> tasks;
-  auto load_compute = [&](const std::string& shader_path, PipelineHandle* handle) {
-    tasks.emplace_back(
-        make_pipeline_task({{shader_path, ShaderType::Compute}, shader_path}, handle));
-    // auto fut = make_pipeline_task({shader_path, ShaderType::Compute}, handle);
-    // fut.future.wait();
-  };
+  PipelineLoader loader;
+  loader.reserve(20);
+  loader.add_compute("cull_objects.comp", &cull_objs_pipeline_)
+      .add_compute("postprocess/postprocess.comp", &postprocess_pipeline_)
+      .add_compute("debug/clear_img.comp", &img_pipeline_)
+      .add_compute("gbuffer/shade.comp", &deferred_shade_pipeline_)
+      .add_graphics(
+          GraphicsPipelineCreateInfo{
+              .shaders = {{"debug/basic.vert", ShaderType::Vertex},
+                          {"debug/basic.frag", ShaderType::Fragment}},
+              .rendering = {.color_formats = {to_vkformat(draw_img_format_)},
+                            .depth_format = to_vkformat(depth_img_format_)},
+              .depth_stencil =
+                  GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
+              .name = "basic draw",
+          },
+          &draw_pipeline_)
+      .add_graphics(
+          GraphicsPipelineCreateInfo{.shaders = {{"skybox/skybox.vert", ShaderType::Vertex},
+                                                 {"skybox/skybox.frag", ShaderType::Fragment}},
+                                     .rendering = {.color_formats = {to_vkformat(draw_img_format_)},
+                                                   .depth_format = to_vkformat(depth_img_format_)},
+                                     .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(
+                                         true, CompareOp::GreaterOrEqual),
+                                     .name = "skybox"},
+          &skybox_pipeline_)
+      .add_graphics(
+          GraphicsPipelineCreateInfo{
+              .shaders = {{"lines/draw_line.vert", ShaderType::Vertex},
+                          {"lines/draw_line.frag", ShaderType::Fragment}},
+              .topology = PrimitiveTopology::LineList,
+              .rendering = {.color_formats = {to_vkformat(device_->get_swapchain_info().format)},
+                            .depth_format = to_vkformat(depth_img_format_)},
+              .depth_stencil =
+                  GraphicsPipelineCreateInfo::depth_enable(false, CompareOp::GreaterOrEqual),
+              .name = "lines"},
+          &line_draw_pipeline_);
 
-  auto load_graphics = [&](const GraphicsPipelineCreateInfo& info, PipelineHandle* handle) {
-    // auto fut = make_pipeline_task(info, handle);
-    // fut.future.wait();
-    tasks.emplace_back(make_pipeline_task(info, handle));
-  };
-
-  load_compute("cull_objects.comp", &cull_objs_pipeline_);
-  load_compute("postprocess/postprocess.comp", &postprocess_pipeline_);
-  load_compute("debug/clear_img.comp", &img_pipeline_);
-  load_compute("gbuffer/shade.comp", &deferred_shade_pipeline_);
-  load_graphics(
-      GraphicsPipelineCreateInfo{
-          .shaders = {{"debug/basic.vert", ShaderType::Vertex},
-                      {"debug/basic.frag", ShaderType::Fragment}},
-          .rendering = {.color_formats = {to_vkformat(draw_img_format_)},
-                        .depth_format = to_vkformat(depth_img_format_)},
-          .depth_stencil =
-              GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
-          .name = "basic draw",
-      },
-      &draw_pipeline_);
-
-  load_graphics(
-      GraphicsPipelineCreateInfo{.shaders = {{"skybox/skybox.vert", ShaderType::Vertex},
-                                             {"skybox/skybox.frag", ShaderType::Fragment}},
-                                 .rendering = {.color_formats = {to_vkformat(draw_img_format_)},
-                                               .depth_format = to_vkformat(depth_img_format_)},
-                                 .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(
-                                     true, CompareOp::GreaterOrEqual),
-                                 .name = "skybox"},
-      &skybox_pipeline_);
-  load_graphics(
-      GraphicsPipelineCreateInfo{
-          .shaders = {{"lines/draw_line.vert", ShaderType::Vertex},
-                      {"lines/draw_line.frag", ShaderType::Fragment}},
-          .topology = PrimitiveTopology::LineList,
-          .rendering = {.color_formats = {to_vkformat(device_->get_swapchain_info().format)},
-                        .depth_format = to_vkformat(depth_img_format_)},
-          .depth_stencil =
-              GraphicsPipelineCreateInfo::depth_enable(false, CompareOp::GreaterOrEqual),
-          .name = "lines"},
-      &line_draw_pipeline_);
   GraphicsPipelineCreateInfo gbuffer_info{
       .shaders = {{"gbuffer/gbuffer.vert", ShaderType::Vertex},
                   {"gbuffer/gbuffer.frag", ShaderType::Fragment}},
@@ -375,15 +359,12 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
       .name = "gbuffer"};
 
-  load_graphics(gbuffer_info, &gbuffer_pipeline_);
+  loader.add_graphics(gbuffer_info, &gbuffer_pipeline_);
   auto alpha_mask_gbuffer_info = gbuffer_info;
-  alpha_mask_gbuffer_info.shaders[1].defines = {"#define ALPHA_MASK_ENABLED 1"};
+  alpha_mask_gbuffer_info.shaders[1].defines = {"#define ALPHA_MASK_ENABLED 1\n"};
   alpha_mask_gbuffer_info.name = "gbuffer alpha mask";
-  load_graphics(alpha_mask_gbuffer_info, &gbuffer_alpha_mask_pipeline_);
+  loader.add_graphics(alpha_mask_gbuffer_info, &gbuffer_alpha_mask_pipeline_);
 
-  for (auto& task : tasks) {
-    task.future.wait();
-  }
   csm_ = std::make_unique<CSM>(
       &get_device(),
       [this](CmdEncoder& cmd, const mat4& vp, bool opaque_alpha, u32 cascade_i) {
@@ -437,8 +418,11 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
           }
         }
       });
-
+  csm_->load_pipelines(loader);
   ibl_ = IBL{cube_vertex_buf_.handle};
+  ibl_->load_pipelines(loader);
+  loader.flush();
+  ibl_->init_post_pipeline_load();
 
   static_opaque_draw_mgr_.emplace("Opaque", 1000, device_);
   static_opaque_alpha_mask_draw_mgr_.emplace("Opaque Alpha Mask", 1000, device_);
@@ -608,7 +592,14 @@ void VkRender2::on_imgui() {
     }
 
     if (ImGui::TreeNode("Pipelines")) {
-      PipelineManager::get().on_imgui();
+      bool debug_shader = PipelineManager::get().get_shader_debug_mode();
+      if (ImGui::Checkbox("Debug info in shaders on compilation", &debug_shader)) {
+        PipelineManager::get().set_shader_debug_mode(debug_shader);
+      }
+
+      if (ImGui::Button("Reload All Shaders")) {
+        PipelineManager::get().reload_shaders();
+      }
       ImGui::TreePop();
     }
     if (ImGui::TreeNodeEx("Debug")) {
@@ -711,8 +702,8 @@ VkRender2::~VkRender2() {
   device_->destroy_resources();
 }
 
-SceneHandle VkRender2::load_static_model(const std::filesystem::path& path, bool dynamic,
-                                         const mat4& transform) {
+SceneHandle VkRender2::load_model(const std::filesystem::path& path, bool dynamic,
+                                  const mat4& transform) {
   ZoneScoped;
   if (!std::filesystem::exists(path)) {
     LERROR("load_static_model: path doesn't exist: {}", path.string());
@@ -1426,7 +1417,6 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
             render_extent, color_atts, COUNTOF(color_atts), &depth_att, nullptr);
         vkCmdBeginRenderingKHR(cmd.cmd(), &render_info);
         cmd.set_viewport_and_scissor(render_extent.width, render_extent.height);
-
         PipelineManager::get().bind_graphics(cmd.cmd(), gbuffer_pipeline_);
         GBufferPushConstants pc{
             static_vertex_buf_.get_buffer()->device_addr(),
@@ -1437,7 +1427,6 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
             linear_sampler_->resource_info.handle,
         };
         cmd.push_constants(sizeof(pc), &pc);
-        // TODO: this is jank lolllll
         cmd.set_cull_mode(CullMode::Back);
         execute_static_geo_draws(cmd, false, false);
         cmd.set_cull_mode(CullMode::None);

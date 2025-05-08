@@ -54,7 +54,7 @@ set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     glslang
     GIT_REPOSITORY https://github.com/KhronosGroup/glslang.git
-    GIT_TAG        5398d55e33dff7d26fecdd2c35808add986c558c
+    GIT_TAG        15.3.0
 )
 
 option(TRACY_ENABLE "Enable profiling" ON)

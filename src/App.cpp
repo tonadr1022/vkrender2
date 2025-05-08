@@ -133,7 +133,7 @@ void App::run() {
   // VkRender2::get().load_scene(local_models_dir / "Cube/glTF/Cube.gltf", false);
   // ren.load_scene(local_models_dir / "sponza.glb", false);
   // VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false);
-  VkRender2::get().load_static_model(local_models_dir / "Bistro_Godot_opt.glb", false);
+  VkRender2::get().load_model(local_models_dir / "Bistro_Godot_opt.glb", false);
   // VkRender2::get().load_static_model(local_models_dir / "Bistro_Godot.glb", false);
   // VkRender2::get().load_scene("/home/tony/models/Models/DamagedHelmet/glTF/DamagedHelmet.gltf",
   //                             false);
@@ -247,7 +247,7 @@ void App::draw_imgui() {
         no_file_err = true;
         err_filename = filename;
       } else {
-        VkRender2::get().load_static_model(filename);
+        VkRender2::get().load_model(filename);
         no_file_err = false;
         enter_clicked = false;
       }
@@ -279,8 +279,8 @@ void App::draw_imgui() {
 
     if (ImGui::Button("add sponza")) {
       static int offset = 1;
-      VkRender2::get().load_static_model(local_models_dir / "sponza.glb", false,
-                                         glm::translate(mat4{1}, vec3{0, 0, offset * 40}));
+      VkRender2::get().load_model(local_models_dir / "sponza.glb", false,
+                                  glm::translate(mat4{1}, vec3{0, 0, offset * 40}));
       offset++;
     }
     CVarSystem::get().draw_imgui_editor();
@@ -292,7 +292,7 @@ void App::on_file_drop(int count, const char** paths) {
   for (int i = 0; i < count; i++) {
     LINFO("dropped file: {}", paths[i]);
     if (std::filesystem::exists(paths[i])) {
-      VkRender2::get().load_static_model(paths[i]);
+      VkRender2::get().load_model(paths[i]);
     }
   }
 }

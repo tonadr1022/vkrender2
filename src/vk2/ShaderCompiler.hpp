@@ -28,7 +28,6 @@ class ShaderManager {
                 OnDirtyFileFunc on_dirty_files_fn, std::filesystem::path shader_dir,
                 bool hot_reload);
   ~ShaderManager();
-  void on_imgui();
 
   struct LoadProgramResult {
     static constexpr int max_stages = 4;
@@ -55,9 +54,18 @@ class ShaderManager {
       include_graph_nodes_;
   bool is_stale(const std::filesystem::path& node);
   bool compile_glsl_to_spirv(const std::string& path, VkShaderStageFlagBits stage,
-                             std::vector<u32>& out_binary, std::span<const std::string> defines);
-  bool shader_debug_mode_{};
+                             std::vector<u32>& out_binary,
+                             std::unordered_set<std::string>& all_included_files,
+                             std::span<const std::string> defines);
   bool hot_reload_{};
+  std::unordered_map<std::string,
+                     std::vector<std::pair<std::string, std::filesystem::file_time_type>>>
+      spirv_include_timestamps_;
+  inline static const char* include_graph_data_filename{"include_data.txt"};
+  inline static const char* spirv_include_write_times_filename{"spirv_include_write_times.txt"};
+
+ public:
+  bool shader_debug_mode_{true};
 };
 
 }  // namespace gfx::vk2

@@ -65,31 +65,6 @@ IBL::IBL(BufferHandle cube_vertex_buf) : cube_vertex_buf_(cube_vertex_buf) {
                       .usage = ImageUsage::General}};
   make_cubemap_views_all_mips(prefiltered_env_map_tex_->texture.value(),
                               prefiltered_env_tex_views_);
-  integrate_brdf_pipeline_ = PipelineManager::get().load(
-      {{"ibl/integrate_brdf.comp", ShaderType::Compute}, "integrate brdf"});
-  equirect_to_cube_pipeline2_ =
-      PipelineManager::get().load({{"ibl/eq_to_cube.comp", ShaderType::Compute}, "eq to cube"});
-  convolute_cube_pipeline_ = PipelineManager::get().load(
-      {{"ibl/cube_convolute.comp", ShaderType::Compute}, "cube convolute"});
-  prefilter_env_map_pipeline_ = PipelineManager::get().load(GraphicsPipelineCreateInfo{
-      .shaders = {{"ibl/prefilter_env_map.vert", ShaderType::Vertex},
-                  {"ibl/prefilter_env_map.frag", ShaderType::Fragment}},
-      .rendering =
-          {
-              .color_formats = {prefiltered_env_map_tex_->texture->format()},
-          },
-      .rasterization = {.cull_mode = CullMode::None},
-      .name = "prefilter env map",
-  });
-  convolute_cube_raster_pipeline_ = PipelineManager::get().load(
-      GraphicsPipelineCreateInfo{.shaders = {{"ibl/cube_convolute.vert", ShaderType::Vertex},
-                                             {"ibl/cube_convolute.frag", ShaderType::Fragment}},
-                                 .rendering =
-                                     {
-                                         .color_formats = {irradiance_cubemap_tex_->format()},
-                                     },
-                                 .rasterization = {.cull_mode = CullMode::None},
-                                 .name = "cube convolute raster"});
 
   auto make_cubemap_views =
       [](const vk2::Image& tex) -> std::array<std::optional<vk2::ImageView>, 6> {
@@ -120,7 +95,6 @@ IBL::IBL(BufferHandle cube_vertex_buf) : cube_vertex_buf_(cube_vertex_buf) {
                                          .mip_levels = 1,
                                          .array_layers = 1,
                                          .usage = ImageUsage::General}};
-  make_brdf_lut();
 }
 
 void IBL::make_cubemap_views_all_mips(const vk2::Image& texture,
@@ -141,7 +115,7 @@ void IBL::make_cubemap_views_all_mips(const vk2::Image& texture,
   }
 }
 
-void IBL::make_brdf_lut() {
+void IBL::init_post_pipeline_load() {
   VkRender2::get().immediate_submit([this](CmdEncoder& ctx) {
     VkCommandBuffer cmd = ctx.cmd();
     VkRender2::get().bind_bindless_descriptors(ctx);
@@ -292,5 +266,32 @@ void IBL::prefilter_env_map(CmdEncoder& ctx) {
   }
 
   transition_image(cmd, *irradiance_cubemap_tex_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+}
+void IBL::load_pipelines(vk2::PipelineLoader& loader) {
+  loader.add_compute("ibl/integrate_brdf.comp", &integrate_brdf_pipeline_);
+  loader.add_compute("ibl/eq_to_cube.comp", &equirect_to_cube_pipeline2_);
+  loader.add_compute("ibl/cube_convolute.comp", &convolute_cube_pipeline_);
+  loader.add_graphics(
+      GraphicsPipelineCreateInfo{
+          .shaders = {{"ibl/prefilter_env_map.vert", ShaderType::Vertex},
+                      {"ibl/prefilter_env_map.frag", ShaderType::Fragment}},
+          .rendering =
+              {
+                  .color_formats = {prefiltered_env_map_tex_->texture->format()},
+              },
+          .rasterization = {.cull_mode = CullMode::None},
+          .name = "prefilter env map",
+      },
+      &prefilter_env_map_pipeline_);
+  loader.add_graphics(
+      GraphicsPipelineCreateInfo{.shaders = {{"ibl/cube_convolute.vert", ShaderType::Vertex},
+                                             {"ibl/cube_convolute.frag", ShaderType::Fragment}},
+                                 .rendering =
+                                     {
+                                         .color_formats = {irradiance_cubemap_tex_->format()},
+                                     },
+                                 .rasterization = {.cull_mode = CullMode::None},
+                                 .name = "cube convolute raster"},
+      &convolute_cube_raster_pipeline_);
 }
 }  // namespace gfx

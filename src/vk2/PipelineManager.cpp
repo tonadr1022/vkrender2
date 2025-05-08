@@ -11,7 +11,6 @@
 #include "ThreadPool.hpp"
 #include "core/FixedVector.hpp"
 #include "core/Logger.hpp"
-#include "imgui.h"
 #include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Device.hpp"
 #include "vk2/Hash.hpp"
@@ -262,7 +261,7 @@ PipelineManager::LoadPipelineResult PipelineManager::load_graphics_pipeline_impl
     }
     return res;
   }
-  for (u32 i =0; i < stage_cnt; i++) {
+  for (u32 i = 0; i < stage_cnt; i++) {
     detail::hashing::hash_combine(res.hash, create_info_hashes[i]);
   }
 
@@ -488,13 +487,6 @@ size_t PipelineManager::get_pipeline_hash(const GraphicsPipelineCreateInfo& info
   return hash;
 }
 
-void PipelineManager::on_imgui() {
-  if (ImGui::Button("Reload All Shaders")) {
-    reload_shaders();
-  }
-  shader_manager_.on_imgui();
-}
-
 void PipelineManager::reload_pipeline_unsafe(PipelineHandle handle, bool force) {
   auto pipeline_it = pipelines_.find(handle);
   if (pipeline_it == pipelines_.end()) {
@@ -529,9 +521,40 @@ void PipelineManager::reload_pipeline_unsafe(PipelineHandle handle, bool force) 
   if (it != graphics_pipeline_infos_.end()) {
   }
 }
+
 u64 PipelineManager::num_pipelines() {
   std::shared_lock lock(mtx_);
   return pipelines_.size();
+}
+
+void PipelineLoader::flush() {
+  for (auto& task : load_futures_) {
+    task.wait();
+  }
+  load_futures_.clear();
+}
+
+PipelineLoader& PipelineLoader::add_compute(std::string_view name, PipelineHandle* output_handle) {
+  return add_compute({{name, ShaderType::Compute}}, output_handle);
+}
+
+PipelineLoader& PipelineLoader::add_graphics(const GraphicsPipelineCreateInfo& cinfo,
+                                             PipelineHandle* output_handle) {
+  load_futures_.emplace_back(
+      threads::pool.submit_task([=]() { *output_handle = PipelineManager::get().load(cinfo); }));
+  return *this;
+}
+
+PipelineLoader& PipelineLoader::add_compute(const ComputePipelineCreateInfo& cinfo,
+                                            PipelineHandle* output_handle) {
+  load_futures_.emplace_back(
+      threads::pool.submit_task([=]() { *output_handle = PipelineManager::get().load(cinfo); }));
+  return *this;
+}
+
+PipelineLoader& PipelineLoader::reserve(size_t tasks) {
+  load_futures_.reserve(tasks);
+  return *this;
 }
 
 }  // namespace gfx::vk2

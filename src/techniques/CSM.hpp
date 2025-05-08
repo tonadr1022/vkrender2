@@ -18,13 +18,16 @@ struct RenderGraphPass;
 class VkRender2;
 namespace vk2 {
 class Device;
-}
+class PipelineLoader;
+}  // namespace vk2
+
 class CSM {
  public:
   using DrawFunc =
       std::function<void(CmdEncoder&, const mat4& vp, bool opaque_alpha, u32 cascade_i)>;
   using AddRenderDependenciesFunc = std::function<void(RenderGraphPass& pass)>;
   explicit CSM(vk2::Device* device, DrawFunc draw_fn, AddRenderDependenciesFunc add_deps_fn);
+  void load_pipelines(vk2::PipelineLoader& loader);
   void add_pass(RenderGraph& rg);
   static constexpr u32 max_cascade_levels{4};
 
@@ -39,7 +42,6 @@ class CSM {
     return light_proj_matrices_[cascade_level];
   }
 
-  void add_pipelines() {}
   void debug_shadow_pass(RenderGraph& rg, const vk2::Sampler& linear_sampler);
   void prepare_frame(RenderGraph& rg, u32 frame_num, const mat4& cam_view, vec3 light_dir,
                      float aspect_ratio, float fov_deg, const AABB& aabb, vec3 view_pos);

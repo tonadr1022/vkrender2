@@ -177,6 +177,7 @@ void Device::init_impl(const CreateInfo& info) {
       {VK_KHR_FORMAT_FEATURE_FLAGS_2_EXTENSION_NAME, VK_KHR_COPY_COMMANDS_2_EXTENSION_NAME,
        VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME}};
+
   // features12.drawIndirectCount = true;
 
   auto pr = phys_builder.set_minimum_version(min_api_version_major, min_api_version_minor)
@@ -202,6 +203,10 @@ void Device::init_impl(const CreateInfo& info) {
     if (vkb_phys_device_.enable_extension_features_if_present(features)) {
       supported_features12_.drawIndirectCount = true;
     }
+
+    // fix validation error due to buffer device address use in spirv causing weird error
+    vkb_phys_device_.enable_extension_if_present(
+        VK_KHR_SHADER_RELAXED_EXTENDED_INSTRUCTION_EXTENSION_NAME);
   }
 
   {

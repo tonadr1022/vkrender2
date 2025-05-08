@@ -136,6 +136,10 @@ class PipelineManager {
   void reload_shaders();
   void reload_pipeline(PipelineHandle handle, bool force);
   void on_imgui();
+  bool get_shader_debug_mode() const { return shader_manager_.shader_debug_mode_; }
+  void set_shader_debug_mode(bool shader_debug_mode) {
+    shader_manager_.shader_debug_mode_ = shader_debug_mode;
+  }
 
  private:
   void reload_pipeline_unsafe(PipelineHandle handle, bool force);
@@ -185,6 +189,20 @@ class PipelineManager {
 
 struct PipelineTask {
   std::future<void> future;
+};
+
+class PipelineLoader {
+ public:
+  PipelineLoader &reserve(size_t tasks);
+  PipelineLoader &add_graphics(const GraphicsPipelineCreateInfo &cinfo,
+                               PipelineHandle *output_handle);
+  PipelineLoader &add_compute(const ComputePipelineCreateInfo &cinfo,
+                              PipelineHandle *output_handle);
+  PipelineLoader &add_compute(std::string_view name, PipelineHandle *output_handle);
+  void flush();
+
+ private:
+  std::vector<std::future<void>> load_futures_;
 };
 
 }  // namespace gfx::vk2
