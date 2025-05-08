@@ -6,6 +6,7 @@
 #include <tuple>
 
 #include "Common.hpp"
+#include "vk2/Handle.hpp"
 #include "vk2/Hash.hpp"
 
 template <typename HandleT>
@@ -548,4 +549,7 @@ class Buffer;
 using ImageViewHandle = GenerationalHandle<class ::gfx::vk2::ImageView>;
 using ImageHandle = GenerationalHandle<class ::gfx::vk2::Image>;
 using BufferHandle = GenerationalHandle<class ::gfx::vk2::Buffer>;
+// using PipelineHandle = u64;
+// TODO: move
+VK2_DEFINE_HANDLE_WITH_NAME(Pipeline, PipelineAndMetadata);
 }  // namespace gfx

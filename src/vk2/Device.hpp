@@ -131,6 +131,7 @@ class Device {
   void destroy(ImageHandle handle);
   void destroy(ImageViewHandle handle);
   void destroy(BufferHandle handle);
+  void set_name(VkPipeline pipeline, const char* name);
 
   Image* get_image(ImageHandle handle) { return img_pool_.get(handle); }
   Image* get_image(const Holder<ImageHandle>& handle) { return img_pool_.get(handle.handle); }
@@ -175,6 +176,7 @@ class Device {
   Queue queues_[(u32)QueueType::Count];
   Image make_img_impl(const ImageCreateInfo& info);
   void init_impl(const CreateInfo& info);
+  void set_name(const char* name, u64 handle, VkObjectType type);
 
   std::vector<PerFrameData> per_frame_data_;
   std::vector<VkFence> free_fences_;

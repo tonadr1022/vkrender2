@@ -235,6 +235,14 @@ void ResourceAllocator::flush_deletions() {
     return false;
   });
 
+  std::erase_if(semaphore_delete_q_, [this](const DeleteQEntry<VkSemaphore>& entry) {
+    if (entry.frame + buffer_count_ < frame_num_) {
+      vkDestroySemaphore(device_, entry.data, nullptr);
+      return true;
+    }
+    return false;
+  });
+
   std::erase_if(pipeline_delete_q_, [this](const DeleteQEntry<VkPipeline>& entry) {
     if (entry.frame + buffer_count_ < frame_num_) {
       vkDestroyPipeline(device_, entry.data, nullptr);
@@ -279,10 +287,11 @@ void ResourceAllocator::flush_deletions() {
 }
 
 void ResourceAllocator::delete_texture_view(const TextureViewDeleteInfo& info) {
-  texture_view_delete_q_.emplace_back(info, frame_num_);
+  texture_view_delete_q_.emplace_back(info, frame_num_ + 3);
 }
 
 void ResourceAllocator::delete_buffer(const BufferDeleteInfo& info) {
+  // TODO: fix
   storage_buffer_delete_q_.emplace_back(info, frame_num_ + 10);
 }
 
@@ -299,7 +308,11 @@ void ResourceAllocator::enqueue_delete_swapchain(VkSwapchainKHR swapchain) {
 }
 
 void ResourceAllocator::enqueue_delete_pipeline(VkPipeline pipeline) {
-  pipeline_delete_q_.emplace_back(pipeline, frame_num_ + 5);
+  pipeline_delete_q_.emplace_back(pipeline, frame_num_);
+}
+
+void ResourceAllocator::enqueue_delete_sempahore(VkSemaphore semaphore) {
+  semaphore_delete_q_.emplace_back(semaphore, frame_num_);
 }
 
 }  // namespace gfx::vk2

@@ -5,7 +5,6 @@
 #include <vector>
 
 #include "Types.hpp"
-#include "vk2/PipelineManager.hpp"
 #include "vk2/Texture.hpp"
 
 namespace gfx {
@@ -35,11 +34,11 @@ class IBL {
   std::array<std::optional<vk2::ImageView>, 6> cubemap_tex_views_;
   std::array<std::optional<vk2::ImageView>, 6> convoluted_cubemap_tex_views_;
   // vk2::PipelineHandle equirect_to_cube_pipeline_;
-  vk2::PipelineHandle equirect_to_cube_pipeline2_;
-  vk2::PipelineHandle convolute_cube_pipeline_;
-  vk2::PipelineHandle integrate_brdf_pipeline_;
-  vk2::PipelineHandle convolute_cube_raster_pipeline_;
-  vk2::PipelineHandle prefilter_env_map_pipeline_;
+  PipelineHandle equirect_to_cube_pipeline2_;
+  PipelineHandle convolute_cube_pipeline_;
+  PipelineHandle integrate_brdf_pipeline_;
+  PipelineHandle convolute_cube_raster_pipeline_;
+  PipelineHandle prefilter_env_map_pipeline_;
   BufferHandle cube_vertex_buf_;
 };
 

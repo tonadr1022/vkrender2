@@ -130,7 +130,6 @@ class VkRender2 final {
     return vk2::get_device().curr_frame_num() % vk2::get_device().get_frames_in_flight();
   }
   void on_imgui();
-  void init_pipelines();
   static constexpr u32 max_draws{100'000};
 
   struct SceneUniforms {
@@ -332,24 +331,24 @@ class VkRender2 final {
     u32 instance_id;
   };
 
-  vk2::PipelineTask make_pipeline_task(const vk2::ShaderCreateInfo& info,
-                                       vk2::PipelineHandle* out_handle);
+  vk2::PipelineTask make_pipeline_task(const vk2::ComputePipelineCreateInfo& info,
+                                       PipelineHandle* out_handle);
   vk2::PipelineTask make_pipeline_task(const vk2::GraphicsPipelineCreateInfo& info,
-                                       vk2::PipelineHandle* out_handle);
+                                       PipelineHandle* out_handle);
   std::filesystem::path default_env_map_path_;
   std::unique_ptr<CSM> csm_;
   vk2::Sampler shadow_sampler_;
   std::optional<IBL> ibl_;
   gfx::RenderGraph rg_;
-  vk2::PipelineHandle img_pipeline_;
-  vk2::PipelineHandle draw_pipeline_;
-  vk2::PipelineHandle cull_objs_pipeline_;
-  vk2::PipelineHandle skybox_pipeline_;
-  vk2::PipelineHandle postprocess_pipeline_;
-  vk2::PipelineHandle gbuffer_pipeline_;
-  vk2::PipelineHandle gbuffer_alpha_mask_pipeline_;
-  vk2::PipelineHandle deferred_shade_pipeline_;
-  vk2::PipelineHandle line_draw_pipeline_;
+  PipelineHandle img_pipeline_;
+  PipelineHandle draw_pipeline_;
+  PipelineHandle cull_objs_pipeline_;
+  PipelineHandle skybox_pipeline_;
+  PipelineHandle postprocess_pipeline_;
+  PipelineHandle gbuffer_pipeline_;
+  PipelineHandle gbuffer_alpha_mask_pipeline_;
+  PipelineHandle deferred_shade_pipeline_;
+  PipelineHandle line_draw_pipeline_;
   Format gbuffer_a_format_{Format::R16G16B16A16Sfloat};
   Format gbuffer_b_format_{Format::R16G16B16A16Sfloat};
   Format gbuffer_c_format_{Format::R16G16B16A16Sfloat};
@@ -393,8 +392,8 @@ class VkRender2 final {
   void draw_skybox(CmdEncoder& cmd);
   void render_imgui(VkCommandBuffer cmd, uvec2 draw_extent, VkImageView target_img_view);
 
-  float aspect_ratio() const;
-  uvec2 window_dims() const;
+  [[nodiscard]] float aspect_ratio() const;
+  [[nodiscard]] uvec2 window_dims() const;
   PerFrameData& curr_frame() {
     return per_frame_data_[device_->curr_frame_num() % device_->get_frames_in_flight()];
   }

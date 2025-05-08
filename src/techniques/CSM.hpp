@@ -4,7 +4,6 @@
 
 #include "CommandEncoder.hpp"
 #include "Types.hpp"
-#include "vk2/PipelineManager.hpp"
 #include "vk2/Pool.hpp"
 #include "vk2/SamplerCache.hpp"
 #include "vk2/Texture.hpp"
@@ -40,6 +39,7 @@ class CSM {
     return light_proj_matrices_[cascade_level];
   }
 
+  void add_pipelines() {}
   void debug_shadow_pass(RenderGraph& rg, const vk2::Sampler& linear_sampler);
   void prepare_frame(RenderGraph& rg, u32 frame_num, const mat4& cam_view, vec3 light_dir,
                      float aspect_ratio, float fov_deg, const AABB& aabb, vec3 view_pos);
@@ -70,9 +70,9 @@ class CSM {
   DrawFunc draw_fn_;
   AddRenderDependenciesFunc add_deps_fn_;
   AttachmentInfo shadow_map_img_att_info_;
-  vk2::PipelineHandle shadow_depth_pipline_;
-  vk2::PipelineHandle shadow_depth_alpha_mask_pipeline_;
-  vk2::PipelineHandle depth_debug_pipeline_;
+  PipelineHandle shadow_depth_pipline_;
+  PipelineHandle shadow_depth_alpha_mask_pipeline_;
+  PipelineHandle depth_debug_pipeline_;
   uvec2 shadow_map_res_{};
   u32 cascade_count_{4};
   // TODO: frames in flight!!!

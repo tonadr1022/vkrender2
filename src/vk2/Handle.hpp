@@ -1,4 +1,7 @@
 #pragma once
+
+#include <functional>
+
 #include "Common.hpp"
 
 template <typename Tag>
@@ -12,7 +15,7 @@ struct HandleOld {
   friend constexpr bool operator<(HandleOld a, HandleOld b) { return a.value_ < b.value_; }
   constexpr HandleT operator()() const { return value_; }
   [[nodiscard]] constexpr HandleT get() const { return value_; }
-  explicit operator bool() { return value_ != 0; }
+  explicit constexpr operator bool() const { return value_ != 0; }
 
  private:
   HandleT value_;
@@ -22,7 +25,7 @@ namespace std {
 template <typename Tag>
 struct hash<HandleOld<Tag>> {
   std::size_t operator()(const HandleOld<Tag>& obj) const noexcept {
-    return std::hash<u32>{}(obj());
+    return std::hash<u64>{}(obj());
   }
 };
 }  // namespace std

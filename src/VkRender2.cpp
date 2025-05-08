@@ -282,8 +282,108 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   static_object_data_buf_.allocator.init(max_static_draws * sizeof(ObjectData), sizeof(ObjectData),
                                          100);
 
-  init_pipelines();
+  // TODO: make a function for this lmao, so cringe
+  {
+    auto vert_buf_size = sizeof(cube_vertices);
+    auto* staging = StagingBufferPool::get().acquire(vert_buf_size);
+    memcpy(staging->mapped_data(), cube_vertices, vert_buf_size);
+    cube_vertex_buf_ = device_->create_buffer_holder(
+        BufferCreateInfo{.size = vert_buf_size, .usage = BufferUsage_Storage});
+    immediate_submit([this, vert_buf_size, staging](VkCommandBuffer cmd) {
+      state_.reset(cmd)
+          .buffer_barrier(static_vertex_buf_.get_buffer()->buffer(),
+                          VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
+          .buffer_barrier(static_index_buf_.get_buffer()->buffer(),
+                          VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
+          .flush_barriers();
+      VkBufferCopy2KHR buf_copy = init::buffer_copy(0, 0, vert_buf_size);
+      VkCopyBufferInfo2KHR buf_copy_info{
+          .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+          .srcBuffer = staging->buffer(),
+          .dstBuffer = device_->get_buffer(cube_vertex_buf_)->buffer(),
+          .regionCount = 1,
+          .pRegions = &buf_copy};
+      vkCmdCopyBuffer2KHR(cmd, &buf_copy_info);
+    });
+  }
 
+  shadow_sampler_ = SamplerCache::get().get_or_create_sampler(
+      SamplerCreateInfo{.min_filter = VK_FILTER_NEAREST,
+                        .mag_filter = VK_FILTER_NEAREST,
+                        .address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                        .border_color = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE});
+
+  std::vector<std::future<PipelineHandle>> futures;
+  futures.reserve(20);
+  std::vector<PipelineTask> tasks;
+  auto load_compute = [&](const std::string& shader_path, PipelineHandle* handle) {
+    tasks.emplace_back(
+        make_pipeline_task({{shader_path, ShaderType::Compute}, shader_path}, handle));
+    // auto fut = make_pipeline_task({shader_path, ShaderType::Compute}, handle);
+    // fut.future.wait();
+  };
+
+  auto load_graphics = [&](const GraphicsPipelineCreateInfo& info, PipelineHandle* handle) {
+    // auto fut = make_pipeline_task(info, handle);
+    // fut.future.wait();
+    tasks.emplace_back(make_pipeline_task(info, handle));
+  };
+
+  load_compute("cull_objects.comp", &cull_objs_pipeline_);
+  load_compute("postprocess/postprocess.comp", &postprocess_pipeline_);
+  load_compute("debug/clear_img.comp", &img_pipeline_);
+  load_compute("gbuffer/shade.comp", &deferred_shade_pipeline_);
+  load_graphics(
+      GraphicsPipelineCreateInfo{
+          .shaders = {{"debug/basic.vert", ShaderType::Vertex},
+                      {"debug/basic.frag", ShaderType::Fragment}},
+          .rendering = {.color_formats = {to_vkformat(draw_img_format_)},
+                        .depth_format = to_vkformat(depth_img_format_)},
+          .depth_stencil =
+              GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
+          .name = "basic draw",
+      },
+      &draw_pipeline_);
+
+  load_graphics(
+      GraphicsPipelineCreateInfo{.shaders = {{"skybox/skybox.vert", ShaderType::Vertex},
+                                             {"skybox/skybox.frag", ShaderType::Fragment}},
+                                 .rendering = {.color_formats = {to_vkformat(draw_img_format_)},
+                                               .depth_format = to_vkformat(depth_img_format_)},
+                                 .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(
+                                     true, CompareOp::GreaterOrEqual),
+                                 .name = "skybox"},
+      &skybox_pipeline_);
+  load_graphics(
+      GraphicsPipelineCreateInfo{
+          .shaders = {{"lines/draw_line.vert", ShaderType::Vertex},
+                      {"lines/draw_line.frag", ShaderType::Fragment}},
+          .topology = PrimitiveTopology::LineList,
+          .rendering = {.color_formats = {to_vkformat(device_->get_swapchain_info().format)},
+                        .depth_format = to_vkformat(depth_img_format_)},
+          .depth_stencil =
+              GraphicsPipelineCreateInfo::depth_enable(false, CompareOp::GreaterOrEqual),
+          .name = "lines"},
+      &line_draw_pipeline_);
+  GraphicsPipelineCreateInfo gbuffer_info{
+      .shaders = {{"gbuffer/gbuffer.vert", ShaderType::Vertex},
+                  {"gbuffer/gbuffer.frag", ShaderType::Fragment}},
+      .rendering = {.color_formats = {to_vkformat(gbuffer_a_format_),
+                                      to_vkformat(gbuffer_b_format_),
+                                      to_vkformat(gbuffer_c_format_)},
+                    .depth_format = to_vkformat(depth_img_format_)},
+      .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
+      .name = "gbuffer"};
+
+  load_graphics(gbuffer_info, &gbuffer_pipeline_);
+  auto alpha_mask_gbuffer_info = gbuffer_info;
+  alpha_mask_gbuffer_info.shaders[1].defines = {"#define ALPHA_MASK_ENABLED 1"};
+  alpha_mask_gbuffer_info.name = "gbuffer alpha mask";
+  load_graphics(alpha_mask_gbuffer_info, &gbuffer_alpha_mask_pipeline_);
+
+  for (auto& task : tasks) {
+    task.future.wait();
+  }
   csm_ = std::make_unique<CSM>(
       &get_device(),
       [this](CmdEncoder& cmd, const mat4& vp, bool opaque_alpha, u32 cascade_i) {
@@ -338,6 +438,8 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
         }
       });
 
+  ibl_ = IBL{cube_vertex_buf_.handle};
+
   static_opaque_draw_mgr_.emplace("Opaque", 1000, device_);
   static_opaque_alpha_mask_draw_mgr_.emplace("Opaque Alpha Mask", 1000, device_);
   static_transparent_draw_mgr_.emplace("Transparent", 1000, device_);
@@ -352,38 +454,6 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
     static_opaque_draw_mgr_->add_draw_pass("csm_" + std::to_string(i));
     static_opaque_alpha_mask_draw_mgr_->add_draw_pass("csm_" + std::to_string(i));
   }
-
-  shadow_sampler_ = SamplerCache::get().get_or_create_sampler(
-      SamplerCreateInfo{.min_filter = VK_FILTER_LINEAR,
-                        .mag_filter = VK_FILTER_LINEAR,
-                        .address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-                        .border_color = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE});
-
-  // TODO: make a function for this lmao, so cringe
-  {
-    auto vert_buf_size = sizeof(cube_vertices);
-    auto* staging = StagingBufferPool::get().acquire(vert_buf_size);
-    memcpy(staging->mapped_data(), cube_vertices, vert_buf_size);
-    cube_vertex_buf_ = device_->create_buffer_holder(
-        BufferCreateInfo{.size = vert_buf_size, .usage = BufferUsage_Storage});
-    immediate_submit([this, vert_buf_size, staging](VkCommandBuffer cmd) {
-      state_.reset(cmd)
-          .buffer_barrier(static_vertex_buf_.get_buffer()->buffer(),
-                          VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
-          .buffer_barrier(static_index_buf_.get_buffer()->buffer(),
-                          VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
-          .flush_barriers();
-      VkBufferCopy2KHR buf_copy = init::buffer_copy(0, 0, vert_buf_size);
-      VkCopyBufferInfo2KHR buf_copy_info{
-          .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
-          .srcBuffer = staging->buffer(),
-          .dstBuffer = device_->get_buffer(cube_vertex_buf_)->buffer(),
-          .regionCount = 1,
-          .pRegions = &buf_copy};
-      vkCmdCopyBuffer2KHR(cmd, &buf_copy_info);
-    });
-  }
-  ibl_ = IBL{cube_vertex_buf_.handle};
   default_env_map_path_ = info.resource_dir / "hdr" / "newport_loft.hdr";
 }
 
@@ -934,76 +1004,6 @@ const char* VkRender2::debug_mode_to_string(u32 mode) {
   }
 }
 
-void VkRender2::init_pipelines() {
-  std::vector<std::future<vk2::PipelineHandle>> futures;
-  futures.reserve(20);
-  std::vector<PipelineTask> tasks;
-  auto load_compute = [&](const std::string& shader_path, vk2::PipelineHandle* handle) {
-    tasks.emplace_back(make_pipeline_task({shader_path, ShaderType::Compute}, handle));
-  };
-
-  auto load_graphics = [&](const GraphicsPipelineCreateInfo& info, vk2::PipelineHandle* handle) {
-    tasks.emplace_back(make_pipeline_task(info, handle));
-  };
-
-  load_compute("cull_objects.comp", &cull_objs_pipeline_);
-  load_compute("postprocess/postprocess.comp", &postprocess_pipeline_);
-  load_compute("debug/clear_img.comp", &img_pipeline_);
-  load_compute("gbuffer/shade.comp", &deferred_shade_pipeline_);
-  load_graphics(
-      GraphicsPipelineCreateInfo{
-          .shaders = {{"debug/basic.vert", ShaderType::Vertex},
-                      {"debug/basic.frag", ShaderType::Fragment}},
-          .rendering = {.color_formats = {to_vkformat(draw_img_format_)},
-                        .depth_format = to_vkformat(depth_img_format_)},
-          .depth_stencil =
-              GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
-      },
-      &draw_pipeline_);
-
-  load_graphics(
-      GraphicsPipelineCreateInfo{
-          .shaders = {{"skybox/skybox.vert", ShaderType::Vertex},
-                      {"skybox/skybox.frag", ShaderType::Fragment}},
-          .rendering = {.color_formats = {to_vkformat(draw_img_format_)},
-                        .depth_format = to_vkformat(depth_img_format_)},
-          .depth_stencil =
-              GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
-      },
-      &skybox_pipeline_);
-
-  GraphicsPipelineCreateInfo gbuffer_info{
-      .shaders = {{"gbuffer/gbuffer.vert", ShaderType::Vertex},
-                  {"gbuffer/gbuffer.frag", ShaderType::Fragment}},
-      .rendering = {.color_formats = {to_vkformat(gbuffer_a_format_),
-                                      to_vkformat(gbuffer_b_format_),
-                                      to_vkformat(gbuffer_c_format_)},
-                    .depth_format = to_vkformat(depth_img_format_)},
-      .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
-  };
-
-  load_graphics(gbuffer_info, &gbuffer_pipeline_);
-  tasks.emplace_back(make_pipeline_task(gbuffer_info, &gbuffer_pipeline_));
-  auto alpha_mask_gbuffer_info = gbuffer_info;
-  alpha_mask_gbuffer_info.shaders[1].defines = {"#define ALPHA_MASK_ENABLED 1"};
-  load_graphics(alpha_mask_gbuffer_info, &gbuffer_alpha_mask_pipeline_);
-  load_graphics(
-      GraphicsPipelineCreateInfo{
-          .shaders = {{"lines/draw_line.vert", ShaderType::Vertex},
-                      {"lines/draw_line.frag", ShaderType::Fragment}},
-          .topology = PrimitiveTopology::LineList,
-          .rendering = {.color_formats = {to_vkformat(device_->get_swapchain_info().format)},
-                        .depth_format = to_vkformat(depth_img_format_)},
-          .depth_stencil =
-              GraphicsPipelineCreateInfo::depth_enable(false, CompareOp::GreaterOrEqual),
-      },
-      &line_draw_pipeline_);
-
-  for (auto& task : tasks) {
-    task.future.wait();
-  }
-}
-
 std::optional<vk2::Image> VkRender2::load_hdr_img(CmdEncoder& ctx,
                                                   const std::filesystem::path& path, bool flip) {
   VkCommandBuffer cmd = ctx.cmd();
@@ -1442,6 +1442,9 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
         execute_static_geo_draws(cmd, false, false);
         cmd.set_cull_mode(CullMode::None);
         execute_static_geo_draws(cmd, true, false);
+        if (gbuffer_alpha_mask_pipeline_ == gbuffer_pipeline_) {
+          exit(1);
+        }
         PipelineManager::get().bind_graphics(cmd.cmd(), gbuffer_alpha_mask_pipeline_);
         cmd.set_cull_mode(CullMode::Back);
         execute_static_geo_draws(cmd, false, true);
@@ -1953,12 +1956,12 @@ float VkRender2::aspect_ratio() const {
 }
 
 vk2::PipelineTask VkRender2::make_pipeline_task(const vk2::GraphicsPipelineCreateInfo& info,
-                                                vk2::PipelineHandle* out_handle) {
+                                                PipelineHandle* out_handle) {
   return {threads::pool.submit_task([=]() { *out_handle = PipelineManager::get().load(info); })};
 }
 
-vk2::PipelineTask VkRender2::make_pipeline_task(const vk2::ShaderCreateInfo& info,
-                                                vk2::PipelineHandle* out_handle) {
+vk2::PipelineTask VkRender2::make_pipeline_task(const vk2::ComputePipelineCreateInfo& info,
+                                                PipelineHandle* out_handle) {
   return {threads::pool.submit_task([=]() { *out_handle = PipelineManager::get().load(info); })};
 }
 

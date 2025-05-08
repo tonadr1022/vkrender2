@@ -13,6 +13,7 @@
 #include "core/Logger.hpp"
 #include "imgui.h"
 #include "vk2/BindlessResourceAllocator.hpp"
+#include "vk2/Device.hpp"
 #include "vk2/Hash.hpp"
 #include "vk2/Initializers.hpp"
 #include "vk2/ShaderCompiler.hpp"
@@ -129,26 +130,30 @@ void PipelineManager::shutdown() {
   delete instance;
 }
 
-PipelineHandle PipelineManager::load(const ShaderCreateInfo& info) {
+PipelineHandle PipelineManager::load(const ComputePipelineCreateInfo& cinfo) {
+  const auto& info = cinfo.info;
   // handle is the hash of the create info
   if (info.type != ShaderType::Compute) {
     return {};
   }
-  u64 handle;
-  VkPipeline pipeline = load_compute_pipeline_impl(info, &handle, false);
-  if (!pipeline) {
+  auto result = load_compute_pipeline_impl(info, false);
+  if (!result.pipeline || !result.hash) {
     return PipelineHandle{};
   }
   auto full_path = get_shader_path(info.path) + ".glsl";
 
+  auto handle = result.hash;
   {
     std::scoped_lock lock(mtx_);
-    pipelines_.emplace(handle,
-                       PipelineAndMetadata{.pipeline = {.pipeline = pipeline, .owns_layout = false},
-                                           .shader_paths = {info.path.string()},
-                                           .type = PipelineType::Compute});
+    pipelines_.emplace(
+        handle, PipelineAndMetadata{.pipeline = {.pipeline = result.pipeline, .owns_layout = false},
+                                    .shader_paths = {info.path.string()},
+                                    .type = PipelineType::Compute});
     compute_pipeline_infos_.emplace(PipelineHandle{handle}, info);
     shader_name_to_used_pipelines_[full_path].emplace(handle);
+  }
+  if (cinfo.name.size()) {
+    get_device().set_name(result.pipeline, cinfo.name.c_str());
   }
 
   return PipelineHandle{handle};
@@ -163,7 +168,7 @@ Pipeline* PipelineManager::get(PipelineHandle handle) {
 
 PipelineManager::~PipelineManager() {
   ZoneScoped;
-  std::shared_lock lock(mtx_);
+  std::scoped_lock lock(mtx_);
   for (auto& [handle, metadata] : pipelines_) {
     assert(metadata.pipeline.pipeline);
     if (metadata.pipeline.pipeline) {
@@ -197,17 +202,16 @@ std::string PipelineManager::get_shader_path(const std::string& path) const {
   return shader_dir_ / path;
 }
 
-PipelineHandle PipelineManager::load(const GraphicsPipelineCreateInfo& cinfo) {
+PipelineHandle PipelineManager::load(GraphicsPipelineCreateInfo info) {
   // TODO: verify path ends in .vert/.frag
-  auto info = cinfo;
   if (info.shaders.size() == 0) {
     return {};
   }
-  u64 handle{};
-  VkPipeline pipeline = load_graphics_pipeline_impl(info, &handle, false);
-  if (!pipeline) {
+  auto result = load_graphics_pipeline_impl(info, false);
+  if (!result.pipeline || !result.hash) {
     return {};
   }
+  PipelineHandle handle{result.hash};
   std::vector<std::string> shader_paths;
   for (const auto& shader_info : info.shaders) {
     if (shader_info.path.empty()) {
@@ -216,12 +220,12 @@ PipelineHandle PipelineManager::load(const GraphicsPipelineCreateInfo& cinfo) {
     shader_paths.emplace_back(shader_info.path.string());
   }
   {
-    std::scoped_lock lock(mtx_);
-    pipelines_.emplace(handle,
-                       PipelineAndMetadata{.pipeline = {.pipeline = pipeline, .owns_layout = false},
-                                           .shader_paths = shader_paths,
-                                           .type = PipelineType::Graphics});
-    graphics_pipeline_infos_.emplace(PipelineHandle{handle}, info);
+    std::lock_guard lock(mtx_);
+    pipelines_.try_emplace(
+        handle, PipelineAndMetadata{.pipeline = {.pipeline = result.pipeline, .owns_layout = false},
+                                    .shader_paths = shader_paths,
+                                    .type = PipelineType::Graphics});
+    graphics_pipeline_infos_.emplace(handle, std::move(info));
     for (auto& path : shader_paths) {
       if (path.empty()) {
         continue;
@@ -231,7 +235,7 @@ PipelineHandle PipelineManager::load(const GraphicsPipelineCreateInfo& cinfo) {
     }
   }
 
-  return PipelineHandle{handle};
+  return handle;
 }
 
 void PipelineManager::bind_graphics(VkCommandBuffer cmd, PipelineHandle handle) {
@@ -242,11 +246,12 @@ void PipelineManager::bind_compute(VkCommandBuffer cmd, PipelineHandle handle) {
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, get(handle)->pipeline);
 }
 
-VkPipeline PipelineManager::load_graphics_pipeline_impl(const GraphicsPipelineCreateInfo& info,
-                                                        u64* out_info_hash, bool force) {
+PipelineManager::LoadPipelineResult PipelineManager::load_graphics_pipeline_impl(
+    const GraphicsPipelineCreateInfo& info, bool force) {
+  LoadPipelineResult res{};
   u32 stage_cnt = info.shaders.size();
-  std::array<std::vector<std::string>, 2> include_files;
-  std::array<u64, 2> create_info_hashes;
+  std::array<std::vector<std::string>, 2> include_files{};
+  std::array<u64, 2> create_info_hashes{};
   ShaderManager::LoadProgramResult result =
       shader_manager_.load_program(info.shaders, create_info_hashes, force);
   if (!result.success) {
@@ -255,14 +260,10 @@ VkPipeline PipelineManager::load_graphics_pipeline_impl(const GraphicsPipelineCr
         vkDestroyShaderModule(device_, result.modules[i], nullptr);
       }
     }
-    return {};
+    return res;
   }
-  if (out_info_hash) {
-    size_t hash = 0;
-    for (auto& h : create_info_hashes) {
-      detail::hashing::hash_combine(hash, h);
-    }
-    *out_info_hash = hash;
+  for (u32 i =0; i < stage_cnt; i++) {
+    detail::hashing::hash_combine(res.hash, create_info_hashes[i]);
   }
 
   VkPipelineInputAssemblyStateCreateInfo input_assembly{
@@ -392,31 +393,26 @@ VkPipeline PipelineManager::load_graphics_pipeline_impl(const GraphicsPipelineCr
       .pColorBlendState = &blend_state,
       .pDynamicState = &dynamic_state,
       .layout = info.layout ? info.layout : default_pipeline_layout_};
-  VkPipeline pipeline{};
-  VK_CHECK(vkCreateGraphicsPipelines(device_, nullptr, 1, &cinfo, nullptr, &pipeline));
+  VK_CHECK(vkCreateGraphicsPipelines(device_, nullptr, 1, &cinfo, nullptr, &res.pipeline));
 
   for (u32 i = 0; i < stage_cnt; i++) {
     vkDestroyShaderModule(device_, result.modules[i], nullptr);
   }
-  if (!pipeline) return {};
+  if (!res.pipeline) return res;
 
   LINFO("loaded graphics pipeline: {}", info.shaders[0].path.string());
 
-  return pipeline;
+  return res;
 }
 
-VkPipeline PipelineManager::load_compute_pipeline_impl(const ShaderCreateInfo& info,
-                                                       u64* out_info_hash, bool force) {
+PipelineManager::LoadPipelineResult PipelineManager::load_compute_pipeline_impl(
+    const ShaderCreateInfo& info, bool force) {
   ZoneScoped;
   std::array<std::vector<std::string>, 1> include_files_arr;
 
-  std::array<u64, 1> info_hash;
-
+  u64 hash{};
   ShaderManager::LoadProgramResult result =
-      shader_manager_.load_program(SPAN1(info), info_hash, force);
-  if (out_info_hash) {
-    *out_info_hash = info_hash[0];
-  }
+      shader_manager_.load_program(SPAN1(info), SPAN1(hash), force);
 
   if (!result.success) {
     LINFO("failed to load compute pipeline: {}", info.path.string());
@@ -439,11 +435,11 @@ VkPipeline PipelineManager::load_compute_pipeline_impl(const ShaderCreateInfo& i
 
   vkDestroyShaderModule(device_, result.modules[0], nullptr);
   if (!pipeline) {
-    return VK_NULL_HANDLE;
+    return {};
   }
 
   LINFO("loaded compute pipeline: {}", info.path.string());
-  return pipeline;
+  return {pipeline, hash};
 }
 
 void PipelineManager::reload_shaders() {
@@ -509,25 +505,23 @@ void PipelineManager::reload_pipeline_unsafe(PipelineHandle handle, bool force) 
   if (pipeline.type == PipelineType::Graphics) {
     auto it = graphics_pipeline_infos_.find(handle);
     assert(it != graphics_pipeline_infos_.end());
-    u64 new_hash;
-    VkPipeline res = load_graphics_pipeline_impl(it->second, &new_hash, force);
-    if (res) {
+    auto result = load_graphics_pipeline_impl(it->second, force);
+    if (result.pipeline) {
       if (pipeline.pipeline.pipeline) {
         ResourceAllocator::get().enqueue_delete_pipeline(pipeline.pipeline.pipeline);
       }
-      pipeline.pipeline.pipeline = res;
+      pipeline.pipeline.pipeline = result.pipeline;
     }
 
   } else if (pipeline.type == PipelineType::Compute) {
     auto it = compute_pipeline_infos_.find(handle);
     assert(it != compute_pipeline_infos_.end());
-    u64 new_hash;
-    VkPipeline res = load_compute_pipeline_impl(it->second, &new_hash, force);
-    if (res) {
+    auto result = load_compute_pipeline_impl(it->second, force);
+    if (result.pipeline) {
       if (pipeline.pipeline.pipeline) {
         ResourceAllocator::get().enqueue_delete_pipeline(pipeline.pipeline.pipeline);
       }
-      pipeline.pipeline.pipeline = res;
+      pipeline.pipeline.pipeline = result.pipeline;
     }
   }
 
@@ -535,4 +529,9 @@ void PipelineManager::reload_pipeline_unsafe(PipelineHandle handle, bool force) 
   if (it != graphics_pipeline_infos_.end()) {
   }
 }
+u64 PipelineManager::num_pipelines() {
+  std::shared_lock lock(mtx_);
+  return pipelines_.size();
+}
+
 }  // namespace gfx::vk2

@@ -23,6 +23,9 @@
 
 namespace {
 
+#ifndef NDEBUG
+#define DEBUG_VK_OBJECT_NAMES 1
+#endif
 #ifdef DEBUG_CALLBACK_ENABLED
 VKAPI_ATTR VkBool32 VKAPI_CALL
 debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -290,7 +293,7 @@ void Device::init_impl(const CreateInfo& info) {
   }
 
   // TODO: set debug name functions
-#ifndef NDEBUG
+#ifdef DEBUG_VK_OBJECT_NAMES
   VkDebugUtilsObjectNameInfoEXT name_info = {
       .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
       .objectType = VK_OBJECT_TYPE_QUEUE,
@@ -555,8 +558,9 @@ VkImage Device::acquire_next_image() {
         acquire_next_image_result == VK_ERROR_OUT_OF_DATE_KHR) {
       // recreate new semaphore
       // need to make new semaphore since wsi doesn't unsignal it
+
       for (auto& sem : swapchain_.acquire_semaphores) {
-        vkDestroySemaphore(device_, sem, nullptr);
+        ResourceAllocator::get().enqueue_delete_sempahore(sem);
       }
       LINFO("new semapohres create");
       swapchain_.acquire_semaphores.clear();
@@ -658,4 +662,23 @@ bool Device::is_supported(DeviceFeature feature) const {
   return true;
 }
 
+void Device::set_name(const char* name, u64 handle, VkObjectType type) {
+  VkDebugUtilsObjectNameInfoEXT name_info = {
+      .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+      .objectType = type,
+      .objectHandle = handle,
+      .pObjectName = name};
+  vkSetDebugUtilsObjectNameEXT(device_, &name_info);
+}
+
+void Device::set_name(VkPipeline pipeline, const char* name) {
+#ifdef DEBUG_VK_OBJECT_NAMES
+  if (pipeline) {
+    set_name(name, reinterpret_cast<u64>(pipeline), VK_OBJECT_TYPE_PIPELINE);
+  }
+#else
+  (void)pipeline;
+  (void)name;
+#endif
+}
 }  // namespace gfx::vk2

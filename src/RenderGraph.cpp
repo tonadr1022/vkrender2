@@ -900,13 +900,19 @@ void RenderGraph::setup_attachments() {
                 cinfo.override_usage_flags == dims.image_usage_flags) {
               physical_image_attachments_[i] = it->second.handle;
               need_new_img = false;
+            } else {
+              LINFO("need new image: {} {} {}\ncinfo : {} {}", i, dims.width, dims.height,
+                    cinfo.extent.width, cinfo.extent.height);
             }
           }
-          img_cache_used_.emplace_back(it->first, std::move(it->second));
+          if (!need_new_img) {
+            img_cache_used_.emplace_back(it->first, std::move(it->second));
+          }
           img_cache_.erase(it);
         }
         if (need_new_img) {
           image_pipeline_states_.erase(physical_image_attachments_[i]);
+          LINFO("making new image: {}", i);
           img_cache_used_.emplace_back(dims, vk2::get_device().create_image_holder(info));
           // if (!inserted) {
           //   it->second = vk2::get_device().create_image_holder(info);
@@ -1212,6 +1218,5 @@ RenderGraph::ResourceState* RenderGraph::get_resource_pipeline_state(u32 idx) {
   }
   return &buffer_pipeline_states_[physical_buffers_[idx]];
 }
-
 
 }  // namespace gfx

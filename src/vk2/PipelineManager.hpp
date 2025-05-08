@@ -11,7 +11,6 @@
 #include <vector>
 
 #include "Types.hpp"
-#include "vk2/Handle.hpp"
 #include "vk2/ShaderCompiler.hpp"
 
 namespace gfx::vk2 {
@@ -20,12 +19,6 @@ struct Pipeline {
   VkPipeline pipeline;
   VkPipelineLayout layout;
   bool owns_layout{};
-};
-
-VK2_DEFINE_HANDLE_WITH_NAME(Pipeline, PipelineAndMetadata);
-
-struct ComputePipelineCreateInfo {
-  ShaderCreateInfo cinfo{};
 };
 
 // TODO: vertex input, tesselation
@@ -114,6 +107,11 @@ struct GraphicsPipelineCreateInfo {
     return DepthStencil{
         .depth_test_enable = true, .depth_write_enable = write_enable, .depth_compare_op = op};
   }
+  std::string name;
+};
+struct ComputePipelineCreateInfo {
+  ShaderCreateInfo info;
+  std::string name;
 };
 
 // TODO: on start up, check last write times for shader dir files that are .h or glsl. compare them
@@ -126,13 +124,15 @@ class PipelineManager {
   static void init(VkDevice device, std::filesystem::path shader_dir, bool hot_reload,
                    VkPipelineLayout default_layout = nullptr);
   static void shutdown();
+  [[nodiscard]] u64 num_pipelines();
   void bind_graphics(VkCommandBuffer cmd, PipelineHandle handle);
   void bind_compute(VkCommandBuffer cmd, PipelineHandle handle);
 
-  [[nodiscard]] PipelineHandle load(const ShaderCreateInfo &info);
-  [[nodiscard]] PipelineHandle load(const GraphicsPipelineCreateInfo &info);
+  [[nodiscard]] PipelineHandle load(const ComputePipelineCreateInfo &info);
+  [[nodiscard]] PipelineHandle load(GraphicsPipelineCreateInfo info);
 
   Pipeline *get(PipelineHandle handle);
+
   void reload_shaders();
   void reload_pipeline(PipelineHandle handle, bool force);
   void on_imgui();
@@ -169,10 +169,13 @@ class PipelineManager {
 
   std::filesystem::path shader_dir_;
   size_t get_pipeline_hash(const GraphicsPipelineCreateInfo &info);
-  VkPipeline load_graphics_pipeline_impl(const GraphicsPipelineCreateInfo &info, u64 *out_info_hash,
-                                         bool force);
-  VkPipeline load_compute_pipeline_impl(const ShaderCreateInfo &info, u64 *out_info_hash,
-                                        bool force);
+  struct LoadPipelineResult {
+    VkPipeline pipeline;
+    size_t hash;
+  };
+  LoadPipelineResult load_graphics_pipeline_impl(const GraphicsPipelineCreateInfo &info,
+                                                 bool force);
+  LoadPipelineResult load_compute_pipeline_impl(const ShaderCreateInfo &info, bool force);
 
   ShaderManager shader_manager_;
   std::filesystem::path cache_path_;
