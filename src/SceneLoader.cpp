@@ -933,30 +933,16 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
             glm::vec3 max;
 
             bool has_min = false, has_max = false;
-            std::visit(
-                [&](auto&& minVec) {
-                  if constexpr (std::is_same_v<std::decay_t<decltype(minVec)>,
-                                               std::pmr::vector<double>>) {
-                    if (minVec.size() >= 3) {
-                      has_min = true;
-                      min = glm::vec3(static_cast<float>(minVec[0]), static_cast<float>(minVec[1]),
-                                      static_cast<float>(minVec[2]));
-                    }
-                  }
-                },
-                pos_accessor.min);
-            std::visit(
-                [&](auto&& maxVec) {
-                  if constexpr (std::is_same_v<std::decay_t<decltype(maxVec)>,
-                                               std::pmr::vector<double>>) {
-                    if (maxVec.size() >= 3) {
-                      has_max = true;
-                      max = glm::vec3(static_cast<float>(maxVec[0]), static_cast<float>(maxVec[1]),
-                                      static_cast<float>(maxVec[2]));
-                    }
-                  }
-                },
-                pos_accessor.max);
+            if (pos_accessor.min.has_value()) {
+              has_min = true;
+              const auto& val = pos_accessor.min.value();
+              min = glm::vec3(val.get<double>(0), val.get<double>(1), val.get<double>(2));
+            }
+            if (pos_accessor.max.has_value()) {
+              has_max = true;
+              const auto& val = pos_accessor.max.value();
+              max = glm::vec3(val.get<double>(0), val.get<double>(1), val.get<double>(2));
+            }
 
             // If min/max are available, calculate bounds directly
             if (has_min && has_max) {

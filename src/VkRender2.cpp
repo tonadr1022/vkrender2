@@ -4,7 +4,7 @@
 #include <volk.h>
 #include <vulkan/vk_enum_string_helper.h>
 #include <vulkan/vulkan_core.h>
-#include <imgui_impl_vulkan.h>
+#include <imgui/backends/imgui_impl_vulkan.h>
 // clang-format on
 
 #include <cassert>
@@ -24,8 +24,8 @@
 #include "Types.hpp"
 #include "core/Logger.hpp"
 #include "glm/packing.hpp"
-#include "imgui.h"
-#include "imgui_impl_glfw.h"
+#include "imgui/backends/imgui_impl_glfw.h"
+#include "imgui/imgui.h"
 #include "shaders/common.h.glsl"
 #include "shaders/cull_objects_common.h.glsl"
 #include "shaders/debug/basic_common.h.glsl"
@@ -442,12 +442,12 @@ void VkRender2::draw(const SceneDrawInfo& info) {
   ZoneScoped;
   {
     on_imgui();
-    ImGuiIO& io = ImGui::GetIO();
+    // ImGuiIO& io = ImGui::GetIO();
     ImGui::Render();
-    if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-      ImGui::UpdatePlatformWindows();
-      ImGui::RenderPlatformWindowsDefault();
-    }
+    // if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+    //   ImGui::UpdatePlatformWindows();
+    //   ImGui::RenderPlatformWindowsDefault();
+    // }
 
     device_->begin_frame();
     ResourceAllocator::get().set_frame_num(device_->curr_frame_num(),

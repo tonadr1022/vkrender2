@@ -1,0 +1,33 @@
+[submodule "third_party/fastgltf"]
+	path = third_party/fastgltf
+	url = git@github.com:spnda/fastgltf.git
+[submodule "third_party/ktx"]
+	path = third_party/ktx
+	url = https://github.com/KhronosGroup/KTX-Software.git
+[submodule "third_party/tracy"]
+	path = third_party/tracy
+	url = git@github.com:wolfpld/tracy
+[submodule "third_party/glslang"]
+	path = third_party/glslang
+	url = git@github.com:KhronosGroup/glslang
+[submodule "third_party/vma"]
+	path = third_party/vma
+	url = git@github.com:GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator
+[submodule "third_party/vk-bootstrap"]
+	path = third_party/vk-bootstrap
+	url = git@github.com:charles-lunarg/vk-bootstrap
+[submodule "third_party/volk"]
+	path = third_party/volk
+	url = git@github.com:zeux/volk
+[submodule "third_party/imgui"]
+	path = third_party/imgui
+	url = git@github.com:ocornut/imgui
+[submodule "third_party/glm"]
+	path = third_party/glm
+	url = git@github.com:g-truc/glm
+[submodule "third_party/glfw"]
+	path = third_party/glfw
+	url = git@github.com:glfw/glfw
+[submodule "third_party/bshoshany-thread-pool"]
+	path = third_party/bshoshany-thread-pool
+	url = git@github.com:bshoshany/thread-pool

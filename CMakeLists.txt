@@ -82,6 +82,9 @@ resources
 src
 )
 
+set_property(TARGET VulkanMemoryAllocator PROPERTY COMPILE_FLAGS "-Wno-error")
+# target_compile_options(VulkanMemoryAllocator PRIVATE -Wno-error)
+
 target_link_libraries(vkrender2 PRIVATE
 ktx
 glfw

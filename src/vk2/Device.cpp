@@ -1,8 +1,8 @@
 #include "Device.hpp"
 
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_vulkan.h>
+#include <imgui/backends/imgui_impl_glfw.h>
+#include <imgui/backends/imgui_impl_vulkan.h>
+#include <imgui/imgui.h>
 #include <volk.h>
 #include <vulkan/vk_enum_string_helper.h>
 #include <vulkan/vulkan_core.h>
@@ -503,6 +503,7 @@ void Device::init_imgui() {
   {
     // TODO: remove
     ImGui_ImplVulkan_LoadFunctions(
+        vkb_phys_device_.properties.apiVersion,
         [](const char* functionName, void* vulkanInstance) {
           return vkGetInstanceProcAddr(*static_cast<VkInstance*>(vulkanInstance), functionName);
         },
