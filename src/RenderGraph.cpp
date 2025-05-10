@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "CommandEncoder.hpp"
+#include "Types.hpp"
 #include "core/Logger.hpp"
 #include "util/BitOps.hpp"
 #include "vk2/Buffer.hpp"
@@ -114,15 +115,10 @@ VkImageUsageFlags get_image_usage(Access access) {
 
 }  // namespace
 
-void RenderGraphPass::add(const std::string& name, const Holder<BufferHandle>& buffer,
-                          Access access) {
-  add(name, buffer.handle, access);
-}
-
 RenderGraphPass::UsageAndHandle RenderGraphPass::init_usage_and_handle(Access access,
-                                                                       RenderResourceHandle handle,
+                                                                       RGResourceHandle handle,
                                                                        RenderResource& res) {
-  UsageAndHandle res_usage{.idx = handle, .access = access};
+  UsageAndHandle res_usage{.handle = handle, .access = access};
   get_vk_stage_access(access, res_usage.access_flags, res_usage.stages);
   if (is_read_access(access)) {
     resource_read_indices_.emplace_back(resources_.size());
@@ -135,17 +131,23 @@ RenderGraphPass::UsageAndHandle RenderGraphPass::init_usage_and_handle(Access ac
   return res_usage;
 }
 
-void RenderGraphPass::add_proxy(const std::string& name, Access access) {
-  uint32_t handle = graph_.get_or_add_buffer_resource(name);
-  RenderResource& res = *graph_.get_resource(handle);
+void RenderGraphPass::add(BufferHandle buf_handle, Access access) {
+  auto resource_handle = graph_.get_or_add_buffer_resource(buf_handle);
+  RenderResource& res = *graph_.get_resource(resource_handle);
   res.access = static_cast<Access>(res.access | access);
-  res.buffer_info.proxy_hash = std::hash<std::string>{}(name);
-  init_usage_and_handle(access, handle, res);
+
+  auto* buf = get_device().get_buffer(buf_handle);
+  assert(buf);
+  if (!buf) {
+    return;
+  }
+  res.buffer_info = {buf_handle, buf->size()};
+  init_usage_and_handle(access, resource_handle, res);
 }
 
-RenderResourceHandle RenderGraphPass::add(const std::string& name, const AttachmentInfo& info,
-                                          Access access, const std::string&) {
-  uint32_t handle = graph_.get_or_add_texture_resource(name);
+RGResourceHandle RenderGraphPass::add(const std::string& name, const AttachmentInfo& info,
+                                      Access access, const std::string&) {
+  auto handle = graph_.get_or_add_texture_resource(name);
   RenderResource& res = *graph_.get_resource(handle);
   res.access = static_cast<Access>(res.access | access);
   res.image_usage |= get_image_usage(access);
@@ -158,11 +160,11 @@ RenderResourceHandle RenderGraphPass::add(const std::string& name, const Attachm
   return handle;
 }
 
-RenderResourceHandle RenderGraphPass::add(const std::string& name, Access access) {
+RGResourceHandle RenderGraphPass::add_image_access(const std::string& name, Access access) {
   if (!graph_.resource_to_idx_map_.contains(name)) {
-    return UINT32_MAX;
+    return {};
   }
-  uint32_t handle = graph_.get_or_add_texture_resource(name);
+  auto handle = graph_.get_or_add_texture_resource(name);
   RenderResource& res = *graph_.get_resource(handle);
   res.access = static_cast<Access>(res.access | access);
   res.image_usage |= get_image_usage(access);
@@ -172,19 +174,6 @@ RenderResourceHandle RenderGraphPass::add(const std::string& name, Access access
   }
   init_usage_and_handle(access, handle, res);
   return handle;
-}
-
-void RenderGraphPass::add(const std::string& name, BufferHandle buffer, Access access) {
-  uint32_t handle = graph_.get_or_add_buffer_resource(name);
-  RenderResource& res = *graph_.get_resource(handle);
-  auto* buf = get_device().get_buffer(buffer);
-  assert(buf);
-  if (!buf) {
-    return;
-  }
-  res.access = static_cast<Access>(res.access | access);
-  res.buffer_info = {buffer, buf->size()};
-  init_usage_and_handle(access, handle, res);
 }
 
 RenderGraphPass::RenderGraphPass(std::string name, RenderGraph& graph, uint32_t idx, Type type)
@@ -204,22 +193,6 @@ VoidResult RenderGraph::bake() {
   ZoneScoped;
   swapchain_img_ = get_device().acquire_next_image();
   desc_ = get_device().get_swapchain_info();
-  // validate
-  // go through each input and make sure it's an output of a previous pass if it needs to read from
-  // it for (auto& pass : passes_) {
-  //   // for (auto& tex_resource : pass.)
-  // }
-
-  // u64 all_pass_hash{};
-  // for (auto& pass : passes_) {
-  //   vk2::detail::hashing::hash_combine(all_pass_hash, pass.get_name());
-  // }
-  // if (all_pass_hash == all_submitted_pass_name_hash_) {
-  //   return {};
-  // }
-  // reset();
-  // all_submitted_pass_name_hash_ = all_pass_hash;
-
   if (auto ok = validate(); !ok) {
     return ok;
   }
@@ -247,7 +220,7 @@ VoidResult RenderGraph::bake() {
     for (uint32_t pass_i = 0; pass_i < passes_.size(); pass_i++) {
       auto& pass = passes_[pass_i];
       for (const auto& usage : pass.get_resources()) {
-        if (resources_[usage.idx].name == backbuffer_img_) {
+        if (get_resource(usage.handle)->name == backbuffer_img_) {
           // TODO: move this to validation phase
           // if (!(usage.access_flags & VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT)) {
           //   return std::unexpected("backbuffer output is not of usage ColorOutput");
@@ -311,7 +284,7 @@ VoidResult RenderGraph::bake() {
       phys_pass.name = pass.get_name();
 
       for (const auto& output : pass.get_resources()) {
-        auto* res = get_resource(output.idx);
+        auto* res = get_resource(output.handle);
         if (res->physical_idx != RenderResource::unused) {
           if (output.access & Access::ColorWrite) {
             phys_pass.physical_color_attachments.emplace_back(res->physical_idx);
@@ -561,14 +534,15 @@ void RenderGraph::execute(CmdEncoder& cmd) {
     for (u32 pass_i : swapchain_writer_passes_) {
       auto& pass = passes_[pass_i];
       if (const auto* output = pass.get_swapchain_write_usage(); output != nullptr) {
-        auto* resource = get_resource(output->idx);
-        auto* tex = get_texture(output->idx);
+        auto* resource = get_resource(output->handle);
+        auto* tex = get_texture(output->handle);
 
-        if (std::ranges::find(swapchain_write_indices, output->idx) !=
+        if (std::ranges::find(swapchain_write_indices, output->handle.idx) !=
             swapchain_write_indices.end()) {
           continue;
         }
-        swapchain_write_indices.push_back(output->idx);
+
+        swapchain_write_indices.push_back(output->handle.idx);
 
         assert(resource && tex);
         if (!resource || !tex) {
@@ -643,7 +617,7 @@ VoidResult RenderGraph::traverse_dependencies_recursive(uint32_t pass_i, uint32_
   for (const uint32_t& read_i : pass.resource_read_indices_) {
     auto& resource_read = pass.resources_[read_i];
     std::span<const uint16_t> passes_writing_to_resource{};
-    auto* input = get_resource(resource_read.idx);
+    auto* input = get_resource(resource_read.handle);
     assert(input);
     passes_writing_to_resource = input->get_written_passes();
 
@@ -689,43 +663,38 @@ void RenderGraph::prune_duplicates(std::vector<uint32_t>& data) {
   data.resize(std::distance(data.begin(), write_it));
 }
 
-uint32_t RenderGraph::get_or_add_buffer_resource(const std::string& name) {
-  auto it = resource_to_idx_map_.find(name);
-  if (it != resource_to_idx_map_.end()) {
-    uint32_t idx = it->second;
-    if (resources_[idx].get_type() != RenderResource::Type::Buffer) {
-      LERROR("resource already exists and is not a buffer: {}", name);
-      exit(1);
-    }
+RGResourceHandle RenderGraph::get_or_add_buffer_resource(BufferHandle handle) {
+  auto it = buffer_to_idx_map_.find(handle);
+  if (it != buffer_to_idx_map_.end()) {
     return it->second;
   }
-
   uint32_t idx = resources_.size();
-  resource_to_idx_map_.emplace(name, idx);
+  RGResourceHandle out_handle{idx, RenderResource::Type::Buffer};
+  buffer_to_idx_map_.emplace(handle, out_handle);
   resources_.emplace_back(RenderResource::Type::Buffer, idx);
-  resources_[idx].name = name;
-  return idx;
+  return out_handle;
 }
 
-uint32_t RenderGraph::get_or_add_texture_resource(const std::string& name) {
+RGResourceHandle RenderGraph::get_or_add_texture_resource(const std::string& name) {
   auto it = resource_to_idx_map_.find(name);
   if (it != resource_to_idx_map_.end()) {
     return it->second;
   }
 
   uint32_t idx = resources_.size();
-  resource_to_idx_map_.emplace(name, idx);
+  RGResourceHandle handle{idx, RenderResource::Type::Texture};
+  resource_to_idx_map_.emplace(name, handle);
   resources_.emplace_back(RenderResource::Type::Texture, idx);
   resources_[idx].name = name;
-  return idx;
+  return handle;
 }
 
-RenderResource* RenderGraph::get_resource(uint32_t idx) {
-  assert(idx < resources_.size());
-  if (idx >= resources_.size()) {
+RenderResource* RenderGraph::get_resource(RGResourceHandle handle) {
+  assert(handle.idx < resources_.size());
+  if (handle.idx >= resources_.size()) {
     return nullptr;
   }
-  return &resources_[idx];
+  return &resources_[handle.idx];
 }
 
 ResourceDimensions RenderGraph::get_resource_dims(const RenderResource& resource) const {
@@ -761,22 +730,17 @@ void RenderGraph::build_physical_resource_reqs() {
   for (uint32_t pass_i : pass_stack_) {
     auto& pass = passes_[pass_i];
     for (const auto& r : pass.get_resources()) {
-      get_resource(r.idx)->physical_idx = RenderResource::unused;
+      get_resource(r.handle)->physical_idx = RenderResource::unused;
     }
   }
   // build physical resources
   for (uint32_t pass_i : pass_stack_) {
     auto& pass = passes_[pass_i];
-
     for (const auto& resource_usage : pass.get_resources()) {
-      auto* res = get_resource(resource_usage.idx);
+      auto* res = get_resource(resource_usage.handle);
       if (res->physical_idx == RenderResource::unused) {
         assert(res);
         res->physical_idx = physical_resource_dims_.size();
-        // TODO: validate that backbuffer write resource is an image with the correct access
-        if (res->name == backbuffer_img_) {
-          res->image_usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-        }
         physical_resource_dims_.emplace_back(get_resource_dims(*res));
       } else {
         if (physical_resource_dims_[res->physical_idx].is_image()) {
@@ -832,7 +796,7 @@ VoidResult RenderGraph::output_graphvis(const std::filesystem::path& path) {
 
   for (uint32_t writer : swapchain_writer_passes_) {
     for (const auto& output : passes_[writer].get_resources()) {
-      auto& res = resources_[output.idx];
+      auto& res = *get_resource(output.handle);
       if (res.name == backbuffer_img_) {
         print_link(passes_[writer].get_name(), "swapchain", res.name);
       }
@@ -915,17 +879,7 @@ void RenderGraph::setup_attachments() {
         }
       }
     } else {
-      if (dims.buffer_info.proxy_hash != 0) {
-        auto it = buffer_bindings_.find(dims.buffer_info.proxy_hash);
-        if (it == buffer_bindings_.end()) {
-          LERROR("buffer not found for proxy");
-          exit(1);
-        }
-        assert(i < physical_buffers_.size());
-        physical_buffers_[i] = it->second;
-      } else {
-        physical_buffers_[i] = dims.buffer_info.handle;
-      }
+      physical_buffers_[i] = dims.buffer_info.handle;
     }
   }
 }
@@ -971,7 +925,7 @@ void RenderGraph::build_barrier_infos() {
     };
 
     for (const auto& pass_resource_usage : pass.get_resources()) {
-      auto resource_physical_idx = resources_[pass_resource_usage.idx].physical_idx;
+      auto resource_physical_idx = get_resource(pass_resource_usage.handle)->physical_idx;
       if (resource_physical_idx == RenderResource::unused) continue;
       if (is_read_access(pass_resource_usage.access)) {
         auto& barrier = get_invalidate_access(resource_physical_idx);
@@ -1010,9 +964,7 @@ void RenderGraph::PassSubmissionState::reset() {
   buffer_barriers.clear();
 }
 
-bool ResourceDimensions::is_image() const {
-  return buffer_info.size == 0 && buffer_info.proxy_hash == 0;
-}
+bool ResourceDimensions::is_image() const { return buffer_info.size == 0; }
 
 // Are there any access types in the barrier that haven’t been invalidated in any of the relevant
 // stages?
@@ -1132,10 +1084,13 @@ ImageHandle RenderGraph::get_texture_handle(RenderResource* resource) {
   return physical_image_attachments_[resource->physical_idx];
 }
 
-ImageHandle RenderGraph::get_texture_handle(RenderResourceHandle resource) {
+ImageHandle RenderGraph::get_texture_handle(RGResourceHandle resource) {
   return get_texture_handle(get_resource(resource));
 }
-Image* RenderGraph::get_texture(uint32_t idx) { return get_texture(get_resource(idx)); }
+Image* RenderGraph::get_texture(RGResourceHandle handle) {
+  return get_texture(get_resource(handle));
+}
+
 Image* RenderGraph::get_texture(RenderResource* resource) {
   if (!resource) return nullptr;
   return get_device().get_image(physical_image_attachments_[resource->physical_idx]);
@@ -1171,6 +1126,7 @@ const RenderGraphPass::UsageAndHandle* RenderGraphPass::get_swapchain_write_usag
 
 void RenderGraph::reset() {
   passes_.clear();
+  buffer_to_idx_map_.clear();
   physical_resource_dims_.clear();
   resources_.clear();
   resource_to_idx_map_.clear();
@@ -1179,10 +1135,6 @@ void RenderGraph::reset() {
   dup_prune_set_.clear();
   physical_image_attachments_.clear();
   physical_buffers_.clear();
-}
-
-void RenderGraph::set_resource(const std::string& name, BufferHandle handle) {
-  buffer_bindings_[std::hash<std::string>{}(name)] = handle;
 }
 
 std::size_t ResourceDimensionsHasher::operator()(const ResourceDimensions& dims) const {

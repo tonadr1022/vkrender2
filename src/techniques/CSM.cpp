@@ -263,12 +263,12 @@ void CSM::prepare_frame(RenderGraph& rg, u32 frame_num, const mat4& cam_view, ve
   data_.settings.w = cascade_count_;
 
   auto& buf = shadow_data_bufs_[frame_num % shadow_data_bufs_.size()];
-  rg.set_resource("shadow_data_buf", buf.handle);
 }
 
 void CSM::add_pass(RenderGraph& rg) {
   auto& csm_prepare_pass = rg.add_pass("csm_prepare");
-  csm_prepare_pass.add_proxy("shadow_data_buf", Access::TransferWrite);
+  csm_prepare_pass.add(shadow_data_bufs_[get_device().curr_frame_in_flight()].handle,
+                       Access::TransferWrite);
   csm_prepare_pass.set_execute_fn([this](CmdEncoder& cmd) {
     TracyVkZone(cmd.get_tracy_ctx(), cmd.cmd(), "csm_prepare");
     auto* buf = get_device().get_buffer(
@@ -350,7 +350,7 @@ void CSM::debug_shadow_pass(RenderGraph& rg, SamplerHandle linear_sampler) {
                                 .dims = {shadow_map_res_, 1},
                                 .format = Format::R16G16B16A16Sfloat},
                  Access::ColorWrite);
-    pass.add("shadow_map_img", Access::FragmentRead);
+    pass.add_image_access("shadow_map_img", Access::FragmentRead);
     pass.set_execute_fn([this, &linear_sampler, &rg, shadow_map_debug_img_handle](CmdEncoder& cmd) {
       auto* tex = rg.get_texture(shadow_map_debug_img_handle);
       uvec2 extent{tex->extent_2d().width, tex->extent_2d().height};
@@ -393,7 +393,6 @@ void CSM::load_pipelines(PipelineLoader& loader) {
   d2.shaders.pop_back();
   d2.name = "shadow depth alpha";
   loader.add_graphics(d2, &shadow_depth_pipline_);
-
   loader.add_graphics(
       GraphicsPipelineCreateInfo{
           .shaders = {{"fullscreen_quad.vert", ShaderType::Vertex},

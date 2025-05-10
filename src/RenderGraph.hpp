@@ -25,7 +25,6 @@ using ExecuteFn = std::function<void(CmdEncoder& cmd)>;
 struct BufferInfo {
   BufferHandle handle;
   size_t size{};
-  u64 proxy_hash{};
 };
 
 struct ResourceDimensions {
@@ -38,7 +37,6 @@ struct ResourceDimensions {
   [[nodiscard]] bool is_storage_image() const;
   [[nodiscard]] bool is_image() const;
   friend bool operator==(const ResourceDimensions& a, const ResourceDimensions& b) {
-    // TODO: buffer info?
     bool valid_extent = false;
     if (a.size_class == SizeClass::SwapchainRelative && a.size_class == b.size_class) {
       valid_extent = true;
@@ -109,16 +107,22 @@ struct RenderResource {
 // TODO: better handle type
 using RenderResourceHandle = uint32_t;
 
+struct RGResourceHandle {
+  RGResourceHandle(u32 idx, RenderResource::Type type) : idx(idx), type(type) {}
+  RGResourceHandle() = default;
+  u32 idx{UINT32_MAX};
+  RenderResource::Type type;
+  [[nodiscard]] bool is_valid() const { return idx != UINT32_MAX; }
+  bool operator==(RGResourceHandle& other) const { return idx == other.idx && type == other.type; }
+};
+
 struct RenderGraphPass {
   enum class Type : uint8_t { Compute, Graphics };
   explicit RenderGraphPass(std::string name, RenderGraph& graph, uint32_t idx, Type type);
-  RenderResourceHandle add(const std::string& name, Access access);
-  void add(const std::string& name, BufferHandle buffer, Access access);
-  void add(const std::string& name, const Holder<BufferHandle>& buffer, Access access);
-  // void add(const std::string& name, ImageHandle image, Access access);
-  void add_proxy(const std::string& name, Access access);
-  RenderResourceHandle add(const std::string& name, const AttachmentInfo& info, Access access,
-                           const std::string& input = "");
+  RGResourceHandle add_image_access(const std::string& name, Access access);
+  void add(BufferHandle buf_handle, Access access);
+  RGResourceHandle add(const std::string& name, const AttachmentInfo& info, Access access,
+                       const std::string& input = "");
 
   template <typename F>
   void set_execute_fn(F&& fn)
@@ -132,7 +136,7 @@ struct RenderGraphPass {
   [[nodiscard]] uint32_t get_idx() const { return idx_; }
 
   struct UsageAndHandle {
-    uint32_t idx{};
+    RGResourceHandle handle;
     VkAccessFlags2 access_flags{};
     VkPipelineStageFlags2 stages{};
     Access access{};
@@ -153,8 +157,7 @@ struct RenderGraphPass {
   u32 swapchain_write_idx_{RenderResource::unused};
   std::vector<UsageAndHandle> resources_;
   std::vector<u32> resource_read_indices_;
-  UsageAndHandle init_usage_and_handle(Access access, RenderResourceHandle handle,
-                                       RenderResource& res);
+  UsageAndHandle init_usage_and_handle(Access access, RGResourceHandle handle, RenderResource& res);
   // std::vector<UsageAndHandle> resource_inputs_;
   // std::vector<UsageAndHandle> resource_outputs_;
 
@@ -179,14 +182,13 @@ struct RenderGraph {
   void setup_attachments();
   void execute(CmdEncoder& cmd);
 
-  uint32_t get_or_add_buffer_resource(const std::string& name);
-  uint32_t get_or_add_texture_resource(const std::string& name);
-  RenderResource* get_resource(RenderResourceHandle idx);
-  Image* get_texture(RenderResourceHandle idx);
+  RGResourceHandle get_or_add_buffer_resource(BufferHandle handle);
+  RGResourceHandle get_or_add_texture_resource(const std::string& name);
+  RenderResource* get_resource(RGResourceHandle handle);
+  Image* get_texture(RGResourceHandle handle);
   Image* get_texture(RenderResource* resource);
   ImageHandle get_texture_handle(RenderResource* resource);
-  ImageHandle get_texture_handle(RenderResourceHandle resource);
-  void set_resource(const std::string& name, BufferHandle handle);
+  ImageHandle get_texture_handle(RGResourceHandle resource);
 
  private:
   // TODO: integrate swapchain more closely?
@@ -238,8 +240,9 @@ struct RenderGraph {
   std::unordered_map<ImageHandle, ResourceState> image_pipeline_states_;
   std::unordered_map<BufferHandle, ResourceState> buffer_pipeline_states_;
   ResourceState* get_resource_pipeline_state(u32 physical_idx);
-  // std::vector<ResourceState> resource_pipeline_states_;
-  std::unordered_map<std::string, uint32_t> resource_to_idx_map_;
+
+  std::unordered_map<std::string, RGResourceHandle> resource_to_idx_map_;
+  std::unordered_map<BufferHandle, RGResourceHandle> buffer_to_idx_map_;
 
   // TODO: bitset
   std::vector<std::unordered_set<uint32_t>> pass_dependencies_;

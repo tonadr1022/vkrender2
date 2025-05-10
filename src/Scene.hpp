@@ -13,6 +13,7 @@ struct MeshBounds {
 
 using PassFlags = u8;
 enum PassFlagBits : PassFlags {
+  PassFlags_None = 0,
   PassFlags_Opaque = 1 << 0,
   PassFlags_OpaqueAlpha = 1 << 1,
   PassFlags_Transparent = 1 << 2,

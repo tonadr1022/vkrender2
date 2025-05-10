@@ -163,9 +163,18 @@ class VkRender2 final {
     u32 materials;
   };
 
+  enum MeshPass : u8 {
+    MeshPass_Opaque,
+    MeshPass_OpaqueAlphaMask,
+    MeshPass_Transparent,
+    MeshPass_Count
+  };
+  std::array<u32, 2> opaque_mesh_pass_idxs_{MeshPass_Opaque, MeshPass_OpaqueAlphaMask};
+
   struct StaticMeshDrawManager {
     using Handle = GenerationalHandle<struct Alloc>;
-    explicit StaticMeshDrawManager(std::string name, size_t initial_max_draw_cnt, Device* device);
+    StaticMeshDrawManager() = default;
+    void init(MeshPass type, size_t initial_max_draw_cnt, Device* device);
     StaticMeshDrawManager(const StaticMeshDrawManager&) = delete;
     StaticMeshDrawManager(StaticMeshDrawManager&&) = delete;
     StaticMeshDrawManager& operator=(const StaticMeshDrawManager&) = delete;
@@ -177,12 +186,8 @@ class VkRender2 final {
     };
 
     struct DrawPass {
-      explicit DrawPass(std::string name, u32 num_single_sided_draws, u32 num_double_sided_draws,
+      explicit DrawPass(u32 num_single_sided_draws, u32 num_double_sided_draws,
                         u32 frames_in_flight, Device* device);
-      std::string name;
-      // lol this is jank but i don't want a string alloc every time. need to make a special hashed
-      // string that combines multiple strings at once
-      std::string name_double_sided;
 
       std::array<std::vector<Holder<BufferHandle>>, 2> out_draw_cmds_bufs;
       [[nodiscard]] BufferHandle get_frame_out_draw_cmd_buf_handle(bool double_sided) const;
@@ -190,7 +195,7 @@ class VkRender2 final {
       Device* device_;
       bool enabled{true};
     };
-    void add_draw_pass(const std::string& name);
+    [[nodiscard]] u32 add_draw_pass();
 
     // TODO: this is a little jank
     Handle add_draws(StateTracker& state, CmdEncoder& cmd, size_t size, size_t staging_offset,
@@ -210,6 +215,8 @@ class VkRender2 final {
     }
 
     [[nodiscard]] const std::vector<DrawPass>& get_draw_passes() const { return draw_passes_; }
+    [[nodiscard]] const DrawPass& get_draw_pass(u32 idx) const { return draw_passes_[idx]; }
+    [[nodiscard]] MeshPass get_mesh_pass() const { return mesh_pass_; }
 
    private:
     std::vector<DrawPass> draw_passes_;
@@ -218,7 +225,11 @@ class VkRender2 final {
     FreeListBuffer draw_cmds_buf_;
     u32 num_draw_cmds_[2] = {};  // idx 1 is double sided
     Device* device_{};
+    MeshPass mesh_pass_{MeshPass_Count};
   };
+
+  std::array<u32, MeshPass_Count> main_view_mesh_pass_indices_;
+  std::vector<std::array<u32, MeshPass_Count>> shadow_mesh_pass_indices_;
 
   struct StaticModelGPUResources {
     StaticModelGPUResources() = default;
@@ -270,9 +281,7 @@ class VkRender2 final {
 
   struct StaticModelInstanceResources {
     std::vector<ObjectData> object_datas;
-    StaticMeshDrawManager::Handle opaque_draws_handle;
-    StaticMeshDrawManager::Handle opaque_alpha_draws_handle;
-    StaticMeshDrawManager::Handle transparent_draws_handle;
+    std::array<StaticMeshDrawManager::Handle, MeshPass_Count> mesh_pass_draw_handles;
     util::FreeListAllocator::Slot instance_data_slot;
     util::FreeListAllocator::Slot object_data_slot;
     StaticModelGPUResourcesHandle model_resources_handle;
@@ -300,15 +309,11 @@ class VkRender2 final {
 
   DrawStats static_draw_stats_{};
 
-  std::optional<StaticMeshDrawManager> static_opaque_draw_mgr_;
-  std::optional<StaticMeshDrawManager> static_opaque_alpha_mask_draw_mgr_;
-  std::optional<StaticMeshDrawManager> static_transparent_draw_mgr_;
+  std::array<StaticMeshDrawManager, MeshPass_Count> static_draw_mgrs_;
   std::vector<mat4> cull_vp_matrices_;
-  std::array<StaticMeshDrawManager*, 3> draw_managers_;
-  u32 main_mesh_pass_idx_{0};
 
   bool should_draw(const StaticMeshDrawManager& mgr) const;
-  void execute_static_geo_draws(CmdEncoder& cmd, bool double_sided, bool opaque_alpha);
+  void execute_static_geo_draws(CmdEncoder& cmd, bool double_sided, MeshPass pass);
   void execute_draw(CmdEncoder& cmd, const Buffer& buffer, u32 draw_count) const;
 
   AABB scene_aabb_{};

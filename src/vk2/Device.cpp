@@ -694,7 +694,7 @@ void Device::set_name(ImageViewHandle handle, const char* name) {
     set_name(name, reinterpret_cast<u64>(img->view()), VK_OBJECT_TYPE_IMAGE_VIEW);
   }
 #else
-  (void)pipeline;
+  (void)handle;
   (void)name;
 #endif
 }
@@ -704,7 +704,7 @@ void Device::set_name(ImageHandle handle, const char* name) {
     set_name(name, reinterpret_cast<u64>(img->image()), VK_OBJECT_TYPE_IMAGE);
   }
 #else
-  (void)pipeline;
+  (void)handle;
   (void)name;
 #endif
 }
