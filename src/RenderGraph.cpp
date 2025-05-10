@@ -198,15 +198,7 @@ RenderGraphPass& RenderGraph::add_pass(const std::string& name, RenderGraphPass:
   return passes_.back();
 }
 
-VoidResult RenderGraph::validate() {
-  return VoidResult{};
-  for (auto& pass : passes_) {
-    if (!pass.execute_) {
-      return std::unexpected("pass missing execute function");
-    }
-  }
-  // TODO: more validation lmao
-}
+VoidResult RenderGraph::validate() { return VoidResult{}; }
 
 VoidResult RenderGraph::bake() {
   ZoneScoped;
@@ -347,6 +339,7 @@ VoidResult RenderGraph::bake() {
   build_barrier_infos();
 
   {
+    ZoneScoped;
     const auto flush_access_to_invalidate = [](VkAccessFlags2 flags) -> VkAccessFlags2 {
       if (flags & VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT) {
         flags |= VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;

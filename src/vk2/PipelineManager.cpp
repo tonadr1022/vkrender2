@@ -57,6 +57,8 @@ constexpr VkFrontFace convert_front_face(FrontFace face) {
       return VK_FRONT_FACE_CLOCKWISE;
     case FrontFace::CounterClockwise:
       return VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    default:
+      return VK_FRONT_FACE_MAX_ENUM;
   }
 }
 constexpr VkPolygonMode convert_polygon_mode(PolygonMode mode) {
@@ -75,6 +77,7 @@ constexpr VkPolygonMode convert_polygon_mode(PolygonMode mode) {
 
 constexpr VkPrimitiveTopology convert_prim_topology(PrimitiveTopology top) {
   switch (top) {
+    default:
     case PrimitiveTopology::PointList:
       return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
     case PrimitiveTopology::LineList:

@@ -9,10 +9,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wredundant-move"
 #include <fastgltf/core.hpp>
 #include <fastgltf/glm_element_traits.hpp>
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
+#pragma GCC diagnostic pop
 #include <future>
 #include <optional>
 
@@ -383,6 +387,7 @@ void load_cpu_img_data(const fastgltf::Asset& asset, const fastgltf::Image& imag
   ZoneScoped;
   auto get_vk_format = [&](bool is_ktx) {
     switch (usage) {
+      default:
       case PBRImageUsage::BaseColor:
       case PBRImageUsage::Emissive:
         return is_ktx ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_R8G8B8A8_SRGB;
@@ -666,10 +671,10 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
   assert(result->textures.size() == images.size());
   {
     ZoneScopedN("upload images");
-    constexpr size_t max_batch_upload_size = 1024ull * 1024 * 1024;  // 1 GB
-    size_t batch_upload_size = std::min(max_batch_upload_size, staging_offset);
+    constexpr i32 max_batch_upload_size = 1024ull * 1024 * 1024;  // 1 GB
+    i32 batch_upload_size = std::min<i32>(max_batch_upload_size, staging_offset);
     assert(batch_upload_size < max_batch_upload_size);
-    size_t bytes_remaining = staging_offset;
+    i32 bytes_remaining = staging_offset;
     u64 img_i{};
     u64 curr_staging_offset = 0;
     u64 start_copy_idx{};
@@ -739,9 +744,10 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
       start_copy_idx = img_i;
     };
     while (bytes_remaining > 0) {
-      if (bytes_remaining - img_upload_infos[img_i].size < 0) {
-        flush_uploads();
-      }
+      // if (bytes_remaining - img_upload_infos[img_i].size < 0) {
+      //   LINFO("flush uploads");
+      //   flush_uploads();
+      // }
 
       futures.emplace_back(threads::pool.submit_task(
           [img_i, &img_upload_infos, curr_staging_offset, &img_staging_buf]() {
@@ -964,7 +970,8 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
 
               assert(accessor.count == pos_accessor.count);
               u64 i = start_i;
-              for (glm::vec2 uv : fastgltf::iterateAccessor<glm::vec2>(gltf, accessor)) {
+              auto range = fastgltf::iterateAccessor<glm::vec2>(gltf, accessor);
+              for (const glm::vec2& uv : range) {
                 result->vertices[i].uv_x = uv.x;
                 result->vertices[i++].uv_y = uv.y;
               }
@@ -975,11 +982,13 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
               u64 i = start_i;
               assert(accessor.count == pos_accessor.count);
               if (accessor.type == fastgltf::AccessorType::Vec3) {
-                for (glm::vec3 tangent : fastgltf::iterateAccessor<glm::vec3>(gltf, accessor)) {
+                auto range = fastgltf::iterateAccessor<glm::vec3>(gltf, accessor);
+                for (const glm::vec3& tangent : range) {
                   result->vertices[i++].tangent = vec4(tangent, 0.);
                 }
               } else if (accessor.type == fastgltf::AccessorType::Vec4) {
-                for (glm::vec4 tangent : fastgltf::iterateAccessor<glm::vec4>(gltf, accessor)) {
+                auto range = fastgltf::iterateAccessor<glm::vec4>(gltf, accessor);
+                for (const glm::vec4& tangent : range) {
                   result->vertices[i++].tangent = tangent;
                 }
               }
@@ -994,7 +1003,8 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
               const auto& normal_accessor = gltf.accessors[normal_attrib->accessorIndex];
               u64 i = start_i;
               assert(normal_accessor.count == pos_accessor.count);
-              for (glm::vec3 normal : fastgltf::iterateAccessor<glm::vec3>(gltf, normal_accessor)) {
+              auto range = fastgltf::iterateAccessor<glm::vec3>(gltf, normal_accessor);
+              for (const glm::vec3& normal : range) {
                 result->vertices[i++].normal = normal;
               }
             }

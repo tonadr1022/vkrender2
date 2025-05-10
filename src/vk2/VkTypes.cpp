@@ -23,6 +23,7 @@ VkImageAspectFlags format_to_aspect_flags(VkFormat format) {
     default:
       return VK_IMAGE_ASPECT_COLOR_BIT;
   }
+  return 0;
 }
 
 VkImageAspectFlags format_to_aspect_flags(Format format) {
@@ -37,6 +38,9 @@ VkCullModeFlags convert_cull_mode(CullMode mode) {
       return VK_CULL_MODE_BACK_BIT;
     case CullMode::Front:
       return VK_CULL_MODE_FRONT_BIT;
+    default:
+      return 0;
   }
+  return 0;
 }
 }  // namespace gfx::vk2

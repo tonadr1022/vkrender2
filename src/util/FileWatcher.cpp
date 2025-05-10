@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <tracy/Tracy.hpp>
 #include <utility>
 
 namespace util {
@@ -28,6 +29,7 @@ void FileWatcher::update_loop() {
 }
 
 void FileWatcher::update() {
+  ZoneScoped;
   std::scoped_lock lock(mtx_);
   for (const auto& file : std::filesystem::recursive_directory_iterator(base_path_)) {
     if (file.is_directory()) continue;

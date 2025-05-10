@@ -42,6 +42,7 @@ src/App.cpp
 target_compile_options(vkrender2
     PRIVATE
     $<$<OR:$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>>:
+    -Werror
     -Wall
     -Wextra
     -pedantic-errors
@@ -82,7 +83,13 @@ resources
 src
 )
 
-set_property(TARGET VulkanMemoryAllocator PROPERTY COMPILE_FLAGS "-Wno-error")
+target_compile_options(VulkanMemoryAllocator INTERFACE
+    -Wno-error
+    -Wno-all
+    -Wno-extra
+    -Wno-unused-parameter
+)
+set_property(TARGET fastgltf PROPERTY COMPILE_FLAGS "-Wno-sign-compare")
 # target_compile_options(VulkanMemoryAllocator PRIVATE -Wno-error)
 
 target_link_libraries(vkrender2 PRIVATE
@@ -102,6 +109,7 @@ stb_image
 mikktspace
 SPIRV
 )
+target_compile_options(vkrender2 PRIVATE "-Wno-unknown-pragmas")
 
 # target_compile_definitions(vkrender2 PRIVATE TRACY_VK_USE_SYMBOL_TABLE)
 target_compile_definitions(glm INTERFACE GLM_FORCE_DEPTH_ZERO_TO_ONE VK_NO_PROTOTYPES GLFW_INCLUDE_NONE)
