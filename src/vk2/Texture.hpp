@@ -1,5 +1,6 @@
 #pragma once
 
+#include <vk_mem_alloc.h>
 #include <vulkan/vulkan_core.h>
 
 #include <array>
@@ -7,10 +8,6 @@
 #include <string>
 
 #include "vk2/Resource.hpp"
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wnullability-extension"
-#include <vk_mem_alloc.h>
-#pragma clang diagnostic pop
 
 namespace gfx {
 

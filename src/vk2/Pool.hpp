@@ -80,8 +80,6 @@ struct Pool {
   }
 
  private:
-  IndexT get_new_idx() {}
-
   std::vector<IndexT> free_list_;
   std::vector<Entry> entries_;
   IndexT size_{};

@@ -203,6 +203,7 @@ void ResourceAllocator::allocate_bindless_resource(VkDescriptorType descriptor_t
 
 u32 ResourceAllocator::resource_to_binding(ResourceType type) {
   switch (type) {
+    default:
     case ResourceType::StorageImage:
       return bindless_storage_image_binding;
     case ResourceType::StorageBuffer:

@@ -138,6 +138,7 @@ void App::run() {
   // VkRender2::get().load_scene("/home/tony/models/Models/DamagedHelmet/glTF/DamagedHelmet.gltf",
   //                             false);
   std::filesystem::path env_tex = local_models_dir / "quarry_04_puresky_4k.hdr";
+  assert(std::filesystem::exists(env_tex));
   // std::filesystem::path env_tex = local_models_dir / "immenstadter_horn_2k.hdr";
   // std::filesystem::path env_tex = local_models_dir / "newport_loft.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/quarry_04_puresky_4k.hdr";

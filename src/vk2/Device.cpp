@@ -98,10 +98,9 @@ void Device::init_impl(const CreateInfo& info) {
   {
     ZoneScopedN("instance init");
     vkb::InstanceBuilder instance_builder;
-    instance_builder
-        .set_minimum_instance_version(vk2::min_api_version_major, vk2::min_api_version_minor, 0)
+    instance_builder.set_minimum_instance_version(1, 2, 0)
         .set_app_name(info.app_name)
-        .require_api_version(vk2::min_api_version_major, vk2::min_api_version_minor, 0);
+        .require_api_version(1, 2, 0);
 
 #ifdef DEBUG_CALLBACK_ENABLED
     instance_builder.set_debug_callback(debug_callback);
@@ -165,10 +164,6 @@ void Device::init_impl(const CreateInfo& info) {
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES};
   features11.shaderDrawParameters = true;
 
-  VkPhysicalDeviceVulkan13Features features13{
-      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
-  features13.dynamicRendering = true;
-  features13.synchronization2 = true;
   VkPhysicalDeviceDynamicRenderingFeatures dynamic_rendering_features{};
   dynamic_rendering_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES;
   dynamic_rendering_features.dynamicRendering = VK_TRUE;
@@ -186,10 +181,11 @@ void Device::init_impl(const CreateInfo& info) {
 
   // features12.drawIndirectCount = true;
 
-  auto pr = phys_builder.set_minimum_version(vk2::min_api_version_major, vk2::min_api_version_minor)
+  auto pr = phys_builder.set_minimum_version(1, 2)
                 .set_required_features_12(supported_features12_)
                 .set_required_features_11(features11)
                 .add_required_extensions(extensions)
+                .allow_any_gpu_device_type(false)
                 .prefer_gpu_device_type(vkb::PreferredDeviceType::discrete)
                 .add_required_extension_features(dynamic_rendering_features)
                 .add_required_extension_features(sync2_features)
@@ -560,6 +556,7 @@ AttachmentInfo Device::get_swapchain_info() const {
 VkImage Device::get_swapchain_img(u32 idx) const { return swapchain_.imgs[idx]; }
 
 VkImage Device::acquire_next_image() {
+  ZoneScoped;
   swapchain_.acquire_semaphore_idx =
       (swapchain_.acquire_semaphore_idx + 1) % swapchain_.imgs.size();
   VkResult acquire_next_image_result;
@@ -720,6 +717,7 @@ VkFilter get_filter(FilterMode mode) {
 }
 VkSamplerMipmapMode get_mipmap_mode(FilterMode mode) {
   switch (mode) {
+    default:
     case gfx::FilterMode::Linear:
       return VK_SAMPLER_MIPMAP_MODE_LINEAR;
     case gfx::FilterMode::Nearest:
@@ -729,6 +727,7 @@ VkSamplerMipmapMode get_mipmap_mode(FilterMode mode) {
 
 VkSamplerAddressMode get_address_mode(AddressMode mode) {
   switch (mode) {
+    default:
     case AddressMode::Repeat:
       return VK_SAMPLER_ADDRESS_MODE_REPEAT;
     case AddressMode::MirroredRepeat:

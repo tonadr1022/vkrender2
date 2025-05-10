@@ -25,6 +25,7 @@ const std::array<glm::mat4, 6> VIEW_MATRICES = {
     glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f)),
     glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
 };
+
 }  // namespace
 
 namespace gfx {
@@ -50,7 +51,7 @@ IBL::IBL(Device* device, BufferHandle cube_vertex_buf)
                                            .view_type = VK_IMAGE_VIEW_TYPE_CUBE,
                                            .format = VK_FORMAT_R16G16B16A16_SFLOAT,
                                            .extent = {skybox_res, skybox_res, 1},
-                                           .mip_levels = get_mip_levels({skybox_res}),
+                                           .mip_levels = get_mip_levels(uvec2{skybox_res}),
                                            .array_layers = 6,
                                            .usage = ImageUsage::General}};
   u32 prefiltered_env_map_res = 256;
@@ -58,7 +59,7 @@ IBL::IBL(Device* device, BufferHandle cube_vertex_buf)
       ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_CUBE,
                       .format = VK_FORMAT_R16G16B16A16_SFLOAT,
                       .extent = {prefiltered_env_map_res, prefiltered_env_map_res, 1},
-                      .mip_levels = get_mip_levels({prefiltered_env_map_res}),
+                      .mip_levels = get_mip_levels(uvec2{prefiltered_env_map_res}),
                       .array_layers = 6,
                       .usage = ImageUsage::General}};
   make_cubemap_views_all_mips(prefiltered_env_map_tex_->texture.value(),
