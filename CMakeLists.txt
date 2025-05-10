@@ -88,6 +88,7 @@ target_compile_options(VulkanMemoryAllocator INTERFACE
     -Wno-all
     -Wno-extra
     -Wno-unused-parameter
+    -Wno-nullability-extension
 )
 set_property(TARGET fastgltf PROPERTY COMPILE_FLAGS "-Wno-sign-compare")
 # target_compile_options(VulkanMemoryAllocator PRIVATE -Wno-error)
