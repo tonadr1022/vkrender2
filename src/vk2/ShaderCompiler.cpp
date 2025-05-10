@@ -471,15 +471,20 @@ bool ShaderManager::compile_glsl_to_spirv(const std::string& path, VkShaderStage
   // Equivalent to -gVS
   // https://github.com/KhronosGroup/glslang/blob/vulkan-sdk-1.3.283.0/StandAlone/StandAlone.cpp#L998-L1016
   // TODO: only in debug?
-  auto options = glslang::SpvOptions{
-      .generateDebugInfo = true,
-      .stripDebugInfo = false,
-      .disableOptimizer = true,
-      .optimizeSize = false,
-      .disassemble = true,
-      .emitNonSemanticShaderDebugInfo = true,
-      .emitNonSemanticShaderDebugSource = true,
-  };
+  glslang::SpvOptions options;
+  if (shader_debug_mode_) {
+    options = glslang::SpvOptions{
+        .generateDebugInfo = true,
+        .stripDebugInfo = false,
+        .disableOptimizer = true,
+        .optimizeSize = false,
+        .disassemble = true,
+        .emitNonSemanticShaderDebugInfo = true,
+        .emitNonSemanticShaderDebugSource = true,
+    };
+  } else {
+    options = {};
+  }
 
   {
     ZoneScopedN("GlslangToSpv");
