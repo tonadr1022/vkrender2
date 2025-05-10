@@ -32,7 +32,8 @@ struct ResourceDimensions {
   BufferInfo buffer_info;
   SizeClass size_class{SizeClass::SwapchainRelative};
   uint32_t width{}, height{}, depth{}, layers{1}, levels{1}, samples{1};
-  VkImageUsageFlags image_usage_flags{};
+  Access access_usage{};
+  // VkImageUsageFlags image_usage_flags{};
   // TODO: queues
   [[nodiscard]] bool is_storage_image() const;
   [[nodiscard]] bool is_image() const;
@@ -45,9 +46,10 @@ struct ResourceDimensions {
                      a.depth == b.depth;
     }
     return valid_extent && a.format == b.format && a.layers == b.layers && a.levels == b.levels &&
-           a.image_usage_flags == b.image_usage_flags;
+           a.access_usage == b.access_usage;
   }
 };
+
 struct ResourceDimensionsHasher {
   std::size_t operator()(const ResourceDimensions& dims) const;
 };
@@ -79,7 +81,7 @@ struct RenderResource {
   std::string name;
   uint32_t physical_idx{unused};
   AttachmentInfo info;
-  VkImageUsageFlags image_usage{};
+  // VkImageUsageFlags image_usage{};
   Access access{};
   BufferInfo buffer_info{};
   ImageHandle img_handle;

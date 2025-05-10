@@ -110,6 +110,12 @@ VkImageUsageFlags get_image_usage(Access access) {
   if (access & Access::ComputeRW) {
     usage |= VK_IMAGE_USAGE_STORAGE_BIT;
   }
+  if (access & Access::TransferRead) {
+    usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+  }
+  if (access & Access::TransferWrite) {
+    usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+  }
   return usage;
 }
 
@@ -150,7 +156,6 @@ RGResourceHandle RenderGraphPass::add(const std::string& name, const AttachmentI
   auto handle = graph_.get_or_add_texture_resource(name);
   RenderResource& res = *graph_.get_resource(handle);
   res.access = static_cast<Access>(res.access | access);
-  res.image_usage |= get_image_usage(access);
   res.info = info;
 
   if (name == graph_.get_backbuffer_img_name()) {
@@ -167,7 +172,6 @@ RGResourceHandle RenderGraphPass::add_image_access(const std::string& name, Acce
   auto handle = graph_.get_or_add_texture_resource(name);
   RenderResource& res = *graph_.get_resource(handle);
   res.access = static_cast<Access>(res.access | access);
-  res.image_usage |= get_image_usage(access);
 
   if (name == graph_.get_backbuffer_img_name()) {
     swapchain_write_idx_ = resources_.size();
@@ -266,7 +270,7 @@ VoidResult RenderGraph::bake() {
         LINFO("{} {}", res.name, res.physical_idx);
         if (res.physical_idx < physical_resource_dims_.size()) {
           auto& dims = physical_resource_dims_[res.physical_idx];
-          LINFO("{} {}", res.physical_idx, string_VkImageUsageFlags(dims.image_usage_flags));
+          // LINFO("{} {}", res.physical_idx, string_VkImageUsageFlags(dims.image_usage_flags));
         }
       }
     }
@@ -709,7 +713,7 @@ ResourceDimensions RenderGraph::get_resource_dims(const RenderResource& resource
             .layers = resource.info.layers,
             .levels = resource.info.levels,
             .samples = 1,
-            .image_usage_flags = resource.image_usage};
+            .access_usage = resource.access};
     if (resource.info.size_class == SizeClass::SwapchainRelative) {
       dims.width = desc_.dims.x;
       dims.height = desc_.dims.y;
@@ -741,10 +745,14 @@ void RenderGraph::build_physical_resource_reqs() {
       if (res->physical_idx == RenderResource::unused) {
         assert(res);
         res->physical_idx = physical_resource_dims_.size();
+        if (res->name == backbuffer_img_) {
+          res->access = static_cast<Access>(res->access | Access::TransferRead);
+        }
         physical_resource_dims_.emplace_back(get_resource_dims(*res));
       } else {
         if (physical_resource_dims_[res->physical_idx].is_image()) {
-          physical_resource_dims_[res->physical_idx].image_usage_flags |= res->image_usage;
+          physical_resource_dims_[res->physical_idx].access_usage = static_cast<Access>(
+              physical_resource_dims_[res->physical_idx].access_usage | res->access);
         }
       }
     }
@@ -827,7 +835,7 @@ void RenderGraph::setup_attachments() {
       info.mip_levels = dims.levels;
       info.samples = (VkSampleCountFlagBits)(1 << (dims.samples - 1));
       info.format = vk2::to_vkformat(dims.format);
-      info.override_usage_flags |= dims.image_usage_flags;
+      info.override_usage_flags |= get_image_usage(dims.access_usage);
       if (dims.depth == 1) {
         info.view_type = VK_IMAGE_VIEW_TYPE_2D;
         if (info.array_layers > 1) {
@@ -855,7 +863,7 @@ void RenderGraph::setup_attachments() {
             if (valid_extent && cinfo.array_layers == dims.layers &&
                 cinfo.mip_levels == dims.levels && cinfo.samples == dims.samples &&
                 cinfo.format == vk2::to_vkformat(dims.format) &&
-                cinfo.override_usage_flags == dims.image_usage_flags) {
+                cinfo.override_usage_flags == get_image_usage(dims.access_usage)) {
               physical_image_attachments_[i] = it->second.handle;
               need_new_img = false;
             } else {
@@ -956,9 +964,6 @@ void RenderGraph::build_barrier_infos() {
   // TODO: aliasing to reuse images
 }
 
-bool ResourceDimensions::is_storage_image() const {
-  return image_usage_flags & VK_IMAGE_USAGE_STORAGE_BIT;
-}
 void RenderGraph::PassSubmissionState::reset() {
   image_barriers.clear();
   buffer_barriers.clear();
@@ -1139,12 +1144,12 @@ void RenderGraph::reset() {
 
 std::size_t ResourceDimensionsHasher::operator()(const ResourceDimensions& dims) const {
   if (dims.size_class == SizeClass::SwapchainRelative) {
-    auto h = std::make_tuple(dims.format, dims.levels, dims.layers, dims.image_usage_flags,
+    auto h = std::make_tuple(dims.format, dims.levels, dims.layers, dims.access_usage,
                              dims.size_class, dims.samples);
     return vk2::detail::hashing::hash<decltype(h)>{}(h);
   }
   auto h = std::make_tuple(dims.width, dims.height, dims.format, dims.levels, dims.layers,
-                           dims.image_usage_flags, dims.size_class, dims.depth, dims.samples);
+                           dims.access_usage, dims.size_class, dims.depth, dims.samples);
   return vk2::detail::hashing::hash<decltype(h)>{}(h);
 }
 
