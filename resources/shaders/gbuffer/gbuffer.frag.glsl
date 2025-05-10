@@ -53,7 +53,7 @@ void main() {
     }
     #endif
 
-    vec3 emissive = material.emissive_factors.w * material.emissive_factors.rgb;
+    vec3 emissive = material.emissive_factors.rgb;
     if (material.ids.w != 0) {
         emissive *= texture(vk2_sampler2D(material.ids.w, sampler_idx), in_uv).rgb;
     }
@@ -76,6 +76,6 @@ void main() {
     }
 
     gbuffer_a = vec4(encode_oct(N) * 0.5 + 0.5, metallic, roughness);
-    gbuffer_b = albedo;
+    gbuffer_b = vec4(albedo.rgb, 1.);
     gbuffer_c = vec4(emissive, ao);
 }

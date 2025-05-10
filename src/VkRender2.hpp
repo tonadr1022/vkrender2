@@ -347,9 +347,9 @@ class VkRender2 final {
   PipelineHandle gbuffer_alpha_mask_pipeline_;
   PipelineHandle deferred_shade_pipeline_;
   PipelineHandle line_draw_pipeline_;
-  Format gbuffer_a_format_{Format::R16G16B16A16Sfloat};
-  Format gbuffer_b_format_{Format::R16G16B16A16Sfloat};
-  Format gbuffer_c_format_{Format::R16G16B16A16Sfloat};
+  Format gbuffer_a_format_{Format::R8G8B8A8Unorm};
+  Format gbuffer_b_format_{Format::R8G8B8A8Unorm};
+  Format gbuffer_c_format_{Format::R8G8B8A8Unorm};
   Format draw_img_format_{Format::R16G16B16A16Sfloat};
   Format depth_img_format_{Format::D32Sfloat};
   VkPipelineLayout default_pipeline_layout_{};

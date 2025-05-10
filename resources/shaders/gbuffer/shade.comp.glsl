@@ -36,12 +36,9 @@ void main() {
     vec3 N = decode_oct(gbuffer_a.rg * 2. - 1.);
     float metallic = gbuffer_a.b;
     float roughness = gbuffer_a.a;
-    vec4 albedo = gbuffer_b;
-    if (albedo.a == 0) {
-        STORE(vec4(0.));
-        return;
-    }
+    vec3 albedo = gbuffer_b.rgb;
     vec3 emissive = gbuffer_c.rgb;
+    // vec3 emissive = albedo * (exp2(gbuffer_b.a * 5) - 1);
     float ao = gbuffer_c.a;
     vec3 V = normalize(scene_data.view_pos - world_pos);
 
@@ -49,6 +46,7 @@ void main() {
         STORE(vec4(N * .5 + .5, 1.));
         return;
     }
+
     if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_CASCADE_LEVELS) {
         STORE(vec4(cascade_debug_color(shadow_datas[shadow_buffer_idx].data, scene_data, world_pos), 1.));
         return;
@@ -68,7 +66,7 @@ void main() {
 
     vec3 light_out = vec3(0.0);
     vec3 F0 = vec3(0.04);
-    F0 = mix(F0, albedo.rgb, metallic);
+    F0 = mix(F0, albedo, metallic);
     float NdotV = max(dot(N, V), 0.0);
     // dir light
     {
@@ -86,7 +84,7 @@ void main() {
         vec3 specular = numerator / denominator;
         vec3 kS = F;
         vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
-        light_out += (kD * albedo.rgb + specular) * radiance * NdotL * shadow;
+        light_out += (kD * albedo + specular) * radiance * NdotL * shadow;
     }
     // IBL ambient
     {
@@ -95,7 +93,7 @@ void main() {
         vec3 kS = F;
         vec3 kD = (1.0 - kS) * (1.0 - metallic);
         vec3 irradiance = texture(vk2_samplerCube(irradiance_img_idx, sampler_idx), N).rgb;
-        vec3 diffuse = irradiance * albedo.rgb;
+        vec3 diffuse = irradiance * albedo;
         if ((debug_flags.x & IBL_ENABLED_BIT) != 0) {
             const float MaxReflectionLod = 4.;
             vec3 R = reflect(-V, N);
@@ -106,7 +104,7 @@ void main() {
             ambient = (kD * diffuse + specular) * ao * scene_data.ambient_intensity;
         } else {
             ambient = kD * diffuse * ao * scene_data.ambient_intensity;
-            // ambient = albedo.rgb * ao * scene_data.ambient_intensity;
+            // ambient = albedo* ao * scene_data.ambient_intensity;
         }
         vec3 outputColor = light_out + emissive + ambient;
         STORE(vec4(outputColor, 1.));

@@ -119,27 +119,16 @@ void App::run() {
   }
   load_cam(cam_data);
   float last_time{};
-  auto& ren = VkRender2::get();
-  // VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false);
-  // VkRender2::get().load_scene("/home/tony/models/Models/Sponza/glTF/Sponza.gltf", false);
-  // VkRender2::get().load_scene("/users/tony/Bistro_Godot_opt.glb", false,
-  // glm::translate(mat4{1}, iter * spacing));
+  auto& renderer = VkRender2::get();
 
   // VkRender2::get().load_scene(local_models_dir / "ABeautifulGame.glb", false,
   //                             glm::scale(mat4{1}, vec3{10}));
-  // VkRender2::get().load_scene(local_models_dir / "Bistro_Godot.glb", false);
-  // VkRender2::get().load_scene(
-  //     "/home/tony/models/Models/MetalRoughSpheres/glTF-Binary/MetalRoughSpheres.glb");
-  // VkRender2::get().load_scene(local_models_dir / "Cube/glTF/Cube.gltf", false);
-  // ren.load_scene(local_models_dir / "sponza.glb", false);
-  // VkRender2::get().load_scene("/home/tony/models/Bistro_Godot_opt.glb", false);
+
   VkRender2::get().load_model(local_models_dir / "Bistro_Godot_opt.glb", false);
-  // VkRender2::get().load_static_model(local_models_dir / "Bistro_Godot.glb", false);
-  // VkRender2::get().load_scene("/home/tony/models/Models/DamagedHelmet/glTF/DamagedHelmet.gltf",
-  //                             false);
-  std::filesystem::path env_tex = local_models_dir / "quarry_04_puresky_4k.hdr";
+  // VkRender2::get().load_model(local_models_dir / "Bistro_Godot.glb", false);
+  // std::filesystem::path env_tex = local_models_dir / "quarry_04_puresky_4k.hdr";
   // std::filesystem::path env_tex = local_models_dir / "immenstadter_horn_2k.hdr";
-  // std::filesystem::path env_tex = local_models_dir / "newport_loft.hdr";
+  std::filesystem::path env_tex = local_models_dir / "newport_loft.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/quarry_04_puresky_4k.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/golden_gate_hills_4k.hdr";
 
@@ -154,10 +143,10 @@ void App::run() {
     dt = curr_t - last_time;
     last_time = curr_t;
 
-    ren.new_frame();
+    renderer.new_frame();
     update(dt);
     draw_imgui();
-    ren.draw(info_);
+    renderer.draw(info_);
   }
 
   save_cam(cam_data);
