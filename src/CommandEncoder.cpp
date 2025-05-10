@@ -3,7 +3,11 @@
 #include <volk.h>
 #include <vulkan/vulkan_core.h>
 
+#include "Types.hpp"
+#include "core/FixedVector.hpp"
+#include "core/Logger.hpp"
 #include "vk2/Buffer.hpp"
+#include "vk2/Device.hpp"
 #include "vk2/PipelineManager.hpp"
 #include "vk2/VkTypes.hpp"
 
@@ -93,5 +97,91 @@ void CmdEncoder::bind_pipeline(PipelineBindPoint bind_point, PipelineHandle pipe
 }
 
 void CmdEncoder::end_rendering() { vkCmdEndRenderingKHR(cmd_); }
+
+namespace {
+
+VkAttachmentLoadOp convert_load_op(RenderingAttachmentInfo::LoadOp op) {
+  switch (op) {
+    default:
+    case RenderingAttachmentInfo::LoadOp::Load:
+      return VK_ATTACHMENT_LOAD_OP_LOAD;
+    case RenderingAttachmentInfo::LoadOp::Clear:
+      return VK_ATTACHMENT_LOAD_OP_CLEAR;
+    case RenderingAttachmentInfo::LoadOp::DontCare:
+      return VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  }
+}
+
+VkAttachmentStoreOp convert_store_op(RenderingAttachmentInfo::StoreOp op) {
+  switch (op) {
+    default:
+    case RenderingAttachmentInfo::StoreOp::Store:
+      return VK_ATTACHMENT_STORE_OP_STORE;
+    case RenderingAttachmentInfo::StoreOp::DontCare:
+      return VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  }
+}
+
+}  // namespace
+
+void CmdEncoder::begin_rendering(const RenderArea& render_area,
+                                 std::initializer_list<RenderingAttachmentInfo> attachment_descs) {
+  util::fixed_vector<VkRenderingAttachmentInfo, 30> color_atts;
+  VkRenderingAttachmentInfo depth_att{};
+  VkRenderingAttachmentInfo stencil_att{};
+  if (attachment_descs.size() > 30) {
+    LCRITICAL("cannot support > 30 color attachments, what are you doing lol");
+    exit(1);
+  }
+
+  for (const auto& att_desc : attachment_descs) {
+    VkRenderingAttachmentInfo& att =
+        att_desc.type == RenderingAttachmentInfo::Type::Color   ? color_atts.emplace_back()
+        : att_desc.type == RenderingAttachmentInfo::Type::Depth ? depth_att
+                                                                : stencil_att;
+    att.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    if (att_desc.img_view) {
+      att.imageView = att_desc.img_view->view();
+    } else {
+      LCRITICAL("cannot begin rendering, image not found");
+      exit(1);
+    }
+
+    if (att_desc.type == RenderingAttachmentInfo::Type::Color) {
+      att.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    } else if (att_desc.type == RenderingAttachmentInfo::Type::Depth) {
+      att.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+    } else if (att_desc.type == RenderingAttachmentInfo::Type::DepthStencil) {
+      att.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    }
+
+    att.loadOp = convert_load_op(att_desc.load_op);
+    att.storeOp = convert_store_op(att_desc.store_op);
+    if (att.loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR) {
+      att.clearValue.color.float32[0] = att_desc.clear_value.color.r;
+      att.clearValue.color.float32[1] = att_desc.clear_value.color.g;
+      att.clearValue.color.float32[2] = att_desc.clear_value.color.b;
+      att.clearValue.color.float32[3] = att_desc.clear_value.color.a;
+      att.clearValue.depthStencil.depth = att_desc.clear_value.depth_stencil.depth;
+      att.clearValue.depthStencil.stencil = att_desc.clear_value.depth_stencil.stencil;
+    }
+  }
+
+  VkRenderingInfo rendering_info{
+      .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+      .renderArea = VkRect2D{{render_area.offset.x, render_area.offset.y},
+                             {render_area.extent.x, render_area.extent.y}},
+      .layerCount = 1,
+      .colorAttachmentCount = static_cast<u32>(color_atts.size()),
+      .pColorAttachments = color_atts.data(),
+      .pDepthAttachment = depth_att.imageLayout != VK_IMAGE_LAYOUT_UNDEFINED ? &depth_att : nullptr,
+      .pStencilAttachment =
+          stencil_att.imageLayout != VK_IMAGE_LAYOUT_UNDEFINED ? &stencil_att : nullptr};
+  vkCmdBeginRenderingKHR(cmd_, &rendering_info);
+}
+
+void CmdEncoder::draw(u32 vertex_count, u32 instance_count, u32 first_vertex, u32 first_instance) {
+  vkCmdDraw(cmd_, vertex_count, instance_count, first_vertex, first_instance);
+}
 
 }  // namespace gfx

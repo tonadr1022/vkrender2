@@ -47,8 +47,7 @@ IBL::IBL(Device* device, BufferHandle cube_vertex_buf)
                                                   .mip_levels = 1,
                                                   .array_layers = 6,
                                                   .usage = ImageUsage::General}};
-  env_cubemap_tex_ = Image{ImageCreateInfo{.name = "env cubemap",
-                                           .view_type = VK_IMAGE_VIEW_TYPE_CUBE,
+  env_cubemap_tex_ = Image{ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_CUBE,
                                            .format = VK_FORMAT_R16G16B16A16_SFLOAT,
                                            .extent = {skybox_res, skybox_res, 1},
                                            .mip_levels = get_mip_levels(uvec2{skybox_res}),
@@ -86,8 +85,7 @@ IBL::IBL(Device* device, BufferHandle cube_vertex_buf)
 
   cubemap_tex_views_ = make_cubemap_views(env_cubemap_tex_.value());
   convoluted_cubemap_tex_views_ = make_cubemap_views(irradiance_cubemap_tex_.value());
-  brdf_lut_ = Image{ImageCreateInfo{.name = "brdf lut",
-                                    .view_type = VK_IMAGE_VIEW_TYPE_2D,
+  brdf_lut_ = Image{ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
                                     .format = VK_FORMAT_R16G16_SFLOAT,
                                     .extent = {512, 512, 1},
                                     .mip_levels = 1,
@@ -173,32 +171,29 @@ void IBL::equirect_to_cube(CmdEncoder& ctx) {
   VkRender2::get().generate_mipmaps(ctx, *env_cubemap_tex_);
 }
 
-void IBL::convolute_cube(CmdEncoder& ctx) {
-  auto* cmd = ctx.cmd();
-  {
-    transition_image(cmd, *env_cubemap_tex_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    transition_image(cmd, *irradiance_cubemap_tex_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-
-    for (u32 i = 0; i < 6; i++) {
-      auto color_attachment = vk2::init::rendering_attachment_info(
-          convoluted_cubemap_tex_views_[i]->view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-      auto rendering_info =
-          vk2::init::rendering_info(irradiance_cubemap_tex_->extent_2d(), &color_attachment);
-      vkCmdBeginRenderingKHR(cmd, &rendering_info);
-      ctx.set_viewport_and_scissor(irradiance_cubemap_tex_->extent_2d().width,
-                                   irradiance_cubemap_tex_->extent_2d().height);
-      PipelineManager::get().bind_graphics(cmd, convolute_cube_raster_pipeline_);
-      struct {
-        mat4 vp;
-        u32 in_tex_idx, sampler_idx, vertex_buffer_idx;
-      } pc{PROJ * VIEW_MATRICES[i], env_cubemap_tex_->view().sampled_img_resource().handle,
-           device_->get_bindless_idx(linear_sampler_),
-           get_device().get_buffer(cube_vertex_buf_)->resource_info_->handle};
-      ctx.push_constants(sizeof(pc), &pc);
-      ctx.set_cull_mode(CullMode::None);
-      vkCmdDraw(cmd, 36, 1, 0, 0);
-      vkCmdEndRenderingKHR(cmd);
-    }
+void IBL::convolute_cube(CmdEncoder& cmd) {
+  transition_image(cmd.cmd(), *env_cubemap_tex_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  transition_image(cmd.cmd(), *irradiance_cubemap_tex_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  for (u32 i = 0; i < 6; i++) {
+    uvec2 extent{irradiance_cubemap_tex_->extent_2d().width,
+                 irradiance_cubemap_tex_->extent_2d().height};
+    cmd.begin_rendering({.extent = extent},
+                        {RenderingAttachmentInfo{&convoluted_cubemap_tex_views_[i].value(),
+                                                 RenderingAttachmentInfo::Type::Color,
+                                                 RenderingAttachmentInfo::LoadOp::Load}});
+    cmd.set_viewport_and_scissor(irradiance_cubemap_tex_->extent_2d().width,
+                                 irradiance_cubemap_tex_->extent_2d().height);
+    PipelineManager::get().bind_graphics(cmd.cmd(), convolute_cube_raster_pipeline_);
+    struct {
+      mat4 vp;
+      u32 in_tex_idx, sampler_idx, vertex_buffer_idx;
+    } pc{PROJ * VIEW_MATRICES[i], env_cubemap_tex_->view().sampled_img_resource().handle,
+         device_->get_bindless_idx(linear_sampler_),
+         get_device().get_buffer(cube_vertex_buf_)->resource_info_->handle};
+    cmd.push_constants(sizeof(pc), &pc);
+    cmd.set_cull_mode(CullMode::None);
+    cmd.draw(36);
+    cmd.end_rendering();
   }
 }
 
@@ -235,14 +230,14 @@ void IBL::prefilter_env_map(CmdEncoder& ctx) {
     for (u32 mip = 0; mip < mip_levels; mip++) {
       float roughness = (float)mip / (float)(mip_levels - 1);
       for (u32 i = 0; i < 6; i++) {
-        auto color_attachment = vk2::init::rendering_attachment_info(
-            cube_mip_views[mip][i]->view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         u32 size = prefiltered_env_map_tex_->texture->extent_2d().width;
         unsigned int mip_width = size * std::pow(0.5, mip);
         unsigned int mip_height = size * std::pow(0.5, mip);
-        auto rendering_info =
-            vk2::init::rendering_info(VkExtent2D{mip_width, mip_height}, &color_attachment);
-        vkCmdBeginRenderingKHR(cmd, &rendering_info);
+        uvec2 extent{mip_width, mip_height};
+        ctx.begin_rendering({.extent = extent},
+                            {RenderingAttachmentInfo{&cube_mip_views[mip][i].value(),
+                                                     RenderingAttachmentInfo::Type::Color,
+                                                     RenderingAttachmentInfo::LoadOp::Load}});
         ctx.set_viewport_and_scissor(mip_width, mip_height);
         PipelineManager::get().bind_graphics(cmd, prefilter_env_map_pipeline_);
 
@@ -264,8 +259,8 @@ void IBL::prefilter_env_map(CmdEncoder& ctx) {
              static_cast<float>(env_cubemap_tex_->extent_2d().width)};
         ctx.push_constants(sizeof(pc), &pc);
         ctx.set_cull_mode(CullMode::None);
-        vkCmdDraw(cmd, 36, 1, 0, 0);
-        vkCmdEndRenderingKHR(cmd);
+        ctx.draw(36);
+        ctx.end_rendering();
       }
     }
   }

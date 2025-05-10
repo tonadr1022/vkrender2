@@ -5,8 +5,8 @@
 
 #include <array>
 #include <optional>
-#include <string>
 
+#include "Types.hpp"
 #include "vk2/Resource.hpp"
 
 namespace gfx {
@@ -20,8 +20,20 @@ enum class ImageUsage : u8 {
   AttachmentReadOnly
 };
 
+struct ImageDesc {
+  enum class Type : u8 { OneD, TwoD, ThreeD };
+  Type type{Type::TwoD};
+  Format format{Format::Undefined};
+  uvec3 dims{};
+  u32 mip_levels{1};
+  u32 array_layers{1};
+  u32 sample_count{};
+  BindFlag bind_flags{};
+  ResourceMiscFlag misc_flags{};
+  Usage usage{Usage::Default};
+};
+
 struct ImageCreateInfo {
-  std::string name;
   VkImageViewType view_type{};
   VkFormat format{};
   VkExtent3D extent{};
@@ -61,6 +73,7 @@ class ImageView {
   [[nodiscard]] VkImageView view() const { return view_; }
 
  private:
+  friend class Device;
   VkImageView view_{};
   ImageViewCreateInfo create_info_;
   // TODO: make a bindless texture view class for this
@@ -89,8 +102,9 @@ class Image {
   [[nodiscard]] const ImageView& view() const { return view_.value(); }
   [[nodiscard]] const ImageCreateInfo& create_info() const { return create_info_; }
 
-  VkImageLayout curr_layout{VK_IMAGE_LAYOUT_UNDEFINED};
   [[nodiscard]] VkImageUsageFlags usage() const { return usage_; }
+
+  VkImageLayout curr_layout{};
 
  private:
   friend class Device;
@@ -99,12 +113,9 @@ class Image {
 
   ImageCreateInfo create_info_;
   std::optional<ImageView> view_;
-  std::string name_;
   VkImage image_{};
   VkImageUsageFlags usage_{};
   VmaAllocation allocation_{};
-  VmaAllocator allocator_{};
-  VkDevice device_{};
 };
 
 struct TextureCubeAndViews {
@@ -127,7 +138,7 @@ struct TextureViewDeleteInfo {
   VkImageView view;
 };
 
-Image create_texture_2d(VkFormat format, uvec3 dims, ImageUsage usage, std::string name = {});
+Image create_texture_2d(VkFormat format, uvec3 dims, ImageUsage usage);
 Image create_texture_2d_mip(VkFormat format, uvec3 dims, ImageUsage usage, u32 levels);
 
 uint32_t get_mip_levels(VkExtent2D size);

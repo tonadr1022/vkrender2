@@ -388,7 +388,7 @@ class VkRender2 final {
   };
   std::vector<LineVertex> line_draw_vertices_;
   void draw_skybox(CmdEncoder& cmd);
-  void render_imgui(VkCommandBuffer cmd, uvec2 draw_extent, VkImageView target_img_view);
+  void render_imgui(CmdEncoder& cmd, uvec2 draw_extent, ImageView* target_img_view);
 
   [[nodiscard]] float aspect_ratio() const;
   [[nodiscard]] uvec2 window_dims() const;

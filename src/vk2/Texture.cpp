@@ -8,7 +8,6 @@
 
 #include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Device.hpp"
-#include "vk2/Resource.hpp"
 #include "vk2/VkCommon.hpp"
 
 namespace gfx {
@@ -27,7 +26,6 @@ Image::~Image() {
 Image::Image(Image&& other) noexcept
     : create_info_(std::exchange(other.create_info_, {})),
       view_(std::move(other.view_)),
-      name_(std::move(other.name_)),
       image_(std::exchange(other.image_, nullptr)),
       allocation_(std::exchange(other.allocation_, nullptr)) {}
 
@@ -36,7 +34,6 @@ Image& Image::operator=(Image&& other) noexcept {
     return *this;
   }
   this->~Image();
-  name_ = std::move(other.name_);
   create_info_ = std::exchange(other.create_info_, {});
   view_ = std::move(other.view_);
   image_ = std::exchange(other.image_, nullptr);
@@ -146,16 +143,6 @@ Image::Image(const ImageCreateInfo& create_info) {
   }
 
   create_info_ = create_info;
-#ifndef NDEBUG
-  if (create_info.name.size()) {
-    VkDebugUtilsObjectNameInfoEXT name_info = {
-        .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
-        .objectType = VK_OBJECT_TYPE_IMAGE,
-        .objectHandle = (u64)image_,
-        .pObjectName = create_info.name.c_str()};
-    vkSetDebugUtilsObjectNameEXT(get_device().device(), &name_info);
-  }
-#endif
   if (create_info.make_view) {
     view_ = ImageView{*this, ImageViewCreateInfo{.format = create_info.format,
                                                  .range =
@@ -260,9 +247,8 @@ ImageView::~ImageView() {
   }
 }
 
-Image create_texture_2d(VkFormat format, uvec3 dims, ImageUsage usage, std::string name) {
-  return Image{ImageCreateInfo{.name = std::move(name),
-                               .view_type = VK_IMAGE_VIEW_TYPE_2D,
+Image create_texture_2d(VkFormat format, uvec3 dims, ImageUsage usage) {
+  return Image{ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
                                .format = format,
                                .extent = VkExtent3D{dims.x, dims.y, dims.z},
                                .usage = usage}};

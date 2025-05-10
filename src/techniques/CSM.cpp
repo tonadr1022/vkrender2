@@ -19,7 +19,6 @@
 #include "vk2/Device.hpp"
 #include "vk2/Initializers.hpp"
 #include "vk2/PipelineManager.hpp"
-#include "vk2/ShaderCompiler.hpp"
 #include "vk2/VkTypes.hpp"
 
 using namespace gfx::vk2;
@@ -308,12 +307,14 @@ void CSM::add_pass(RenderGraph& rg) {
       VkClearValue depth_clear{.depthStencil = {.depth = 1.f}};
       // TODO: make image views into a handle. when image is destroyed, image views will be too, so
       // then can make new ones
-      VkRenderingAttachmentInfo depth_att = init::rendering_attachment_info(
-          get_device().get_image_view(shadow_map_img_views_[i])->view(),
-          VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, &depth_clear);
       auto* sm_img = get_device().get_image(shadow_map_img_);
-      auto rendering_info = init::rendering_info(sm_img->extent_2d(), nullptr, &depth_att);
-      vkCmdBeginRenderingKHR(cmd.cmd(), &rendering_info);
+      uvec2 extent{sm_img->extent_2d().width, sm_img->extent_2d().height};
+      cmd.begin_rendering({.extent = extent},
+                          {{get_device().get_image_view(shadow_map_img_views_[i]),
+                            RenderingAttachmentInfo::Type::Depth,
+                            RenderingAttachmentInfo::LoadOp::Clear,
+                            RenderingAttachmentInfo::StoreOp::Store,
+                            {.depth_stencil = {.depth = 1}}}});
       cmd.set_cull_mode(CullMode::None);
       cmd.set_viewport_and_scissor(sm_img->extent_2d().width, sm_img->extent_2d().height);
       if (depth_bias_enabled_) {
@@ -352,17 +353,16 @@ void CSM::debug_shadow_pass(RenderGraph& rg, SamplerHandle linear_sampler) {
     pass.add("shadow_map_img", Access::FragmentRead);
     pass.set_execute_fn([this, &linear_sampler, &rg, shadow_map_debug_img_handle](CmdEncoder& cmd) {
       auto* tex = rg.get_texture(shadow_map_debug_img_handle);
-      VkRenderingAttachmentInfo color_attachment = init::rendering_attachment_info(
-          tex->view().view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, nullptr);
-      VkRenderingInfo render_info =
-          init::rendering_info(tex->extent_2d(), &color_attachment, nullptr, nullptr);
-
-      vkCmdBeginRenderingKHR(cmd.cmd(), &render_info);
-      cmd.set_viewport_and_scissor(tex->extent_2d().width, tex->extent_2d().height);
+      uvec2 extent{tex->extent_2d().width, tex->extent_2d().height};
+      cmd.begin_rendering(
+          {.extent = extent},
+          {RenderingAttachmentInfo{&tex->view(), RenderingAttachmentInfo::Type::Color,
+                                   RenderingAttachmentInfo::LoadOp::Load}});
+      cmd.set_viewport_and_scissor(extent.x, extent.y);
 
       assert(debug_cascade_idx_ >= 0 && (u32)debug_cascade_idx_ < cascade_count_);
 
-      PipelineManager::get().bind_graphics(cmd.cmd(), depth_debug_pipeline_);
+      cmd.bind_pipeline(PipelineBindPoint::Graphics, depth_debug_pipeline_);
 
       struct {
         u32 tex_idx;
@@ -371,8 +371,8 @@ void CSM::debug_shadow_pass(RenderGraph& rg, SamplerHandle linear_sampler) {
       } pc{get_device().get_image(shadow_map_img_)->view().sampled_img_resource().handle,
            device_->get_bindless_idx(linear_sampler), static_cast<u32>(debug_cascade_idx_)};
       cmd.push_constants(sizeof(pc), &pc);
-      vkCmdDraw(cmd.cmd(), 3, 1, 0, 0);
-      vkCmdEndRenderingKHR(cmd.cmd());
+      cmd.draw(3);
+      cmd.end_rendering();
     });
   }
 }

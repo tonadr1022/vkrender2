@@ -4,7 +4,6 @@
 #include <vulkan/vulkan_core.h>
 
 #include "Common.hpp"
-#include "vk2/Texture.hpp"
 
 namespace gfx::vk2::init {
 
@@ -81,39 +80,6 @@ void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout currentL
   vkCmdPipelineBarrier2(cmd, &dep_info);
 }
 
-// VkImageCreateInfo img_create_info(const ImageCreateInfo& info) {
-//   return {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-//           .flags = info.img_flags,
-//           .imageType = info.img_type,
-//           .format = info.format,
-//           .extent = VkExtent3D{info.dims.x, info.dims.y, info.dims.z},
-//           .mipLevels = info.mip_levels,
-//           .arrayLayers = info.array_layers,
-//           .samples = info.samples,
-//           .tiling = VK_IMAGE_TILING_OPTIMAL,
-//           .usage = info.usage,
-//           .initialLayout = info.initial_layout};
-// }
-namespace {
-
-// uint32_t get_mip_levels(VkExtent2D size) {
-//   return static_cast<uint32_t>(std::floor(std::log2(glm::max(size.width, size.height)))) + 1;
-// }
-
-}  // namespace
-
-// VkImageCreateInfo img_create_info_2d(VkFormat format, uvec2 dims, bool mipmap,
-//                                      VkImageUsageFlags usage, bool mapped) {
-//   return img_create_info(
-//       {.format = format,
-//        .dims = {dims, 1},
-//        .mip_levels = mipmap ? get_mip_levels({.width = dims.x, .height = dims.y}) : 1,
-//        .usage = usage,
-//        .mapped = mapped}
-//
-//   );
-// }
-
 VkImageSubresourceRange subresource_range_whole(VkImageAspectFlags aspect) {
   return {.aspectMask = aspect,
           .baseMipLevel = 0,
@@ -122,45 +88,6 @@ VkImageSubresourceRange subresource_range_whole(VkImageAspectFlags aspect) {
           .layerCount = VK_REMAINING_ARRAY_LAYERS};
 }
 
-VkRenderingAttachmentInfo rendering_attachment_info(VkImageView texture, VkImageLayout layout,
-                                                    VkClearValue* clear_value) {
-  return {.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-          .imageView = texture,
-          .imageLayout = layout,
-          .loadOp = clear_value ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD,
-          .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-          .clearValue = clear_value != nullptr ? *clear_value : VkClearValue{}};
-}
-VkRenderingAttachmentInfo rendering_attachment_info(ImageView& texture, VkImageLayout layout,
-                                                    VkClearValue* clear_value) {
-  return rendering_attachment_info(texture.view(), layout, clear_value);
-}
-
-VkRenderingInfo rendering_info(VkExtent2D render_extent,
-                               VkRenderingAttachmentInfo* color_attachment,
-                               VkRenderingAttachmentInfo* depth_attachment,
-                               VkRenderingAttachmentInfo* stencil_attachment) {
-  return {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-          .renderArea = VkRect2D{{0, 0}, render_extent},
-          .layerCount = 1,
-          .colorAttachmentCount = color_attachment != nullptr ? 1u : 0u,
-          .pColorAttachments = color_attachment,
-          .pDepthAttachment = depth_attachment,
-          .pStencilAttachment = stencil_attachment};
-}
-
-VkRenderingInfo rendering_info(VkExtent2D render_extent,
-                               VkRenderingAttachmentInfo* color_attachments, u32 color_att_count,
-                               VkRenderingAttachmentInfo* depth_attachment,
-                               VkRenderingAttachmentInfo* stencil_attachment) {
-  return {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-          .renderArea = VkRect2D{{0, 0}, render_extent},
-          .layerCount = 1,
-          .colorAttachmentCount = color_att_count,
-          .pColorAttachments = color_attachments,
-          .pDepthAttachment = depth_attachment,
-          .pStencilAttachment = stencil_attachment};
-}
 VkDependencyInfo dependency_info(std::span<VkBufferMemoryBarrier2> buffer_barriers,
                                  std::span<VkImageMemoryBarrier2> img_barriers) {
   return {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,

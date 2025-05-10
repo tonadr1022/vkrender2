@@ -1,4 +1,6 @@
 #include "VkTypes.hpp"
+
+#include <vulkan/vulkan_core.h>
 namespace gfx::vk2 {
 Format vkformat_to_format(VkFormat format) { return static_cast<Format>(format); }
 
@@ -43,4 +45,27 @@ VkCullModeFlags convert_cull_mode(CullMode mode) {
   }
   return 0;
 }
+
+VkImageViewType convert_image_view_type(ImageViewType type) {
+  switch (type) {
+    case ImageViewType::OneD:
+      return VK_IMAGE_VIEW_TYPE_1D;
+    case ImageViewType::TwoD:
+      return VK_IMAGE_VIEW_TYPE_2D;
+    case ImageViewType::ThreeD:
+      return VK_IMAGE_VIEW_TYPE_3D;
+    case ImageViewType::Cube:
+      return VK_IMAGE_VIEW_TYPE_CUBE;
+    case ImageViewType::OneDArray:
+      return VK_IMAGE_VIEW_TYPE_1D_ARRAY;
+    case ImageViewType::TwoDArray:
+      return VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+    case ImageViewType::CubeArray:
+      return VK_IMAGE_VIEW_TYPE_CUBE_ARRAY;
+    default:
+      assert(0);
+      return {};
+  }
+}
+
 }  // namespace gfx::vk2

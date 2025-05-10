@@ -16,20 +16,8 @@ namespace gfx::vk2::init {
 VkDependencyInfo dependency_info(std::span<VkBufferMemoryBarrier2> buffer_barriers,
                                  std::span<VkImageMemoryBarrier2> img_barriers);
 
-VkRenderingAttachmentInfo rendering_attachment_info(VkImageView texture, VkImageLayout layout,
-                                                    VkClearValue* clear_value = nullptr);
-VkRenderingAttachmentInfo rendering_attachment_info(ImageView& texture, VkImageLayout layout,
-                                                    VkClearValue* clear_value = nullptr);
 VkBufferCopy2KHR buffer_copy(VkDeviceSize src_offset, VkDeviceSize dst_offset, VkDeviceSize size);
 
-VkRenderingInfo rendering_info(VkExtent2D render_extent,
-                               VkRenderingAttachmentInfo* color_attachment,
-                               VkRenderingAttachmentInfo* depth_attachment = nullptr,
-                               VkRenderingAttachmentInfo* stencil_attachment = nullptr);
-VkRenderingInfo rendering_info(VkExtent2D render_extent,
-                               VkRenderingAttachmentInfo* color_attachments, u32 color_att_count,
-                               VkRenderingAttachmentInfo* depth_attachment = nullptr,
-                               VkRenderingAttachmentInfo* stencil_attachment = nullptr);
 VkCommandBufferBeginInfo command_buffer_begin_info(
     VkCommandBufferUsageFlags flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 VkSubmitInfo2 queue_submit_info();

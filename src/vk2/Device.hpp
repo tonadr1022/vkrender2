@@ -153,6 +153,7 @@ class Device {
   Holder<BufferHandle> create_buffer_holder(const BufferCreateInfo& info);
   ImageViewHandle create_image_view(const Image& image, const ImageViewCreateInfo& info);
   ImageHandle create_image(const ImageCreateInfo& info);
+  ImageHandle create_image(const ImageDesc& desc);
   Holder<ImageHandle> create_image_holder(const ImageCreateInfo& info);
   Holder<ImageViewHandle> create_image_view_holder(const Image& image,
                                                    const ImageViewCreateInfo& info);
@@ -161,6 +162,8 @@ class Device {
   void destroy(ImageViewHandle handle);
   void destroy(BufferHandle handle);
   void set_name(VkPipeline pipeline, const char* name);
+  void set_name(ImageHandle handle, const char* name);
+  void set_name(ImageViewHandle handle, const char* name);
 
   Image* get_image(ImageHandle handle) { return img_pool_.get(handle); }
   Image* get_image(const Holder<ImageHandle>& handle) { return img_pool_.get(handle.handle); }

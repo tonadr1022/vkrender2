@@ -24,7 +24,7 @@ class IBL {
   void make_cubemap_views_all_mips(const Image& texture,
                                    std::vector<std::optional<ImageView>>& views);
   void equirect_to_cube(CmdEncoder& ctx);
-  void convolute_cube(CmdEncoder& ctx);
+  void convolute_cube(CmdEncoder& cmd);
   void prefilter_env_map(CmdEncoder& ctx);
 
  public:

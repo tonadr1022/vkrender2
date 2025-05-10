@@ -498,7 +498,7 @@ void VkRender2::draw(const SceneDrawInfo& info) {
   auto cmd_begin_info = init::command_buffer_begin_info();
   VK_CHECK(vkBeginCommandBuffer(cmd_buf, &cmd_begin_info));
 
-  CmdEncoder cmd{cmd_buf, default_pipeline_layout_, curr_frame().tracy_vk_ctx};
+  CmdEncoder cmd{device_, cmd_buf, default_pipeline_layout_, curr_frame().tracy_vk_ctx};
 
   bind_bindless_descriptors(cmd);
   ResourceAllocator::get().set_frame_num(device_->curr_frame_num(),
@@ -1119,7 +1119,7 @@ void VkRender2::immediate_submit(std::function<void(CmdEncoder& ctx)>&& function
   VK_CHECK(vkResetCommandBuffer(imm_cmd_buf_, 0));
   auto info = vk2::init::command_buffer_begin_info();
   VK_CHECK(vkBeginCommandBuffer(imm_cmd_buf_, &info));
-  CmdEncoder ctx{imm_cmd_buf_, default_pipeline_layout_};
+  CmdEncoder ctx{device_, imm_cmd_buf_, default_pipeline_layout_};
   function(ctx);
   VK_CHECK(vkEndCommandBuffer(imm_cmd_buf_));
   VkCommandBufferSubmitInfo cmd_info = init::command_buffer_submit_info(imm_cmd_buf_);
@@ -1329,17 +1329,13 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
       assert(tex);
       if (!tex) return;
       VkClearValue clear_value{.color = {{0.2, 0.2, 0.2, 1.0}}};
-      VkRenderingAttachmentInfo color_attachment = vk2::init::rendering_attachment_info(
-          tex->view().view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &clear_value);
-      VkClearValue depth_clear{};
-      auto depth_att = init::rendering_attachment_info(
-          rg.get_texture(depth_out_handle)->view().view(),
-          VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL_KHR, &depth_clear);
-      VkExtent2D render_extent{tex->create_info().extent.width, tex->create_info().extent.height};
-      VkRenderingInfo render_info =
-          vk2::init::rendering_info(render_extent, &color_attachment, &depth_att, nullptr);
-      vkCmdBeginRenderingKHR(cmd.cmd(), &render_info);
-      cmd.set_viewport_and_scissor(render_extent.width, render_extent.height);
+      uvec2 extent = {tex->create_info().extent.width, tex->create_info().extent.height};
+      cmd.begin_rendering({.extent = extent}, {{&tex->view(), RenderingAttachmentInfo::Type::Color,
+                                                RenderingAttachmentInfo::LoadOp::Clear},
+                                               {&rg.get_texture(depth_out_handle)->view(),
+                                                RenderingAttachmentInfo::Type::Depth,
+                                                RenderingAttachmentInfo::LoadOp::Clear}});
+      cmd.set_viewport_and_scissor(extent.x, extent.y);
       cmd.set_cull_mode(CullMode::None);
 
       BasicPushConstants pc{
@@ -1385,59 +1381,55 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
       }
       auto depth_out_handle =
           gbuffer.add("depth", {.format = depth_img_format_}, Access::DepthStencilWrite);
-      gbuffer.set_execute_fn([&rg, rg_gbuffer_a, rg_gbuffer_b, rg_gbuffer_c, this,
-                              depth_out_handle](CmdEncoder& cmd) {
-        TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "gbuffer");
-        auto* gbuffer_a = rg.get_texture(rg_gbuffer_a);
-        auto* gbuffer_b = rg.get_texture(rg_gbuffer_b);
-        auto* gbuffer_c = rg.get_texture(rg_gbuffer_c);
-        assert(gbuffer_a && gbuffer_b && gbuffer_c);
-        if (!gbuffer_a || !gbuffer_b || !gbuffer_c) {
-          return;
-        }
+      gbuffer.set_execute_fn(
+          [&rg, rg_gbuffer_a, rg_gbuffer_b, rg_gbuffer_c, this, depth_out_handle](CmdEncoder& cmd) {
+            TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "gbuffer");
+            auto* gbuffer_a = rg.get_texture(rg_gbuffer_a);
+            auto* gbuffer_b = rg.get_texture(rg_gbuffer_b);
+            auto* gbuffer_c = rg.get_texture(rg_gbuffer_c);
+            assert(gbuffer_a && gbuffer_b && gbuffer_c);
+            if (!gbuffer_a || !gbuffer_b || !gbuffer_c) {
+              return;
+            }
 
-        VkClearValue clear_value{.color = {{0.0, 0.0, 0.0, 0.0}}};
-        VkRenderingAttachmentInfo color_atts[] = {
-            vk2::init::rendering_attachment_info(
-                gbuffer_a->view().view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &clear_value),
-            vk2::init::rendering_attachment_info(
-                gbuffer_b->view().view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &clear_value),
-            vk2::init::rendering_attachment_info(
-                gbuffer_c->view().view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &clear_value)};
-        VkClearValue depth_clear{};
-        auto depth_att = init::rendering_attachment_info(
-            rg.get_texture(depth_out_handle)->view().view(),
-            VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL_KHR, &depth_clear);
-        VkExtent2D render_extent{gbuffer_a->create_info().extent.width,
-                                 gbuffer_a->create_info().extent.height};
-        VkRenderingInfo render_info = vk2::init::rendering_info(
-            render_extent, color_atts, COUNTOF(color_atts), &depth_att, nullptr);
-        vkCmdBeginRenderingKHR(cmd.cmd(), &render_info);
-        cmd.set_viewport_and_scissor(render_extent.width, render_extent.height);
-        PipelineManager::get().bind_graphics(cmd.cmd(), gbuffer_pipeline_);
-        GBufferPushConstants pc{
-            static_vertex_buf_.get_buffer()->device_addr(),
-            curr_frame().scene_uniform_buf->device_addr(),
-            static_instance_data_buf_.get_buffer()->device_addr(),
-            static_object_data_buf_.get_buffer()->device_addr(),
-            static_materials_buf_.get_buffer()->device_addr(),
-            device_->get_bindless_idx(linear_sampler_),
-        };
-        cmd.push_constants(sizeof(pc), &pc);
-        cmd.set_cull_mode(CullMode::Back);
-        execute_static_geo_draws(cmd, false, false);
-        cmd.set_cull_mode(CullMode::None);
-        execute_static_geo_draws(cmd, true, false);
-        if (gbuffer_alpha_mask_pipeline_ == gbuffer_pipeline_) {
-          exit(1);
-        }
-        PipelineManager::get().bind_graphics(cmd.cmd(), gbuffer_alpha_mask_pipeline_);
-        cmd.set_cull_mode(CullMode::Back);
-        execute_static_geo_draws(cmd, false, true);
-        cmd.set_cull_mode(CullMode::None);
-        execute_static_geo_draws(cmd, true, true);
-        vkCmdEndRenderingKHR(cmd.cmd());
-      });
+            uvec2 extent = {gbuffer_a->create_info().extent.width,
+                            gbuffer_a->create_info().extent.height};
+            cmd.begin_rendering(
+                {.extent = extent},
+                {{&gbuffer_a->view(), RenderingAttachmentInfo::Type::Color,
+                  RenderingAttachmentInfo::LoadOp::Clear},
+                 {&gbuffer_b->view(), RenderingAttachmentInfo::Type::Color,
+                  RenderingAttachmentInfo::LoadOp::Clear},
+                 {&gbuffer_c->view(), RenderingAttachmentInfo::Type::Color,
+                  RenderingAttachmentInfo::LoadOp::Clear},
+                 {&rg.get_texture(depth_out_handle)->view(), RenderingAttachmentInfo::Type::Depth,
+                  RenderingAttachmentInfo::LoadOp::Clear}});
+            cmd.set_viewport_and_scissor(extent.x, extent.y);
+
+            PipelineManager::get().bind_graphics(cmd.cmd(), gbuffer_pipeline_);
+            GBufferPushConstants pc{
+                static_vertex_buf_.get_buffer()->device_addr(),
+                curr_frame().scene_uniform_buf->device_addr(),
+                static_instance_data_buf_.get_buffer()->device_addr(),
+                static_object_data_buf_.get_buffer()->device_addr(),
+                static_materials_buf_.get_buffer()->device_addr(),
+                device_->get_bindless_idx(linear_sampler_),
+            };
+            cmd.push_constants(sizeof(pc), &pc);
+            cmd.set_cull_mode(CullMode::Back);
+            execute_static_geo_draws(cmd, false, false);
+            cmd.set_cull_mode(CullMode::None);
+            execute_static_geo_draws(cmd, true, false);
+            if (gbuffer_alpha_mask_pipeline_ == gbuffer_pipeline_) {
+              exit(1);
+            }
+            PipelineManager::get().bind_graphics(cmd.cmd(), gbuffer_alpha_mask_pipeline_);
+            cmd.set_cull_mode(CullMode::Back);
+            execute_static_geo_draws(cmd, false, true);
+            cmd.set_cull_mode(CullMode::None);
+            execute_static_geo_draws(cmd, true, true);
+            vkCmdEndRenderingKHR(cmd.cmd());
+          });
     }
     {
       auto& shade = rg.add_pass("shade");
@@ -1498,16 +1490,15 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
       skybox.set_execute_fn([this, &rg, draw_tex, depth_handle](CmdEncoder& cmd) {
         TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "skybox");
         auto* tex = rg.get_texture(draw_tex);
-        VkRenderingAttachmentInfo color_attachment = vk2::init::rendering_attachment_info(
-            tex->view().view(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-        auto depth_att =
-            init::rendering_attachment_info(rg.get_texture(depth_handle)->view().view(),
-                                            VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL_KHR);
-        VkExtent2D render_extent{tex->create_info().extent.width, tex->create_info().extent.height};
-        VkRenderingInfo render_info =
-            vk2::init::rendering_info(render_extent, &color_attachment, &depth_att, nullptr);
-        vkCmdBeginRenderingKHR(cmd.cmd(), &render_info);
-        cmd.set_viewport_and_scissor(render_extent.width, render_extent.height);
+
+        uvec2 extent{tex->create_info().extent.width, tex->create_info().extent.height};
+        cmd.begin_rendering(
+            {.extent = extent},
+            {{&tex->view(), RenderingAttachmentInfo::Type::Color,
+              RenderingAttachmentInfo::LoadOp::Load},
+             {&rg.get_texture(depth_handle)->view(), RenderingAttachmentInfo::Type::Depth,
+              RenderingAttachmentInfo::LoadOp::Load}});
+        cmd.set_viewport_and_scissor(extent.x, extent.y);
 
         draw_skybox(cmd);
         vkCmdEndRenderingKHR(cmd.cmd());
@@ -1584,12 +1575,12 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
       auto* color_tex = rg.get_texture(color_handle);
       auto* depth_tex = rg.get_texture(depth_handle);
       if (line_draw_vertices_.size()) {
-        auto color_att = init::rendering_attachment_info(color_tex->view().view(),
-                                                         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-        auto depth_att = init::rendering_attachment_info(depth_tex->view().view(),
-                                                         VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
-        auto rendering_info = init::rendering_info(color_tex->extent_2d(), &color_att, &depth_att);
-        vkCmdBeginRenderingKHR(cmd.cmd(), &rendering_info);
+        uvec2 extent = {color_tex->extent_2d().width, color_tex->extent_2d().height};
+        cmd.begin_rendering({.extent = extent},
+                            {{&color_tex->view(), RenderingAttachmentInfo::Type::Color,
+                              RenderingAttachmentInfo::LoadOp::Load},
+                             {&depth_tex->view(), RenderingAttachmentInfo::Type::Depth,
+                              RenderingAttachmentInfo::LoadOp::Load}});
         PipelineManager::get().bind_graphics(cmd.cmd(), line_draw_pipeline_);
         Buffer* line_draw_buf = device_->get_buffer(curr_frame().line_draw_buf);
         LinesRenderPushConstants pc{.vtx = line_draw_buf->device_addr(),
@@ -1598,8 +1589,8 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
         vkCmdDraw(cmd.cmd(), line_draw_vertices_.size(), 1, 0, 0);
         vkCmdEndRenderingKHR(cmd.cmd());
       }
-      render_imgui(cmd.cmd(), {color_tex->extent_2d().width, color_tex->extent_2d().height},
-                   color_tex->view().view());
+      render_imgui(cmd, {color_tex->extent_2d().width, color_tex->extent_2d().height},
+                   &color_tex->view());
     });
   }
 }
@@ -1923,14 +1914,13 @@ void VkRender2::free(CmdEncoder& cmd, StaticModelInstanceResources& instance) {
   free(instance);
 }
 
-void VkRender2::render_imgui(VkCommandBuffer cmd, uvec2 draw_extent, VkImageView target_img_view) {
-  VkRenderingAttachmentInfo color_attachment = vk2::init::rendering_attachment_info(
-      target_img_view, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, nullptr);
-  VkRenderingInfo render_info = vk2::init::rendering_info({draw_extent.x, draw_extent.y},
-                                                          &color_attachment, nullptr, nullptr);
-  vkCmdBeginRenderingKHR(cmd, &render_info);
-  ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
-  vkCmdEndRenderingKHR(cmd);
+void VkRender2::render_imgui(CmdEncoder& cmd, uvec2 draw_extent, ImageView* target_img_view) {
+  cmd.begin_rendering(
+      {.extent = draw_extent},
+      {RenderingAttachmentInfo{target_img_view, RenderingAttachmentInfo::Type::Color,
+                               RenderingAttachmentInfo::LoadOp::Load}});
+  ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd.cmd());
+  cmd.end_rendering();
 }
 uvec2 VkRender2::window_dims() const {
   int x, y;

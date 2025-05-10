@@ -11,11 +11,15 @@ struct VkCtx;
 
 namespace gfx {
 class Buffer;
+class Device;
 
 struct CmdEncoder {
-  explicit CmdEncoder(VkCommandBuffer cmd, VkPipelineLayout default_pipeline_layout,
+  explicit CmdEncoder(Device* device, VkCommandBuffer cmd, VkPipelineLayout default_pipeline_layout,
                       tracy::VkCtx* tracy_ctx = nullptr)
-      : tracy_ctx_(tracy_ctx), default_pipeline_layout_(default_pipeline_layout), cmd_(cmd) {}
+      : tracy_ctx_(tracy_ctx),
+        device_(device),
+        default_pipeline_layout_(default_pipeline_layout),
+        cmd_(cmd) {}
   [[nodiscard]] tracy::VkCtx* get_tracy_ctx() const { return tracy_ctx_; }
   void dispatch(u32 work_groups_x, u32 work_groups_y, u32 work_groups_z);
   void bind_compute_pipeline(VkPipeline pipeline);
@@ -30,6 +34,14 @@ struct CmdEncoder {
   void set_depth_bias(float constant_factor, float bias, float slope_factor);
   void bind_pipeline(PipelineBindPoint bind_point, PipelineHandle pipeline);
   void end_rendering();
+  void draw(u32 vertex_count, u32 instance_count = 1, u32 first_vertex = 0, u32 first_instance = 0);
+  struct RenderArea {
+    uvec2 extent{};
+    ivec2 offset{};
+  };
+
+  void begin_rendering(const RenderArea& render_area,
+                       std::initializer_list<RenderingAttachmentInfo> attachment_descs);
 
   void copy_buffer(const Buffer& src, const Buffer& dst, u64 src_offset, u64 dst_offset,
                    u64 size) const;
@@ -38,6 +50,7 @@ struct CmdEncoder {
 
  private:
   tracy::VkCtx* tracy_ctx_{};
+  Device* device_{};
   VkPipelineLayout default_pipeline_layout_;
   VkCommandBuffer cmd_;
 };

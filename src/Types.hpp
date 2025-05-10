@@ -7,6 +7,7 @@
 #include <tuple>
 
 #include "Common.hpp"
+#include "core/Flags.hpp"
 #include "vk2/Handle.hpp"
 #include "vk2/Hash.hpp"
 
@@ -202,6 +203,17 @@ enum SampleCountFlagBits : u8 {
 using SampleCountFlags = u32;
 
 enum class FrontFace : u8 { CounterClockwise = 0, Clockwise };
+
+enum class ImageViewType : u8 {
+  OneD,
+  TwoD,
+  ThreeD,
+  Cube,
+  OneDArray,
+  TwoDArray,
+  CubeArray,
+};
+
 enum class Format {
   Undefined = VK_FORMAT_UNDEFINED,
   R4G4UnormPack8 = VK_FORMAT_R4G4_UNORM_PACK8,
@@ -486,15 +498,37 @@ enum class Format {
   R12X4UnormPack16KHR = VK_FORMAT_R12X4_UNORM_PACK16_KHR
 };
 
-using ImageUsageFlags = uint8_t;
-enum ImageUsageFlagBits : ImageUsageFlags {
-  ImageUsageTransferSrcBit = 0x1,
-  ImageUsageTransferDstBit = 0x2,
-  ImageUsageSampledBit = 0x4,
-  ImageUsageStorageBit = 0x8,
-  ImageUsageColorAttachmentBit = 0x00000010,
-  ImageUsageDepthStencilAttachmentBit = 0x00000020,
+enum class ResourceMiscFlag : u8 {
+  None = 0,
+  ImageCube = 1 << 0,
 };
+
+enum class Usage : u8 {
+  Default,   // GPU only
+  Readback,  // GPU to CPU
+  Upload     // CPU to GPU
+};
+
+enum class BindFlag : u8 {
+  None = 0,
+  VertexBuffer = 1 << 0,
+  IndexBuffer = 1 << 1,
+  UniformBuffer = 1 << 2,
+  ShaderResource = 1 << 3,  // sampled images
+  ColorAttachment = 1 << 4,
+  DepthStencilAttachment = 1 << 5,
+  Storage = 1 << 6,  // storage images/buffers
+};
+
+// using ImageUsageFlags = uint8_t;
+// enum ImageUsageFlagBits : ImageUsageFlags {
+//   ImageUsageTransferSrcBit = 0x1,
+//   ImageUsageTransferDstBit = 0x2,
+//   ImageUsageSampledBit = 0x4,
+//   ImageUsageStorageBit = 0x8,
+//   ImageUsageColorAttachmentBit = 0x00000010,
+//   ImageUsageDepthStencilAttachmentBit = 0x00000020,
+// };
 
 enum Access : uint16_t {
   None = 1ULL << 0,
@@ -571,4 +605,34 @@ using BufferHandle = GenerationalHandle<class ::gfx::Buffer>;
 using SamplerHandle = GenerationalHandle<class ::gfx::Sampler>;
 // TODO: move
 VK2_DEFINE_HANDLE_WITH_NAME(Pipeline, PipelineAndMetadata);
+
+union ClearValue {
+  vec4 color;
+  struct {
+    float depth;
+    u32 stencil;
+  } depth_stencil;
+};
+
+struct RenderingAttachmentInfo {
+  enum class Type : u8 { Color, Depth, DepthStencil };
+  enum class LoadOp : u8 { Load, Clear, DontCare };
+  enum class StoreOp : u8 { Store, DontCare };
+
+  ImageView* img_view;
+  Type type{Type::Color};
+  LoadOp load_op{LoadOp::Load};
+  StoreOp store_op{StoreOp::Store};
+  ClearValue clear_value{};
+};
+
 }  // namespace gfx
+
+template <>
+struct EnableBitmaskOperators<gfx::ResourceMiscFlag> {
+  static const bool enable = true;
+};
+template <>
+struct EnableBitmaskOperators<gfx::BindFlag> {
+  static const bool enable = true;
+};
