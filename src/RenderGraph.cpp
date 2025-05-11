@@ -106,7 +106,6 @@ VkImageUsageFlags get_image_usage(Access access) {
   if (access & (Access::DepthStencilRead | Access::DepthStencilWrite)) {
     usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
   }
-  // TODO: maybe SHADER_READ_ONLY_OPTIMAL?
   if (access & Access::ComputeRW) {
     usage |= VK_IMAGE_USAGE_STORAGE_BIT;
   }
@@ -573,8 +572,8 @@ void RenderGraph::execute(CmdEncoder& cmd) {
                               .pImageMemoryBarriers = img_barriers};
         vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
 
-        VkExtent3D dims{glm::min(tex->create_info().extent.width, desc_.dims.x),
-                        glm::min(tex->create_info().extent.height, desc_.dims.y), 1};
+        VkExtent3D dims{glm::min(tex->get_desc().dims.x, desc_.dims.x),
+                        glm::min(tex->get_desc().dims.y, desc_.dims.y), 1};
         blit_img(cmd.cmd(), tex->image(), swapchain_img_, dims, VK_IMAGE_ASPECT_COLOR_BIT);
 
         // write after read barrier
@@ -684,7 +683,6 @@ RGResourceHandle RenderGraph::get_or_add_texture_resource(const std::string& nam
   if (it != resource_to_idx_map_.end()) {
     return it->second;
   }
-
   uint32_t idx = resources_.size();
   RGResourceHandle handle{idx, RenderResource::Type::Texture};
   resource_to_idx_map_.emplace(name, handle);
@@ -820,30 +818,41 @@ void RenderGraph::setup_attachments() {
   // check if buffer/img in each slot works, otherwise make a new one
   physical_image_attachments_.resize(physical_resource_dims_.size());
   physical_buffers_.resize(physical_resource_dims_.size());
-
   for (auto& [key, val] : img_cache_used_) {
     img_cache_.emplace(key, std::move(val));
   }
   img_cache_used_.clear();
+  auto get_bind_flags = [](Access access) -> BindFlag {
+    BindFlag flags{};
+    if (access & Access::DepthStencilRW) {
+      flags |= BindFlag::DepthStencilAttachment;
+    }
+    if (access & Access::ColorRW) {
+      flags |= BindFlag::ColorAttachment;
+    }
+    if (access & Access::ComputeRW) {
+      flags |= BindFlag::Storage;
+    }
+    if (access & Access::FragmentRead || access & Access::ComputeSample) {
+      flags |= BindFlag::ShaderResource;
+    }
+    return flags;
+  };
 
   for (size_t i = 0; i < physical_resource_dims_.size(); i++) {
     auto& dims = physical_resource_dims_[i];
     if (dims.is_image()) {
-      ImageCreateInfo info{};
-      info.extent = VkExtent3D{dims.width, dims.height, dims.depth};
-      info.array_layers = dims.layers;
-      info.mip_levels = dims.levels;
-      info.samples = (VkSampleCountFlagBits)(1 << (dims.samples - 1));
-      info.format = vk2::to_vkformat(dims.format);
-      info.override_usage_flags |= get_image_usage(dims.access_usage);
-      if (dims.depth == 1) {
-        info.view_type = VK_IMAGE_VIEW_TYPE_2D;
-        if (info.array_layers > 1) {
-          info.view_type = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-        }
-      } else {
-        info.view_type = VK_IMAGE_VIEW_TYPE_3D;
-      }
+      ImageDesc desc{
+          .type = ImageDesc::Type::TwoD,
+          .format = dims.format,
+          .dims = {dims.width, dims.height, dims.depth},
+          .mip_levels = dims.levels,
+          .array_layers = dims.layers,
+          .sample_count = dims.samples,
+          .usage = Usage::Default,
+      };
+      desc.bind_flags = get_bind_flags(dims.access_usage);
+
       assert(i < physical_image_attachments_.size());
       {
         auto it = img_cache_.find(dims);
@@ -852,23 +861,24 @@ void RenderGraph::setup_attachments() {
           bool valid_extent{false};
           auto* img = get_device().get_image(it->second);
           if (img) {
-            const auto& cinfo = img->create_info();
+            const auto& existing_desc = img->get_desc();
             if (dims.size_class == SizeClass::SwapchainRelative) {
               valid_extent =
-                  cinfo.extent.width == desc_.dims.x && cinfo.extent.height == desc_.dims.y;
+                  existing_desc.dims.x == desc_.dims.x && existing_desc.dims.y == desc_.dims.y;
             } else {
-              valid_extent = cinfo.extent.width == dims.width &&
-                             cinfo.extent.height == dims.height && cinfo.extent.depth == dims.depth;
+              valid_extent = existing_desc.dims.x == dims.width &&
+                             existing_desc.dims.y == dims.height &&
+                             existing_desc.dims.z == dims.depth;
             }
-            if (valid_extent && cinfo.array_layers == dims.layers &&
-                cinfo.mip_levels == dims.levels && cinfo.samples == dims.samples &&
-                cinfo.format == vk2::to_vkformat(dims.format) &&
-                cinfo.override_usage_flags == get_image_usage(dims.access_usage)) {
+            if (valid_extent && existing_desc.array_layers == dims.layers &&
+                existing_desc.mip_levels == dims.levels &&
+                existing_desc.sample_count == dims.samples && existing_desc.format == dims.format &&
+                existing_desc.bind_flags == get_bind_flags(dims.access_usage)) {
               physical_image_attachments_[i] = it->second.handle;
               need_new_img = false;
             } else {
               LINFO("need new image: {} {} {}\ncinfo : {} {}", i, dims.width, dims.height,
-                    cinfo.extent.width, cinfo.extent.height);
+                    existing_desc.dims.x, existing_desc.dims.y);
             }
           }
           if (!need_new_img) {
@@ -879,7 +889,7 @@ void RenderGraph::setup_attachments() {
         if (need_new_img) {
           image_pipeline_states_.erase(physical_image_attachments_[i]);
           LINFO("making new image: {}", i);
-          img_cache_used_.emplace_back(dims, get_device().create_image_holder(info));
+          img_cache_used_.emplace_back(dims, get_device().create_image_holder(desc));
           // if (!inserted) {
           //   it->second = vk2::get_device().create_image_holder(info);
           // }
@@ -1016,9 +1026,9 @@ void RenderGraph::physical_pass_setup_barriers(u32 pass_i) {
       b.dstAccessMask = barrier.access;
       b.dstStageMask = barrier.stages;
       b.image = image->image();
-      b.subresourceRange.aspectMask = vk2::format_to_aspect_flags(image->create_info().format);
-      b.subresourceRange.layerCount = image->create_info().array_layers;
-      b.subresourceRange.levelCount = image->create_info().mip_levels;
+      b.subresourceRange.aspectMask = vk2::format_to_aspect_flags(image->get_desc().format);
+      b.subresourceRange.layerCount = image->get_desc().array_layers;
+      b.subresourceRange.levelCount = image->get_desc().mip_levels;
 
       layout_change = b.oldLayout != b.newLayout;
       bool needs_sync = layout_change || needs_invalidate(barrier, resource_state);

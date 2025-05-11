@@ -184,7 +184,7 @@ void CSM::imgui_pass(CmdEncoder&, SamplerHandle sampler, const Image& tex) {
     }
     imgui_set_ = ImGui_ImplVulkan_AddTexture(device_->get_sampler_vk(sampler), tex.view().view(),
                                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    curr_debug_img_size_ = {tex.extent_2d().width, tex.extent_2d().height};
+    curr_debug_img_size_ = tex.size();
   }
 }
 
@@ -217,8 +217,8 @@ void CSM::on_imgui() {
   }
 }
 
-void CSM::prepare_frame(RenderGraph& rg, u32 frame_num, const mat4& cam_view, vec3 light_dir,
-                        float aspect_ratio, float fov_deg, const AABB& aabb, vec3 view_pos) {
+void CSM::prepare_frame(u32 frame_num, const mat4& cam_view, vec3 light_dir, float aspect_ratio,
+                        float fov_deg, const AABB& aabb, vec3 view_pos) {
   float shadow_z_far = shadow_z_far_;
   if (aabb_based_z_far_) {
     std::array<vec3, 8> aabb_corners;
@@ -289,17 +289,7 @@ void CSM::add_pass(RenderGraph& rg) {
       curr_shadow_map_img_ = shadow_map_img_;
       for (u32 i = 0; i < cascade_count_; i++) {
         shadow_map_img_views_[i] =
-            get_device().create_image_view_holder(*get_device().get_image(curr_shadow_map_img_),
-                                                  ImageViewCreateInfo{
-                                                      to_vkformat(Format::D32Sfloat),
-                                                      VkImageSubresourceRange{
-                                                          .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
-                                                          .baseMipLevel = 0,
-                                                          .levelCount = 1,
-                                                          .baseArrayLayer = i,
-                                                          .layerCount = 1,
-                                                      },
-                                                  });
+            Holder<ImageViewHandle>{device_->create_image_view(curr_shadow_map_img_, 0, 1, i, 1)};
       }
     }
 
@@ -308,15 +298,14 @@ void CSM::add_pass(RenderGraph& rg) {
       // TODO: make image views into a handle. when image is destroyed, image views will be too, so
       // then can make new ones
       auto* sm_img = get_device().get_image(shadow_map_img_);
-      uvec2 extent{sm_img->extent_2d().width, sm_img->extent_2d().height};
-      cmd.begin_rendering({.extent = extent},
+      cmd.begin_rendering({.extent = sm_img->size()},
                           {{get_device().get_image_view(shadow_map_img_views_[i]),
                             RenderingAttachmentInfo::Type::Depth,
                             RenderingAttachmentInfo::LoadOp::Clear,
                             RenderingAttachmentInfo::StoreOp::Store,
                             {.depth_stencil = {.depth = 1}}}});
       cmd.set_cull_mode(CullMode::None);
-      cmd.set_viewport_and_scissor(sm_img->extent_2d().width, sm_img->extent_2d().height);
+      cmd.set_viewport_and_scissor(sm_img->size());
       if (depth_bias_enabled_) {
         cmd.set_depth_bias(depth_bias_constant_factor_, 0.0f, depth_bias_slope_factor_);
       } else {
@@ -353,12 +342,11 @@ void CSM::debug_shadow_pass(RenderGraph& rg, SamplerHandle linear_sampler) {
     pass.add_image_access("shadow_map_img", Access::FragmentRead);
     pass.set_execute_fn([this, &linear_sampler, &rg, shadow_map_debug_img_handle](CmdEncoder& cmd) {
       auto* tex = rg.get_texture(shadow_map_debug_img_handle);
-      uvec2 extent{tex->extent_2d().width, tex->extent_2d().height};
       cmd.begin_rendering(
-          {.extent = extent},
+          {.extent = tex->size()},
           {RenderingAttachmentInfo{&tex->view(), RenderingAttachmentInfo::Type::Color,
                                    RenderingAttachmentInfo::LoadOp::Load}});
-      cmd.set_viewport_and_scissor(extent.x, extent.y);
+      cmd.set_viewport_and_scissor(tex->size());
 
       assert(debug_cascade_idx_ >= 0 && (u32)debug_cascade_idx_ < cascade_count_);
 
@@ -381,7 +369,7 @@ void CSM::load_pipelines(PipelineLoader& loader) {
   GraphicsPipelineCreateInfo shadow_depth_info{
       .shaders = {{"shadow_depth.vert", ShaderType::Vertex},
                   {"shadow_depth.frag", ShaderType::Fragment, {"#define ALPHA_MASK_ENABLED 1\n"}}},
-      .rendering = {.depth_format = to_vkformat(Format::D32Sfloat)},
+      .rendering = {.depth_format = convert_format(Format::D32Sfloat)},
       .rasterization = {.depth_clamp = true, .depth_bias = true},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::Less),
       .dynamic_state = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
@@ -397,7 +385,7 @@ void CSM::load_pipelines(PipelineLoader& loader) {
       GraphicsPipelineCreateInfo{
           .shaders = {{"fullscreen_quad.vert", ShaderType::Vertex},
                       {"debug/depth_debug.frag", ShaderType::Fragment}},
-          .rendering = {.color_formats = {to_vkformat(debug_shadow_img_format_)}},
+          .rendering = {.color_formats = {convert_format(debug_shadow_img_format_)}},
           .rasterization = {.cull_mode = CullMode::Front},
           .depth_stencil = GraphicsPipelineCreateInfo::depth_disable(),
           .name = "depth debug",

@@ -41,8 +41,8 @@ class CSM {
   }
 
   void debug_shadow_pass(RenderGraph& rg, SamplerHandle linear_sampler);
-  void prepare_frame(RenderGraph& rg, u32 frame_num, const mat4& cam_view, vec3 light_dir,
-                     float aspect_ratio, float fov_deg, const AABB& aabb, vec3 view_pos);
+  void prepare_frame(u32 frame_num, const mat4& cam_view, vec3 light_dir, float aspect_ratio,
+                     float fov_deg, const AABB& aabb, vec3 view_pos);
   void on_imgui();
 
   // [[nodiscard]] const vk2::Image& get_debug_img() const { return shadow_map_debug_img_; }

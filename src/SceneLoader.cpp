@@ -10,6 +10,8 @@
 #include <cstdint>
 #include <cstring>
 
+#include "vk2/VkTypes.hpp"
+
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wredundant-move"
 #include <fastgltf/core.hpp>
@@ -374,7 +376,7 @@ void load_scene_graph_data(LoadedSceneBaseData& result, fastgltf::Asset& gltf,
 struct CpuImageData {
   u32 w, h, channels;
   bool is_ktx{};
-  VkFormat format;
+  Format format;
   std::unique_ptr<unsigned char[], decltype([](unsigned char* p) { stbi_image_free(p); })>
       non_ktx_data;
   std::unique_ptr<ktxTexture2, decltype([](ktxTexture2* p) { ktxTexture_Destroy(ktxTexture(p)); })>
@@ -385,17 +387,17 @@ void load_cpu_img_data(const fastgltf::Asset& asset, const fastgltf::Image& imag
                        const std::filesystem::path& directory, CpuImageData& result,
                        PBRImageUsage usage) {
   ZoneScoped;
-  auto get_vk_format = [&](bool is_ktx) {
+  auto get_vk_format = [&](bool is_ktx) -> Format {
     switch (usage) {
       default:
       case PBRImageUsage::BaseColor:
       case PBRImageUsage::Emissive:
-        return is_ktx ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_R8G8B8A8_SRGB;
+        return is_ktx ? Format::Bc7SrgbBlock : Format::R8G8B8A8Srgb;
       case PBRImageUsage::MetallicRoughness:
       case PBRImageUsage::Occlusion:
       case PBRImageUsage::Normal:
       case PBRImageUsage::OccRoughnessMetallic:
-        return is_ktx ? VK_FORMAT_BC7_UNORM_BLOCK : VK_FORMAT_R8G8B8A8_UNORM;
+        return is_ktx ? Format::Bc7UnormBlock : Format::R8G8B8A8Unorm;
     }
   };
   auto load_non_ktx = [&](const void* data, u64 size) {
@@ -440,9 +442,9 @@ void load_cpu_img_data(const fastgltf::Asset& asset, const fastgltf::Image& imag
           result != KTX_SUCCESS) {
         assert(false);
       }
-      result.format = static_cast<VkFormat>(ktx_tex->vkFormat);
+      result.format = vk2::convert_format(static_cast<VkFormat>(ktx_tex->vkFormat));
     } else {
-      result.format = static_cast<VkFormat>(ktx_tex->vkFormat);
+      result.format = vk2::convert_format(static_cast<VkFormat>(ktx_tex->vkFormat));
     }
   };
 
@@ -638,12 +640,11 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
         staging_offset += size;
       }
       result->textures.emplace_back(
-          get_device().create_image_holder(ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
-                                                           .format = img.format,
-                                                           .extent = VkExtent3D{img.w, img.h, 1},
-                                                           .mip_levels = ktx->numLevels,
-                                                           .usage = ImageUsage::ReadOnly}));
-
+          get_device().create_image(ImageDesc{.type = ImageDesc::Type::TwoD,
+                                              .format = img.format,
+                                              .dims = {img.w, img.h, 1},
+                                              .mip_levels = ktx->numLevels,
+                                              .bind_flags = BindFlag::ShaderResource}));
       assert(tot == ktx->dataSize);
       (void)tot;
     } else {
@@ -658,12 +659,13 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
                         .staging_offset = staging_offset,
                         .level = 0,
                         .img_idx = static_cast<u32>(result->textures.size())});
+
       result->textures.emplace_back(
-          get_device().create_image_holder(ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
-                                                           .format = img.format,
-                                                           .extent = VkExtent3D{img.w, img.h, 1},
-                                                           .mip_levels = 1,
-                                                           .usage = ImageUsage::ReadOnly}));
+          get_device().create_image(ImageDesc{.type = ImageDesc::Type::TwoD,
+                                              .format = img.format,
+                                              .dims = {img.w, img.h, 1},
+                                              .mip_levels = 1,
+                                              .bind_flags = BindFlag::ShaderResource}));
       staging_offset += size;
     }
   }

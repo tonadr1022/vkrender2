@@ -28,6 +28,10 @@ void destroy(gfx::ImageViewHandle data);
 struct GLFWwindow;
 namespace gfx {
 class Device;
+namespace constants {
+inline constexpr u32 remaining_array_layers = ~0U;
+inline constexpr u32 remaining_mip_layers = ~0U;
+}  // namespace constants
 
 enum class DeviceFeature : u8 { DrawIndirectCount };
 
@@ -142,6 +146,7 @@ class Device {
   SamplerHandle null_sampler_;
   SamplerHandle get_or_create_sampler(const SamplerCreateInfo& info);
   u32 get_bindless_idx(SamplerHandle sampler);
+  u32 get_bindless_idx(ImageHandle img, SubresourceType type);
   // TODO: remove
   VkSampler get_sampler_vk(SamplerHandle sampler);
 
@@ -151,12 +156,11 @@ class Device {
   // TODO: better args
   BufferHandle create_buffer(const BufferCreateInfo& info);
   Holder<BufferHandle> create_buffer_holder(const BufferCreateInfo& info);
-  ImageViewHandle create_image_view(const Image& image, const ImageViewCreateInfo& info);
-  ImageHandle create_image(const ImageCreateInfo& info);
+  // returns subresource handle
+  ImageViewHandle create_image_view(ImageHandle image_handle, u32 base_mip_level, u32 level_count,
+                                    u32 base_array_layer, u32 layer_count);
   ImageHandle create_image(const ImageDesc& desc);
-  Holder<ImageHandle> create_image_holder(const ImageCreateInfo& info);
-  Holder<ImageViewHandle> create_image_view_holder(const Image& image,
-                                                   const ImageViewCreateInfo& info);
+  Holder<ImageHandle> create_image_holder(const ImageDesc& desc);
   void destroy(ImageHandle handle);
   void destroy(SamplerHandle handle);
   void destroy(ImageViewHandle handle);

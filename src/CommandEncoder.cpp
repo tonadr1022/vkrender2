@@ -7,8 +7,8 @@
 #include "core/FixedVector.hpp"
 #include "core/Logger.hpp"
 #include "vk2/Buffer.hpp"
-#include "vk2/Device.hpp"
 #include "vk2/PipelineManager.hpp"
+#include "vk2/Texture.hpp"
 #include "vk2/VkTypes.hpp"
 
 namespace gfx {
@@ -46,6 +46,20 @@ void CmdEncoder::barrier(VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_acc
   vkCmdPipelineBarrier2KHR(cmd_, &info);
 }
 
+void CmdEncoder::set_viewport_and_scissor(vec2 extent, vec2 offset) {
+  VkViewport viewport{.x = offset.x,
+                      .y = offset.y,
+                      .width = static_cast<float>(extent.x),
+                      .height = static_cast<float>(extent.y),
+                      .minDepth = 0.f,
+                      .maxDepth = 1.f};
+
+  vkCmdSetViewport(cmd_, 0, 1, &viewport);
+  VkRect2D scissor{.offset = VkOffset2D{.x = 0, .y = 0},
+                   .extent = VkExtent2D{.width = static_cast<uint32_t>(extent.x),
+                                        .height = static_cast<uint32_t>(extent.y)}};
+  vkCmdSetScissor(cmd_, 0, 1, &scissor);
+}
 void CmdEncoder::set_viewport_and_scissor(u32 width, u32 height) {
   VkViewport viewport{.x = 0,
                       .y = 0,

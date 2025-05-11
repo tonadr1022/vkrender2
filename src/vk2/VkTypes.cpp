@@ -2,7 +2,7 @@
 
 #include <vulkan/vulkan_core.h>
 namespace gfx::vk2 {
-Format vkformat_to_format(VkFormat format) { return static_cast<Format>(format); }
+Format convert_format(VkFormat format) { return static_cast<Format>(format); }
 
 VkImageAspectFlags format_to_aspect_flags(VkFormat format) {
   switch (format) {
@@ -29,7 +29,7 @@ VkImageAspectFlags format_to_aspect_flags(VkFormat format) {
 }
 
 VkImageAspectFlags format_to_aspect_flags(Format format) {
-  return format_to_aspect_flags(to_vkformat(format));
+  return format_to_aspect_flags(convert_format(format));
 }
 
 VkCullModeFlags convert_cull_mode(CullMode mode) {

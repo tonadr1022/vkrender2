@@ -164,14 +164,15 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   uint32_t white = glm::packUnorm4x8(glm::vec4(1, 1, 1, 1));
   Buffer* staging = StagingBufferPool::get().acquire(32);
   memcpy((char*)staging->mapped_data(), (void*)&white, sizeof(u32));
-  default_data_.white_img =
-      create_texture_2d(VK_FORMAT_R8G8B8A8_SRGB, {1, 1, 1}, ImageUsage::ReadOnly);
+  default_data_.white_img = Holder<ImageHandle>{device_->create_image(ImageDesc{
+      .format = Format::R8G8B8A8Srgb, .dims = {1, 1, 1}, .bind_flags = BindFlag::ShaderResource})};
 
   immediate_submit([this, staging](VkCommandBuffer cmd) {
     // TODO: extract
     state_.reset(cmd);
-    state_.transition(default_data_.white_img->image(), VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                      VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    state_.transition(*device_->get_image(default_data_.white_img),
+                      VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     state_.flush_barriers();
     VkBufferImageCopy2 img_copy{.sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
                                 .bufferOffset = 0,
@@ -186,12 +187,13 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
                                 .imageExtent = VkExtent3D{1, 1, 1}};
     VkCopyBufferToImageInfo2 copy{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2_KHR,
                                   .srcBuffer = staging->buffer(),
-                                  .dstImage = default_data_.white_img->image(),
+                                  .dstImage = device_->get_image(default_data_.white_img)->image(),
                                   .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                   .regionCount = 1,
                                   .pRegions = &img_copy};
     vkCmdCopyBufferToImage2KHR(cmd, &copy);
-    state_.transition(default_data_.white_img->image(), VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+    state_.transition(device_->get_image(default_data_.white_img)->image(),
+                      VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                       VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
                       VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
     state_.flush_barriers();
@@ -228,7 +230,7 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   });
 
   default_mat_data_.white_img_handle =
-      default_data_.white_img->view().sampled_img_resource().handle;
+      device_->get_bindless_idx(default_data_.white_img.handle, SubresourceType::Shader);
 
   {
     // per frame scene uniforms
@@ -318,29 +320,30 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
           GraphicsPipelineCreateInfo{
               .shaders = {{"debug/basic.vert", ShaderType::Vertex},
                           {"debug/basic.frag", ShaderType::Fragment}},
-              .rendering = {.color_formats = {to_vkformat(draw_img_format_)},
-                            .depth_format = to_vkformat(depth_img_format_)},
+              .rendering = {.color_formats = {convert_format(draw_img_format_)},
+                            .depth_format = convert_format(depth_img_format_)},
               .depth_stencil =
                   GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
               .name = "basic draw",
           },
           &draw_pipeline_)
       .add_graphics(
-          GraphicsPipelineCreateInfo{.shaders = {{"skybox/skybox.vert", ShaderType::Vertex},
-                                                 {"skybox/skybox.frag", ShaderType::Fragment}},
-                                     .rendering = {.color_formats = {to_vkformat(draw_img_format_)},
-                                                   .depth_format = to_vkformat(depth_img_format_)},
-                                     .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(
-                                         true, CompareOp::GreaterOrEqual),
-                                     .name = "skybox"},
+          GraphicsPipelineCreateInfo{
+              .shaders = {{"skybox/skybox.vert", ShaderType::Vertex},
+                          {"skybox/skybox.frag", ShaderType::Fragment}},
+              .rendering = {.color_formats = {convert_format(draw_img_format_)},
+                            .depth_format = convert_format(depth_img_format_)},
+              .depth_stencil =
+                  GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
+              .name = "skybox"},
           &skybox_pipeline_)
       .add_graphics(
           GraphicsPipelineCreateInfo{
               .shaders = {{"lines/draw_line.vert", ShaderType::Vertex},
                           {"lines/draw_line.frag", ShaderType::Fragment}},
               .topology = PrimitiveTopology::LineList,
-              .rendering = {.color_formats = {to_vkformat(device_->get_swapchain_info().format)},
-                            .depth_format = to_vkformat(depth_img_format_)},
+              .rendering = {.color_formats = {convert_format(device_->get_swapchain_info().format)},
+                            .depth_format = convert_format(depth_img_format_)},
               .depth_stencil =
                   GraphicsPipelineCreateInfo::depth_enable(false, CompareOp::GreaterOrEqual),
               .name = "lines"},
@@ -349,10 +352,10 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   GraphicsPipelineCreateInfo gbuffer_info{
       .shaders = {{"gbuffer/gbuffer.vert", ShaderType::Vertex},
                   {"gbuffer/gbuffer.frag", ShaderType::Fragment}},
-      .rendering = {.color_formats = {to_vkformat(gbuffer_a_format_),
-                                      to_vkformat(gbuffer_b_format_),
-                                      to_vkformat(gbuffer_c_format_)},
-                    .depth_format = to_vkformat(depth_img_format_)},
+      .rendering = {.color_formats = {convert_format(gbuffer_a_format_),
+                                      convert_format(gbuffer_b_format_),
+                                      convert_format(gbuffer_c_format_)},
+                    .depth_format = convert_format(depth_img_format_)},
       .depth_stencil = GraphicsPipelineCreateInfo::depth_enable(true, CompareOp::GreaterOrEqual),
       .name = "gbuffer"};
 
@@ -501,7 +504,7 @@ void VkRender2::draw(const SceneDrawInfo& info) {
 
   rg_.reset();
   rg_.set_backbuffer_img("final_out");
-  csm_->prepare_frame(rg_, device_->curr_frame_num(), info.view, info.light_dir, aspect_ratio(),
+  csm_->prepare_frame(device_->curr_frame_num(), info.view, info.light_dir, aspect_ratio(),
                       info.fov_degrees, scene_aabb_, info.view_pos);
 
   if (!frustum_cull_settings_.paused) {
@@ -622,7 +625,7 @@ void VkRender2::on_imgui() {
     ImGui::Checkbox("Deferred Rendering", &deferred_enabled_);
     ImGui::Checkbox("Render prefilter env map skybox", &render_prefilter_mip_skybox_);
     ImGui::SliderInt("Prefilter Env Map Layer", &prefilter_mip_skybox_render_mip_level_, 0,
-                     ibl_->prefiltered_env_map_tex_->texture->create_info().mip_levels - 1);
+                     device_->get_image(ibl_->prefiltered_env_map_tex_)->get_desc().mip_levels - 1);
   }
 
   if (ImGui::TreeNodeEx("Scene", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -978,19 +981,17 @@ const char* VkRender2::debug_mode_to_string(u32 mode) {
   }
 }
 
-std::optional<Image> VkRender2::load_hdr_img(CmdEncoder& ctx, const std::filesystem::path& path,
-                                             bool flip) {
+ImageHandle VkRender2::load_hdr_img(CmdEncoder& ctx, const std::filesystem::path& path, bool flip) {
   VkCommandBuffer cmd = ctx.cmd();
   auto cpu_img_data = gfx::loader::load_hdr(path, 4, flip);
-  if (!cpu_img_data.has_value()) return std::nullopt;
-  auto tex = Image{ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
-                                   .format = VK_FORMAT_R32G32B32A32_SFLOAT,
-                                   .extent = {cpu_img_data->w, cpu_img_data->h, 1},
-                                   .mip_levels = 1,
-                                   .array_layers = 1,
-                                   .usage = ImageUsage::ReadOnly}};
-  if (!tex.image()) {
-    return std::nullopt;
+  if (!cpu_img_data.has_value()) return {};
+  auto tex_handle = device_->create_image(ImageDesc{.type = ImageDesc::Type::TwoD,
+                                                    .format = Format::R32G32B32A32Sfloat,
+                                                    .dims = {cpu_img_data->w, cpu_img_data->h, 1},
+                                                    .bind_flags = BindFlag::ShaderResource});
+  auto* tex = device_->get_image(tex_handle);
+  if (!tex) {
+    return {};
   }
   auto cnt = cpu_img_data->w * cpu_img_data->h;
   u64 cpu_img_size = sizeof(float) * cnt * 4;
@@ -999,7 +1000,7 @@ std::optional<Image> VkRender2::load_hdr_img(CmdEncoder& ctx, const std::filesys
   const float* src = cpu_img_data->data;
   memcpy(mapped, src, cpu_img_size);
 
-  transition_image(cmd, tex, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  transition_image(cmd, *tex, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
   VkBufferImageCopy2 img_copy_info{.sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
                                    .bufferOffset = 0,
                                    .imageSubresource =
@@ -1009,26 +1010,26 @@ std::optional<Image> VkRender2::load_hdr_img(CmdEncoder& ctx, const std::filesys
                                            .baseArrayLayer = 0,
                                            .layerCount = 1,
                                        },
-                                   .imageExtent = tex.extent()};
+                                   .imageExtent = {tex->size().x, tex->size().y, 1}};
   VkCopyBufferToImageInfo2 copy_to_img_info{
       .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2_KHR,
       .srcBuffer = staging_buf->buffer(),
-      .dstImage = tex.image(),
+      .dstImage = tex->image(),
       .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
       .regionCount = 1,
       .pRegions = &img_copy_info};
   vkCmdCopyBufferToImage2KHR(cmd, &copy_to_img_info);
-  transition_image(cmd, tex, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-  return tex;
+  transition_image(cmd, *tex, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  return tex_handle;
 }
 
 void VkRender2::generate_mipmaps(StateTracker& state, VkCommandBuffer cmd, Image& tex) {
   // TODO: this is unbelievably hacky: using manual barriers outside of state tracker and then
   // updating state tracker with the result. solve this by updating state tracker to manage
   // subresource ranges or toss it and make a render graph
-  u32 array_layers = tex.create_info().array_layers;
-  u32 mip_levels = get_mip_levels(tex.extent_2d());
-  VkExtent2D curr_img_size = tex.extent_2d();
+  u32 array_layers = tex.get_desc().array_layers;
+  u32 mip_levels = get_mip_levels(tex.size());
+  VkExtent2D curr_img_size = {tex.size().x, tex.size().y};
   for (u32 mip_level = 0; mip_level < mip_levels; mip_level++) {
     VkImageMemoryBarrier2 img_barrier{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
     img_barrier.image = tex.image();
@@ -1117,9 +1118,9 @@ void VkRender2::immediate_submit(std::function<void(CmdEncoder& ctx)>&& function
 
 void VkRender2::generate_mipmaps(CmdEncoder& ctx, Image& tex) {
   VkCommandBuffer cmd = ctx.cmd();
-  u32 array_layers = tex.create_info().array_layers;
-  u32 mip_levels = get_mip_levels(tex.extent_2d());
-  VkExtent2D curr_img_size = tex.extent_2d();
+  u32 array_layers = tex.get_desc().array_layers;
+  u32 mip_levels = get_mip_levels(tex.size());
+  VkExtent2D curr_img_size = {tex.size().x, tex.size().y};
   for (u32 mip_level = 0; mip_level < mip_levels; mip_level++) {
     VkImageMemoryBarrier2 img_barrier{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
     img_barrier.image = tex.image();
@@ -1328,13 +1329,13 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
       assert(tex);
       if (!tex) return;
       VkClearValue clear_value{.color = {{0.2, 0.2, 0.2, 1.0}}};
-      uvec2 extent = {tex->create_info().extent.width, tex->create_info().extent.height};
-      cmd.begin_rendering({.extent = extent}, {{&tex->view(), RenderingAttachmentInfo::Type::Color,
-                                                RenderingAttachmentInfo::LoadOp::Clear},
-                                               {&rg.get_texture(depth_out_handle)->view(),
-                                                RenderingAttachmentInfo::Type::Depth,
-                                                RenderingAttachmentInfo::LoadOp::Clear}});
-      cmd.set_viewport_and_scissor(extent.x, extent.y);
+      cmd.begin_rendering(
+          {.extent = tex->size()},
+          {{&tex->view(), RenderingAttachmentInfo::Type::Color,
+            RenderingAttachmentInfo::LoadOp::Clear},
+           {&rg.get_texture(depth_out_handle)->view(), RenderingAttachmentInfo::Type::Depth,
+            RenderingAttachmentInfo::LoadOp::Clear}});
+      cmd.set_viewport_and_scissor(tex->size());
       cmd.set_cull_mode(CullMode::None);
 
       BasicPushConstants pc{
@@ -1348,9 +1349,9 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
               ->resource_info_->handle,
           device_->get_bindless_idx(shadow_sampler_),
           device_->get_image(csm_->get_shadow_map_img())->view().sampled_img_resource().handle,
-          ibl_->irradiance_cubemap_tex_->view().sampled_img_resource().handle,
-          ibl_->brdf_lut_->view().sampled_img_resource().handle,
-          ibl_->prefiltered_env_map_tex_->texture->view().sampled_img_resource().handle,
+          device_->get_bindless_idx(ibl_->irradiance_cubemap_tex_.handle, SubresourceType::Shader),
+          device_->get_bindless_idx(ibl_->brdf_lut_.handle, SubresourceType::Shader),
+          device_->get_bindless_idx(ibl_->prefiltered_env_map_tex_.handle, SubresourceType::Shader),
           device_->get_bindless_idx(linear_sampler_clamp_to_edge_)};
       cmd.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
       // TODO: double sided
@@ -1394,8 +1395,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
               return;
             }
 
-            uvec2 extent = {gbuffer_a->create_info().extent.width,
-                            gbuffer_a->create_info().extent.height};
+            uvec2 extent = gbuffer_a->size();
             cmd.begin_rendering(
                 {.extent = extent},
                 {{&gbuffer_a->view(), RenderingAttachmentInfo::Type::Color,
@@ -1406,7 +1406,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
                   RenderingAttachmentInfo::LoadOp::Clear},
                  {&rg.get_texture(depth_out_handle)->view(), RenderingAttachmentInfo::Type::Depth,
                   RenderingAttachmentInfo::LoadOp::Clear}});
-            cmd.set_viewport_and_scissor(extent.x, extent.y);
+            cmd.set_viewport_and_scissor(extent);
 
             PipelineManager::get().bind_graphics(cmd.cmd(), gbuffer_pipeline_);
             GBufferPushConstants pc{
@@ -1474,14 +1474,15 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
             device_->get_bindless_idx(shadow_sampler_),
             device_->get_buffer(csm_->get_shadow_data_buffer(device_->curr_frame_in_flight()))
                 ->resource_info_->handle,
-            ibl_->irradiance_cubemap_tex_->view().sampled_img_resource().handle,
-            ibl_->brdf_lut_->view().sampled_img_resource().handle,
-            ibl_->prefiltered_env_map_tex_->texture->view().sampled_img_resource().handle,
+            device_->get_bindless_idx(ibl_->irradiance_cubemap_tex_.handle,
+                                      SubresourceType::Shader),
+            device_->get_bindless_idx(ibl_->brdf_lut_.handle, SubresourceType::Shader),
+            device_->get_bindless_idx(ibl_->prefiltered_env_map_tex_.handle,
+                                      SubresourceType::Shader),
             device_->get_bindless_idx(linear_sampler_clamp_to_edge_)};
         PipelineManager::get().bind_compute(cmd.cmd(), deferred_shade_pipeline_);
         cmd.push_constants(sizeof(pc), &pc);
-        cmd.dispatch((gbuffer_a->create_info().extent.width + 16) / 16,
-                     (gbuffer_a->create_info().extent.height + 16) / 16, 1);
+        cmd.dispatch((gbuffer_a->size().x + 16) / 16, (gbuffer_a->size().y + 16) / 16, 1);
       });
     }
     {
@@ -1494,14 +1495,13 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
         TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "skybox");
         auto* tex = rg.get_texture(draw_tex);
 
-        uvec2 extent{tex->create_info().extent.width, tex->create_info().extent.height};
         cmd.begin_rendering(
-            {.extent = extent},
+            {.extent = tex->size()},
             {{&tex->view(), RenderingAttachmentInfo::Type::Color,
               RenderingAttachmentInfo::LoadOp::Load},
              {&rg.get_texture(depth_handle)->view(), RenderingAttachmentInfo::Type::Depth,
               RenderingAttachmentInfo::LoadOp::Load}});
-        cmd.set_viewport_and_scissor(extent.x, extent.y);
+        cmd.set_viewport_and_scissor(tex->size());
 
         draw_skybox(cmd);
         vkCmdEndRenderingKHR(cmd.cmd());
@@ -1536,8 +1536,8 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
              post_processed_img->view().storage_img_resource().handle, postprocess_flags,
              tonemap_type_};
         cmd.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
-        vkCmdDispatch(cmd.cmd(), (post_processed_img->extent_2d().width + 16) / 16,
-                      (post_processed_img->extent_2d().height + 16) / 16, 1);
+        vkCmdDispatch(cmd.cmd(), (post_processed_img->size().x + 16) / 16,
+                      (post_processed_img->size().y + 16) / 16, 1);
       }
     });
   }
@@ -1578,7 +1578,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
       auto* color_tex = rg.get_texture(color_handle);
       auto* depth_tex = rg.get_texture(depth_handle);
       if (line_draw_vertices_.size()) {
-        uvec2 extent = {color_tex->extent_2d().width, color_tex->extent_2d().height};
+        uvec2 extent = color_tex->size();
         cmd.begin_rendering({.extent = extent},
                             {{&color_tex->view(), RenderingAttachmentInfo::Type::Color,
                               RenderingAttachmentInfo::LoadOp::Load},
@@ -1592,8 +1592,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
         vkCmdDraw(cmd.cmd(), line_draw_vertices_.size(), 1, 0, 0);
         vkCmdEndRenderingKHR(cmd.cmd());
       }
-      render_imgui(cmd, {color_tex->extent_2d().width, color_tex->extent_2d().height},
-                   &color_tex->view());
+      render_imgui(cmd, color_tex->size(), color_tex->view());
     });
   }
 }
@@ -1780,15 +1779,20 @@ void VkRender2::draw_skybox(CmdEncoder& cmd) {
   PipelineManager::get().bind_graphics(cmd.cmd(), skybox_pipeline_);
   u32 skybox_handle{};
   if (render_prefilter_mip_skybox_) {
-    assert(ibl_->prefiltered_env_tex_views_.size() >
+    assert(ibl_->prefiltered_env_tex_views_mips_.size() >
            (size_t)prefilter_mip_skybox_render_mip_level_);
-    skybox_handle = ibl_->prefiltered_env_tex_views_[prefilter_mip_skybox_render_mip_level_]
-                        ->sampled_img_resource()
-                        .handle;
+    skybox_handle =
+        device_
+            ->get_image_view(
+                ibl_->prefiltered_env_tex_views_mips_[prefilter_mip_skybox_render_mip_level_])
+            ->sampled_img_resource()
+            .handle;
   } else {
-    skybox_handle = convoluted_skybox.get()
-                        ? ibl_->irradiance_cubemap_tex_->view().sampled_img_resource().handle
-                        : ibl_->env_cubemap_tex_->view().sampled_img_resource().handle;
+    skybox_handle =
+        convoluted_skybox.get()
+            ? device_->get_bindless_idx(ibl_->irradiance_cubemap_tex_.handle,
+                                        SubresourceType::Shader)
+            : device_->get_bindless_idx(ibl_->env_cubemap_tex_.handle, SubresourceType::Shader);
   }
   struct {
     u32 scene_buffer, tex_idx;
@@ -1896,10 +1900,10 @@ void VkRender2::free(CmdEncoder& cmd, StaticModelInstanceResources& instance) {
   free(instance);
 }
 
-void VkRender2::render_imgui(CmdEncoder& cmd, uvec2 draw_extent, ImageView* target_img_view) {
+void VkRender2::render_imgui(CmdEncoder& cmd, uvec2 draw_extent, const ImageView& target_img_view) {
   cmd.begin_rendering(
       {.extent = draw_extent},
-      {RenderingAttachmentInfo{target_img_view, RenderingAttachmentInfo::Type::Color,
+      {RenderingAttachmentInfo{&target_img_view, RenderingAttachmentInfo::Type::Color,
                                RenderingAttachmentInfo::LoadOp::Load}});
   ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd.cmd());
   cmd.end_rendering();

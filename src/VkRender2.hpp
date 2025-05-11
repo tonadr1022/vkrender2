@@ -88,8 +88,7 @@ class VkRender2 final {
   void new_frame();
   void set_imgui_enabled(bool imgui_enabled) { draw_imgui_ = imgui_enabled; }
   bool get_imgui_enabled() const { return draw_imgui_; }
-  std::optional<Image> load_hdr_img(CmdEncoder& ctx, const std::filesystem::path& path,
-                                    bool flip = false);
+  ImageHandle load_hdr_img(CmdEncoder& ctx, const std::filesystem::path& path, bool flip = false);
   void generate_mipmaps(CmdEncoder& ctx, Image& tex);
   void draw_line(const vec3& p1, const vec3& p2, const vec4& color);
 
@@ -325,7 +324,7 @@ class VkRender2 final {
   SamplerHandle linear_sampler_clamp_to_edge_;
 
   struct DefaultData {
-    std::optional<Image> white_img;
+    Holder<ImageHandle> white_img;
   } default_data_;
   gfx::DefaultMaterialData default_mat_data_;
 
@@ -393,7 +392,7 @@ class VkRender2 final {
   };
   std::vector<LineVertex> line_draw_vertices_;
   void draw_skybox(CmdEncoder& cmd);
-  void render_imgui(CmdEncoder& cmd, uvec2 draw_extent, ImageView* target_img_view);
+  void render_imgui(CmdEncoder& cmd, uvec2 draw_extent, const ImageView& target_img_view);
 
   [[nodiscard]] float aspect_ratio() const;
   [[nodiscard]] uvec2 window_dims() const;

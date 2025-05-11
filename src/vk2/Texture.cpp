@@ -7,8 +7,7 @@
 #include <utility>
 
 #include "vk2/BindlessResourceAllocator.hpp"
-#include "vk2/Device.hpp"
-#include "vk2/VkCommon.hpp"
+#include "vk2/VkTypes.hpp"
 
 namespace gfx {
 uint32_t get_mip_levels(VkExtent2D size) {
@@ -24,7 +23,7 @@ Image::~Image() {
 }
 
 Image::Image(Image&& other) noexcept
-    : create_info_(std::exchange(other.create_info_, {})),
+    : desc_(std::exchange(other.desc_, {})),
       view_(std::move(other.view_)),
       image_(std::exchange(other.image_, nullptr)),
       allocation_(std::exchange(other.allocation_, nullptr)) {}
@@ -34,134 +33,18 @@ Image& Image::operator=(Image&& other) noexcept {
     return *this;
   }
   this->~Image();
-  create_info_ = std::exchange(other.create_info_, {});
+  desc_ = std::exchange(other.desc_, {});
   view_ = std::move(other.view_);
   image_ = std::exchange(other.image_, nullptr);
   allocation_ = std::exchange(other.allocation_, nullptr);
   return *this;
 }
 
-// TODO: need move constructor for this
-ImageView::ImageView(const Image& texture, const ImageViewCreateInfo& info) : create_info_(info) {
-  VkImageViewType view_type = info.view_type != VK_IMAGE_VIEW_TYPE_MAX_ENUM
-                                  ? info.view_type
-                                  : texture.create_info_.view_type;
-  auto view_info = VkImageViewCreateInfo{.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-                                         .image = texture.image_,
-                                         .viewType = view_type,
-                                         .format = info.format,
-                                         .components = info.components,
-                                         .subresourceRange = info.range};
-  VK_CHECK(vkCreateImageView(get_device().device(), &view_info, nullptr, &view_));
-
-  if ((format_is_color(info.format) && (texture.create_info().override_usage_flags == 0 &&
-                                        texture.create_info().usage == ImageUsage::General)) ||
-      ((texture.create_info().override_usage_flags & VK_IMAGE_USAGE_STORAGE_BIT) != 0)) {
-    storage_image_resource_info_ =
-        ResourceAllocator::get().allocate_storage_img_descriptor(view_, VK_IMAGE_LAYOUT_GENERAL);
-  }
-  if (texture.usage() & VK_IMAGE_USAGE_SAMPLED_BIT) {
-    sampled_image_resource_info_ = ResourceAllocator::get().allocate_sampled_img_descriptor(
-        view_, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
-  }
-}
-
-Image::Image(const ImageCreateInfo& create_info) {
-  VmaAllocationCreateFlags alloc_flags{};
-  auto attachment_usage = format_is_color(create_info.format)
-                              ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
-                              : VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-
-  if (create_info.override_usage_flags) {
-    usage_ = create_info.override_usage_flags;
-    if (create_info.override_usage_flags & VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT ||
-        create_info.override_usage_flags & VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT ||
-        create_info.override_usage_flags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT ||
-        create_info.override_usage_flags & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) {
-      alloc_flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
-    }
-  } else {
-    if (create_info.usage == ImageUsage::General) {
-      // can't use srgb images for storage. wouldn't want to anyway
-      auto storage_usage =
-          (format_is_color(create_info.format) && !format_is_srgb(create_info.format))
-              ? VK_IMAGE_USAGE_STORAGE_BIT
-              : 0;
-      usage_ = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-               VK_IMAGE_USAGE_SAMPLED_BIT | storage_usage | attachment_usage;
-
-    } else if (create_info.usage == ImageUsage::AttachmentReadOnly) {
-      // dedicated memory for attachment textures
-      alloc_flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
-      // can't copy to attachment images, 99% want to sample them as well
-      usage_ = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | attachment_usage;
-
-    } else {  // ReadOnly
-      // copy to/from, sample
-      usage_ = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-               VK_IMAGE_USAGE_SAMPLED_BIT;
-    }
-  }
-
-  VmaAllocationCreateInfo alloc_create_info{
-      .flags = alloc_flags,
-      .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
-  };
-  VkImageCreateFlags img_create_flags{};
-  if (create_info.view_type == VK_IMAGE_VIEW_TYPE_CUBE ||
-      create_info.view_type == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY) {
-    img_create_flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
-  }
-
-  VkImageCreateInfo info{.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-                         .flags = img_create_flags,
-                         .imageType = vkviewtype_to_img_type(create_info.view_type),
-                         .format = create_info.format,
-                         .extent = create_info.extent,
-                         .mipLevels = create_info.mip_levels,
-                         .arrayLayers = create_info.array_layers,
-                         .samples = create_info.samples,
-                         .tiling = VK_IMAGE_TILING_OPTIMAL,
-                         .usage = usage_,
-                         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
-  image_ = nullptr;
-  VK_CHECK(vmaCreateImage(get_device().allocator(), &info, &alloc_create_info, &image_,
-                          &allocation_, nullptr));
-  if (!image_) {
-    return;
-  }
-
-  VkImageAspectFlags aspect = VK_IMAGE_ASPECT_NONE;
-  if (format_is_color(create_info.format)) {
-    aspect |= VK_IMAGE_ASPECT_COLOR_BIT;
-  }
-  if (format_is_depth(create_info.format)) {
-    aspect |= VK_IMAGE_ASPECT_DEPTH_BIT;
-  }
-  if (format_is_stencil(create_info.format)) {
-    aspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
-  }
-
-  create_info_ = create_info;
-  if (create_info.make_view) {
-    view_ = ImageView{*this, ImageViewCreateInfo{.format = create_info.format,
-                                                 .range =
-                                                     {
-                                                         .aspectMask = aspect,
-                                                         .baseMipLevel = 0,
-                                                         .levelCount = VK_REMAINING_MIP_LEVELS,
-                                                         .baseArrayLayer = 0,
-                                                         .layerCount = VK_REMAINING_ARRAY_LAYERS,
-                                                     },
-                                                 .components = {}}};
-  }
-}
-
-bool format_is_color(VkFormat format) {
+bool format_is_color(Format format) {
   return !(format_is_stencil(format) || format_is_depth(format));
 }
-bool format_is_srgb(VkFormat format) {
-  switch (format) {
+bool format_is_srgb(Format format) {
+  switch (vk2::convert_format(format)) {
     case VK_FORMAT_R8_SRGB:
     case VK_FORMAT_R8G8_SRGB:
     case VK_FORMAT_R8G8B8_SRGB:
@@ -179,8 +62,8 @@ bool format_is_srgb(VkFormat format) {
       return false;
   }
 }
-bool format_is_depth(VkFormat format) {
-  switch (format) {
+bool format_is_depth(Format format) {
+  switch (vk2::convert_format(format)) {
     case VK_FORMAT_D32_SFLOAT:
     case VK_FORMAT_D16_UNORM:
       return true;
@@ -189,8 +72,8 @@ bool format_is_depth(VkFormat format) {
   }
   return false;
 }
-bool format_is_stencil(VkFormat format) {
-  switch (format) {
+bool format_is_stencil(Format format) {
+  switch (vk2::convert_format(format)) {
     case VK_FORMAT_D16_UNORM_S8_UINT:
     case VK_FORMAT_D24_UNORM_S8_UINT:
     case VK_FORMAT_D32_SFLOAT_S8_UINT:
@@ -247,20 +130,6 @@ ImageView::~ImageView() {
   }
 }
 
-Image create_texture_2d(VkFormat format, uvec3 dims, ImageUsage usage) {
-  return Image{ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
-                               .format = format,
-                               .extent = VkExtent3D{dims.x, dims.y, dims.z},
-                               .usage = usage}};
-}
-Image create_texture_2d_mip(VkFormat format, uvec3 dims, ImageUsage usage, u32 levels) {
-  return Image{ImageCreateInfo{.view_type = VK_IMAGE_VIEW_TYPE_2D,
-                               .format = format,
-                               .extent = VkExtent3D{dims.x, dims.y, dims.z},
-                               .mip_levels = levels,
-                               .usage = usage}};
-}
-
 void blit_img(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent3D extent,
               VkImageAspectFlags aspect) {
   VkImageBlit2 region{
@@ -286,8 +155,8 @@ void blit_img(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent3D extent,
   vkCmdBlitImage2KHR(cmd, &blit_info);
 };
 
-uint32_t format_storage_size(VkFormat format) {
-  switch (format) {
+uint32_t format_storage_size(Format format) {
+  switch (vk2::convert_format(format)) {
     case VK_FORMAT_R8_UNORM:
     case VK_FORMAT_R8_SNORM:
     case VK_FORMAT_R8_SINT:
@@ -374,8 +243,8 @@ uint32_t format_storage_size(VkFormat format) {
   assert(false);
   return 0;
 }
-bool format_is_block_compreesed(VkFormat format) {
-  switch (format) {
+bool format_is_block_compreesed(Format format) {
+  switch (vk2::convert_format(format)) {
     case VK_FORMAT_BC1_RGB_UNORM_BLOCK:
     case VK_FORMAT_BC1_RGB_SRGB_BLOCK:
     case VK_FORMAT_BC1_RGBA_UNORM_BLOCK:
@@ -400,7 +269,7 @@ bool format_is_block_compreesed(VkFormat format) {
   }
   return false;
 }
-u64 block_compressed_image_size(VkFormat format, uvec3 extent) {
+u64 block_compressed_image_size(Format format, uvec3 extent) {
   u64 rounded_w = (extent.x + 3) & ~3;
   u64 rounded_h = (extent.y + 3) & ~3;
 
@@ -409,7 +278,7 @@ u64 block_compressed_image_size(VkFormat format, uvec3 extent) {
   u64 num_blocks = num_blocks_w * num_blocks_h * extent.z;
 
   // BC1 and BC4 use 8 bytes per block, others use 16 bytes per block
-  switch (format) {
+  switch (vk2::convert_format(format)) {
     case VK_FORMAT_BC1_RGB_UNORM_BLOCK:
     case VK_FORMAT_BC1_RGB_SRGB_BLOCK:
     case VK_FORMAT_BC1_RGBA_UNORM_BLOCK:
@@ -435,7 +304,7 @@ u64 block_compressed_image_size(VkFormat format, uvec3 extent) {
       return 0;
   }
 }
-u64 img_to_buffer_size(VkFormat format, uvec3 extent) {
+u64 img_to_buffer_size(Format format, uvec3 extent) {
   // https://registry.khronos.org/DataFormat/specs/1.3/dataformat.1.3.html#BPTC
   if (format_is_block_compreesed(format)) {
     return block_compressed_image_size(format, extent);
@@ -445,26 +314,27 @@ u64 img_to_buffer_size(VkFormat format, uvec3 extent) {
 
 uint32_t get_mip_levels(uvec2 size) { return get_mip_levels(VkExtent2D{size.x, size.y}); }
 
-TextureCubeAndViews::TextureCubeAndViews(const ImageCreateInfo& info) {
-  texture = Image{info};
-  if (!texture->image()) {
-    texture = {};
-    return;
-  }
-  for (u32 i = 0; i < 6; i++) {
-    img_views[i] = ImageView{*texture, ImageViewCreateInfo{
-                                           .format = texture->format(),
-                                           .range =
-                                               {
-                                                   .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                                   .baseMipLevel = 0,
-                                                   .levelCount = texture->create_info().mip_levels,
-                                                   .baseArrayLayer = i,
-                                                   .layerCount = 1,
-                                               },
-                                           .view_type = VK_IMAGE_VIEW_TYPE_2D,
-                                       }};
-  }
-}
+// TextureCubeAndViews::TextureCubeAndViews(const ImageCreateInfo& info) {
+//   texture = Image{info};
+//   if (!texture->image()) {
+//     texture = {};
+//     return;
+//   }
+//   for (u32 i = 0; i < 6; i++) {
+//     img_views[i] = ImageView{*texture, ImageViewCreateInfo{
+//                                            .format = texture->format(),
+//                                            .range =
+//                                                {
+//                                                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+//                                                    .baseMipLevel = 0,
+//                                                    .levelCount =
+//                                                    texture->create_info().mip_levels,
+//                                                    .baseArrayLayer = i,
+//                                                    .layerCount = 1,
+//                                                },
+//                                            .view_type = VK_IMAGE_VIEW_TYPE_2D,
+//                                        }};
+//   }
+// }
 
 }  // namespace gfx

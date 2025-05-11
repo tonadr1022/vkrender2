@@ -35,7 +35,6 @@ struct ResourceDimensions {
   Access access_usage{};
   // VkImageUsageFlags image_usage_flags{};
   // TODO: queues
-  [[nodiscard]] bool is_storage_image() const;
   [[nodiscard]] bool is_image() const;
   friend bool operator==(const ResourceDimensions& a, const ResourceDimensions& b) {
     bool valid_extent = false;
@@ -257,7 +256,6 @@ struct RenderGraph {
   std::unordered_multimap<ResourceDimensions, Holder<ImageHandle>, ResourceDimensionsHasher>
       img_cache_;
   std::vector<std::pair<ResourceDimensions, Holder<ImageHandle>>> img_cache_used_;
-
   std::vector<ImageHandle> physical_image_attachments_;
   std::vector<BufferHandle> physical_buffers_;
 

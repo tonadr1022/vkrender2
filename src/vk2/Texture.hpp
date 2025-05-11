@@ -27,7 +27,7 @@ struct ImageDesc {
   uvec3 dims{};
   u32 mip_levels{1};
   u32 array_layers{1};
-  u32 sample_count{};
+  u32 sample_count{1};
   BindFlag bind_flags{};
   ResourceMiscFlag misc_flags{};
   Usage usage{Usage::Default};
@@ -55,7 +55,7 @@ struct ImageViewCreateInfo {
 class Image;
 class ImageView {
  public:
-  explicit ImageView(const Image& texture, const ImageViewCreateInfo& info);
+  // explicit ImageView(const Image& texture, const ImageViewCreateInfo& info);
   ImageView() = default;
   ~ImageView();
   ImageView(ImageView&& other) noexcept;
@@ -83,7 +83,6 @@ class ImageView {
 
 class Image {
  public:
-  explicit Image(const ImageCreateInfo& create_info);
   Image() = default;
   ~Image();
   Image& operator=(const Image& other) = delete;
@@ -91,18 +90,14 @@ class Image {
   Image(Image&& other) noexcept;
   Image& operator=(Image&& other) noexcept;
 
-  [[nodiscard]] VkExtent2D extent_2d() const {
-    return {create_info_.extent.width, create_info_.extent.height};
-  }
-  [[nodiscard]] VkExtent3D extent() const { return create_info_.extent; }
   [[nodiscard]] VkImage image() const { return image_; }
-  [[nodiscard]] VkFormat format() const { return create_info_.format; }
+  [[nodiscard]] Format format() const { return desc_.format; }
+  [[nodiscard]] uvec3 size() const { return desc_.dims; }
+  // [[nodiscard]] VkExtent2D extent_2d() const { return VkExtent2D{desc_.dims.x, desc_.dims.y}; }
 
   [[nodiscard]] ImageView& view() { return view_.value(); }
   [[nodiscard]] const ImageView& view() const { return view_.value(); }
-  [[nodiscard]] const ImageCreateInfo& create_info() const { return create_info_; }
-
-  [[nodiscard]] VkImageUsageFlags usage() const { return usage_; }
+  [[nodiscard]] const ImageDesc& get_desc() const { return desc_; }
 
   VkImageLayout curr_layout{};
 
@@ -111,22 +106,16 @@ class Image {
   friend class BindlessResourceAllocator;
   friend class ImageView;
 
-  ImageCreateInfo create_info_;
+  ImageDesc desc_;
   std::optional<ImageView> view_;
   VkImage image_{};
-  VkImageUsageFlags usage_{};
   VmaAllocation allocation_{};
-};
-
-struct TextureCubeAndViews {
-  explicit TextureCubeAndViews(const ImageCreateInfo& info);
-  std::optional<Image> texture;
-  std::array<std::optional<ImageView>, 6> img_views;
 };
 
 void blit_img(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent3D extent,
               VkImageAspectFlags aspect);
 
+// TODO: device handle deletions
 struct TextureDeleteInfo {
   VkImage img;
   VmaAllocation allocation;
@@ -138,20 +127,17 @@ struct TextureViewDeleteInfo {
   VkImageView view;
 };
 
-Image create_texture_2d(VkFormat format, uvec3 dims, ImageUsage usage);
-Image create_texture_2d_mip(VkFormat format, uvec3 dims, ImageUsage usage, u32 levels);
-
 uint32_t get_mip_levels(VkExtent2D size);
 uint32_t get_mip_levels(uvec2 size);
 VkImageType vkviewtype_to_img_type(VkImageViewType view_type);
-bool format_is_stencil(VkFormat format);
-bool format_is_depth(VkFormat format);
-bool format_is_srgb(VkFormat format);
-bool format_is_color(VkFormat format);
+bool format_is_stencil(Format format);
+bool format_is_depth(Format format);
+bool format_is_srgb(Format format);
+bool format_is_color(Format format);
 
-uint32_t format_storage_size(VkFormat format);
-bool format_is_block_compreesed(VkFormat format);
-u64 block_compressed_image_size(VkFormat format, uvec3 extent);
-u64 img_to_buffer_size(VkFormat format, uvec3 extent);
+uint32_t format_storage_size(Format format);
+bool format_is_block_compreesed(Format format);
+u64 block_compressed_image_size(Format format, uvec3 extent);
+u64 img_to_buffer_size(Format format, uvec3 extent);
 
 }  // namespace gfx

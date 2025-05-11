@@ -606,6 +606,11 @@ using SamplerHandle = GenerationalHandle<class ::gfx::Sampler>;
 // TODO: move
 VK2_DEFINE_HANDLE_WITH_NAME(Pipeline, PipelineAndMetadata);
 
+enum class SubresourceType : u8 {
+  Storage,
+  Shader,
+};
+
 union ClearValue {
   vec4 color;
   struct {
@@ -619,7 +624,7 @@ struct RenderingAttachmentInfo {
   enum class LoadOp : u8 { Load, Clear, DontCare };
   enum class StoreOp : u8 { Store, DontCare };
 
-  ImageView* img_view;
+  const ImageView* img_view;
   Type type{Type::Color};
   LoadOp load_op{LoadOp::Load};
   StoreOp store_op{StoreOp::Store};

@@ -30,6 +30,7 @@ struct CmdEncoder {
   void push_constants(VkPipelineLayout layout, u32 size, void* data);
   void push_constants(u32 size, void* data);
   void set_viewport_and_scissor(u32 width, u32 height);
+  void set_viewport_and_scissor(vec2 extent, vec2 offset = vec2{0});
   void set_cull_mode(CullMode mode);
   void set_depth_bias(float constant_factor, float bias, float slope_factor);
   void bind_pipeline(PipelineBindPoint bind_point, PipelineHandle pipeline);

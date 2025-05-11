@@ -232,6 +232,7 @@ void transition_image_discard(VkCommandBuffer cmd, Image& image, VkImageLayout l
   auto dep_info = vk2::init::dependency_info({}, SPAN1(b));
   vkCmdPipelineBarrier2KHR(cmd, &dep_info);
 }
+
 void transition_image(VkCommandBuffer cmd, Image& image, VkImageLayout new_layout,
                       VkImageAspectFlags aspect) {
   transition_image(cmd, image, image.curr_layout, new_layout, aspect);
