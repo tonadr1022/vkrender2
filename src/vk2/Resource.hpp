@@ -15,7 +15,8 @@ enum class ResourceType : u8 {
 
 struct BindlessResourceInfo {
   ResourceType type;
-  u32 handle;
+  u32 handle{UINT32_MAX};
+  [[nodiscard]] bool is_valid() const { return handle != UINT32_MAX; }
 };
 
 }  // namespace gfx

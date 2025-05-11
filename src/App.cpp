@@ -9,6 +9,7 @@
 #include "core/Logger.hpp"
 #include "imgui.h"
 #include "util/CVar.hpp"
+#include "vk2/Device.hpp"
 namespace {
 
 std::optional<std::filesystem::path> get_resource_dir() {
