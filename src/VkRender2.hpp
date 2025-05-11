@@ -83,7 +83,6 @@ class VkRender2 final {
   void immediate_submit(std::function<void(CmdEncoder& cmd)>&& function);
   void enqueue_transfer();
   void set_env_map(const std::filesystem::path& path);
-  void bind_bindless_descriptors(CmdEncoder& ctx);
   void draw(const SceneDrawInfo& info);
   void new_frame();
   void set_imgui_enabled(bool imgui_enabled) { draw_imgui_ = imgui_enabled; }
@@ -120,7 +119,7 @@ class VkRender2 final {
     VkCommandPool cmd_pool;
     VkCommandBuffer main_cmd_buffer;
     tracy::VkCtx* tracy_vk_ctx{};
-    std::optional<Buffer> scene_uniform_buf;
+    Holder<BufferHandle> scene_uniform_buf;
     Holder<BufferHandle> line_draw_buf;
   };
   std::vector<PerFrameData> per_frame_data_;
@@ -356,15 +355,14 @@ class VkRender2 final {
   Format gbuffer_c_format_{Format::R8G8B8A8Unorm};
   Format draw_img_format_{Format::R16G16B16A16Sfloat};
   Format depth_img_format_{Format::D32Sfloat};
-  VkPipelineLayout default_pipeline_layout_{};
 
   std::vector<Buffer> free_staging_buffers_;
 
   std::unordered_map<u64, VkDescriptorSet> imgui_desc_sets_;
   VkDescriptorSet get_imgui_set(VkSampler sampler, VkImageView view);
   // non owning
-  VkDescriptorSet main_set_{};
-  VkDescriptorSet main_set2_{};
+  // VkDescriptorSet main_set_{};
+  // VkDescriptorSet main_set2_{};
   // end non owning
 
   std::vector<std::optional<LoadedSceneData>> loaded_scenes_;

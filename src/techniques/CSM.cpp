@@ -217,7 +217,7 @@ void CSM::on_imgui() {
   }
 }
 
-void CSM::prepare_frame(u32 frame_num, const mat4& cam_view, vec3 light_dir, float aspect_ratio,
+void CSM::prepare_frame(u32, const mat4& cam_view, vec3 light_dir, float aspect_ratio,
                         float fov_deg, const AABB& aabb, vec3 view_pos) {
   float shadow_z_far = shadow_z_far_;
   if (aabb_based_z_far_) {
@@ -261,8 +261,6 @@ void CSM::prepare_frame(u32 frame_num, const mat4& cam_view, vec3 light_dir, flo
   data_.biases.y = max_bias_;
   data_.biases.z = pcf_scale_;
   data_.settings.w = cascade_count_;
-
-  auto& buf = shadow_data_bufs_[frame_num % shadow_data_bufs_.size()];
 }
 
 void CSM::add_pass(RenderGraph& rg) {
@@ -294,9 +292,6 @@ void CSM::add_pass(RenderGraph& rg) {
     }
 
     for (u32 i = 0; i < cascade_count_; i++) {
-      VkClearValue depth_clear{.depthStencil = {.depth = 1.f}};
-      // TODO: make image views into a handle. when image is destroyed, image views will be too, so
-      // then can make new ones
       auto* sm_img = get_device().get_image(shadow_map_img_);
       cmd.begin_rendering({.extent = sm_img->size()},
                           {{get_device().get_image_view(shadow_map_img_views_[i]),

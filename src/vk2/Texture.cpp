@@ -4,40 +4,12 @@
 #include <vulkan/vulkan_core.h>
 
 #include <cmath>
-#include <utility>
 
-#include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/VkTypes.hpp"
 
 namespace gfx {
 uint32_t get_mip_levels(VkExtent2D size) {
   return static_cast<uint32_t>(std::floor(std::log2(std::max(size.width, size.height)))) + 1;
-}
-
-Image::~Image() {
-  if (image_) {
-    assert(allocation_);
-    ResourceAllocator::get().delete_texture({image_, allocation_});
-    image_ = nullptr;
-  }
-}
-
-Image::Image(Image&& other) noexcept
-    : desc_(std::exchange(other.desc_, {})),
-      view_(std::move(other.view_)),
-      image_(std::exchange(other.image_, nullptr)),
-      allocation_(std::exchange(other.allocation_, nullptr)) {}
-
-Image& Image::operator=(Image&& other) noexcept {
-  if (&other == this) {
-    return *this;
-  }
-  this->~Image();
-  desc_ = std::exchange(other.desc_, {});
-  view_ = std::move(other.view_);
-  image_ = std::exchange(other.image_, nullptr);
-  allocation_ = std::exchange(other.allocation_, nullptr);
-  return *this;
 }
 
 bool format_is_color(Format format) {
@@ -99,34 +71,6 @@ VkImageType vkviewtype_to_img_type(VkImageViewType view_type) {
     default:
       assert(0);
       return {};
-  }
-}
-ImageView::ImageView(ImageView&& other) noexcept
-    : view_(std::exchange(other.view_, nullptr)),
-      create_info_(std::exchange(other.create_info_, {})),
-      storage_image_resource_info_(std::exchange(other.storage_image_resource_info_, std::nullopt)),
-      sampled_image_resource_info_(
-          std::exchange(other.sampled_image_resource_info_, std::nullopt)) {}
-
-ImageView& ImageView::operator=(ImageView&& other) noexcept {
-  if (&other == this) {
-    return *this;
-  }
-  this->~ImageView();
-
-  view_ = std::exchange(other.view_, nullptr);
-  create_info_ = std::exchange(other.create_info_, {});
-  storage_image_resource_info_ = std::exchange(other.storage_image_resource_info_, std::nullopt);
-  sampled_image_resource_info_ = std::exchange(other.sampled_image_resource_info_, std::nullopt);
-
-  return *this;
-}
-
-ImageView::~ImageView() {
-  if (view_) {
-    ResourceAllocator::get().delete_texture_view(
-        {storage_image_resource_info_, sampled_image_resource_info_, view_});
-    view_ = nullptr;
   }
 }
 
@@ -313,28 +257,5 @@ u64 img_to_buffer_size(Format format, uvec3 extent) {
 }
 
 uint32_t get_mip_levels(uvec2 size) { return get_mip_levels(VkExtent2D{size.x, size.y}); }
-
-// TextureCubeAndViews::TextureCubeAndViews(const ImageCreateInfo& info) {
-//   texture = Image{info};
-//   if (!texture->image()) {
-//     texture = {};
-//     return;
-//   }
-//   for (u32 i = 0; i < 6; i++) {
-//     img_views[i] = ImageView{*texture, ImageViewCreateInfo{
-//                                            .format = texture->format(),
-//                                            .range =
-//                                                {
-//                                                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-//                                                    .baseMipLevel = 0,
-//                                                    .levelCount =
-//                                                    texture->create_info().mip_levels,
-//                                                    .baseArrayLayer = i,
-//                                                    .layerCount = 1,
-//                                                },
-//                                            .view_type = VK_IMAGE_VIEW_TYPE_2D,
-//                                        }};
-//   }
-// }
 
 }  // namespace gfx

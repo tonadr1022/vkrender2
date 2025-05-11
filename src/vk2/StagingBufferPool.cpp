@@ -2,6 +2,9 @@
 
 #include <tracy/Tracy.hpp>
 
+#include "core/Logger.hpp"
+#include "vk2/Device.hpp"
+
 namespace gfx {
 
 namespace {
@@ -23,37 +26,35 @@ void StagingBufferPool::destroy() {
   delete instance;
 }
 
-Buffer* StagingBufferPool::acquire(u64 size) {
+Holder<BufferHandle> StagingBufferPool::acquire(u64 size) {
   ZoneScoped;
   {
     std::lock_guard lock(mtx_);
-    for (auto it = free_buffers_.begin(); it != free_buffers_.end(); it++) {
-      if (it->get()->size() >= size) {
-        allocated_buffers_.push_back(std::move(*it));
-        free_buffers_.erase(it);
-        return allocated_buffers_.back().get();
+    for (size_t i = 0; i < free_buffers_.size(); i++) {
+      if (get_device().get_buffer(free_buffers_[i].handle)->size() >= size) {
+        auto result = std::move(free_buffers_[i]);
+        if (free_buffers_.size() > 1) {
+          free_buffers_[i] = std::move(free_buffers_.back());
+        }
+        free_buffers_.pop_back();
+        return result;
       }
     }
   }
-  auto new_buf = std::make_unique<Buffer>(
+  return get_device().create_buffer_holder(
       BufferCreateInfo{.size = std::max<u64>(size, 4096), .flags = BufferCreateFlags_HostVisible});
-  {
-    std::lock_guard lock(mtx_);
-    allocated_buffers_.emplace_back(std::move(new_buf));
-    return allocated_buffers_.back().get();
+}
+
+void StagingBufferPool::free(Holder<BufferHandle>&& buffer) {
+  ZoneScoped;
+  std::lock_guard lock(mtx_);
+  free_buffers_.emplace_back(std::move(buffer));
+}
+
+StagingBufferPool::~StagingBufferPool() {
+  for (auto& buf : free_buffers_) {
+    get_device().destroy(buf.handle);
   }
 }
 
-void StagingBufferPool::free(Buffer* buffer) {
-  ZoneScoped;
-  assert(buffer);
-  std::lock_guard lock(mtx_);
-  for (auto it = allocated_buffers_.begin(); it != allocated_buffers_.end(); it++) {
-    if (it->get() == buffer) {
-      free_buffers_.push_back(std::move(*it));
-      allocated_buffers_.erase(it);
-      return;
-    }
-  }
-}
 }  // namespace gfx

@@ -11,7 +11,6 @@
 #include "ThreadPool.hpp"
 #include "core/FixedVector.hpp"
 #include "core/Logger.hpp"
-#include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Device.hpp"
 #include "vk2/Hash.hpp"
 #include "vk2/Initializers.hpp"
@@ -503,7 +502,7 @@ void PipelineManager::reload_pipeline_unsafe(PipelineHandle handle, bool force) 
     auto result = load_graphics_pipeline_impl(it->second, force);
     if (result.pipeline) {
       if (pipeline.pipeline.pipeline) {
-        ResourceAllocator::get().enqueue_delete_pipeline(pipeline.pipeline.pipeline);
+        get_device().enqueue_delete_pipeline(pipeline.pipeline.pipeline);
       }
       pipeline.pipeline.pipeline = result.pipeline;
     }
@@ -514,7 +513,7 @@ void PipelineManager::reload_pipeline_unsafe(PipelineHandle handle, bool force) 
     auto result = load_compute_pipeline_impl(it->second, force);
     if (result.pipeline) {
       if (pipeline.pipeline.pipeline) {
-        ResourceAllocator::get().enqueue_delete_pipeline(pipeline.pipeline.pipeline);
+        get_device().enqueue_delete_pipeline(pipeline.pipeline.pipeline);
       }
       pipeline.pipeline.pipeline = result.pipeline;
     }

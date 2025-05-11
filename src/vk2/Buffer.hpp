@@ -35,20 +35,14 @@ struct BufferCreateInfo {
 class Buffer {
  public:
   Buffer() = default;
-  Buffer(const Buffer &) = delete;
-  Buffer &operator=(const Buffer &) = delete;
-  Buffer(Buffer &&) noexcept;
-  Buffer &operator=(Buffer &&) noexcept;
-  ~Buffer();
-  explicit Buffer(const BufferCreateInfo &cinfo, std::string name = "Buffer");
   [[nodiscard]] void *mapped_data() const { return info_.pMappedData; }
-
   [[nodiscard]] VkBuffer buffer() const { return buffer_; }
   [[nodiscard]] VkDeviceAddress device_addr() const { return buffer_address_; }
   [[nodiscard]] u64 size() const { return size_; }
   [[nodiscard]] const std::string &name() const { return name_; }
 
  private:
+  friend class Device;
   VmaAllocationInfo info_;
   std::string name_;
   BufferUsageFlags usage_{};
@@ -57,7 +51,6 @@ class Buffer {
   VkDeviceAddress buffer_address_{};
   VmaAllocation allocation_{};
 
-  // TODO: private
  public:
   std::optional<BindlessResourceInfo> resource_info_;
 };

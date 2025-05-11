@@ -54,8 +54,8 @@ IBL::IBL(Device* device, BufferHandle cube_vertex_buf)
       ImageDesc{.type = ImageDesc::Type::TwoD,
                 .format = Format::R16G16B16A16Sfloat,
                 .dims = {skybox_res, skybox_res, 1},
-                .array_layers = 6,
                 .mip_levels = get_mip_levels(uvec2{skybox_res}),
+                .array_layers = 6,
                 .bind_flags = BindFlag::Storage | BindFlag::ShaderResource,
                 .misc_flags = ResourceMiscFlag::ImageCube});
   u32 prefiltered_env_map_res = 256;
@@ -63,8 +63,8 @@ IBL::IBL(Device* device, BufferHandle cube_vertex_buf)
       .type = ImageDesc::Type::TwoD,
       .format = Format::R16G16B16A16Sfloat,
       .dims = {prefiltered_env_map_res, prefiltered_env_map_res, 1},
-      .array_layers = 6,
       .mip_levels = get_mip_levels(uvec2{prefiltered_env_map_res}),
+      .array_layers = 6,
       .bind_flags = BindFlag::Storage | BindFlag::ColorAttachment | BindFlag::ShaderResource,
       .misc_flags = ResourceMiscFlag::ImageCube});
   make_cubemap_views_all_mips(prefiltered_env_map_tex_.handle, prefiltered_env_map_tex_views_);
@@ -112,7 +112,7 @@ void IBL::init_post_pipeline_load() {
   }
   VkRender2::get().immediate_submit([this](CmdEncoder& ctx) {
     VkCommandBuffer cmd = ctx.cmd();
-    VkRender2::get().bind_bindless_descriptors(ctx);
+    device_->bind_bindless_descriptors(ctx);
     StateTracker state;
     state.reset(cmd);
     state
@@ -142,7 +142,7 @@ void IBL::init_post_pipeline_load() {
 
 void IBL::equirect_to_cube(CmdEncoder& ctx) {
   VkCommandBuffer cmd = ctx.cmd();
-  VkRender2::get().bind_bindless_descriptors(ctx);
+  device_->bind_bindless_descriptors(ctx);
   auto* env_cubemap_tex = device_->get_image(env_cubemap_tex_);
   auto* env_equirect_tex = device_->get_image(env_equirect_tex_);
   transition_image(cmd, *env_cubemap_tex, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -199,7 +199,6 @@ void IBL::prefilter_env_map(CmdEncoder& ctx) {
   std::vector<std::array<Holder<ImageViewHandle>, 6>> cube_mip_views;
   u32 mip_levels = prefiltered_env_map_tex->get_desc().mip_levels;
   for (u32 mip = 0; mip < mip_levels; mip++) {
-    auto& texture = prefiltered_env_map_tex;
     cube_mip_views.emplace_back(std::array<Holder<ImageViewHandle>, 6>{});
     for (u32 layer = 0; layer < 6; layer++) {
       cube_mip_views.back()[layer] = Holder<ImageViewHandle>{

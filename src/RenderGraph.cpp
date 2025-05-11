@@ -92,31 +92,31 @@ constexpr auto write_flags =
 bool is_read_access(Access access) { return access & read_flags; }
 bool is_write_access(Access access) { return access & write_flags; }
 
-VkImageUsageFlags get_image_usage(Access access) {
-  VkImageUsageFlags usage{};
-  if (access & (Access::ColorWrite | Access::ColorRead)) {
-    usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-  }
-  if (access & (Access::FragmentRead)) {
-    usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
-  }
-  if (access & (Access::ComputeSample)) {
-    usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
-  }
-  if (access & (Access::DepthStencilRead | Access::DepthStencilWrite)) {
-    usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-  }
-  if (access & Access::ComputeRW) {
-    usage |= VK_IMAGE_USAGE_STORAGE_BIT;
-  }
-  if (access & Access::TransferRead) {
-    usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-  }
-  if (access & Access::TransferWrite) {
-    usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-  }
-  return usage;
-}
+// VkImageUsageFlags get_image_usage(Access access) {
+//   VkImageUsageFlags usage{};
+//   if (access & (Access::ColorWrite | Access::ColorRead)) {
+//     usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+//   }
+//   if (access & (Access::FragmentRead)) {
+//     usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+//   }
+//   if (access & (Access::ComputeSample)) {
+//     usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+//   }
+//   if (access & (Access::DepthStencilRead | Access::DepthStencilWrite)) {
+//     usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+//   }
+//   if (access & Access::ComputeRW) {
+//     usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+//   }
+//   if (access & Access::TransferRead) {
+//     usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+//   }
+//   if (access & Access::TransferWrite) {
+//     usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+//   }
+//   return usage;
+// }
 
 }  // namespace
 
@@ -263,17 +263,17 @@ VoidResult RenderGraph::bake() {
 
   build_physical_resource_reqs();
 
-  if (log_) {
-    for (auto& res : resources_) {
-      if (res.get_type() == RenderResource::Type::Texture) {
-        LINFO("{} {}", res.name, res.physical_idx);
-        if (res.physical_idx < physical_resource_dims_.size()) {
-          auto& dims = physical_resource_dims_[res.physical_idx];
-          // LINFO("{} {}", res.physical_idx, string_VkImageUsageFlags(dims.image_usage_flags));
-        }
-      }
-    }
-  }
+  // if (log_) {
+  //   for (auto& res : resources_) {
+  //     if (res.get_type() == RenderResource::Type::Texture) {
+  //       // LINFO("{} {}", res.name, res.physical_idx);
+  //       if (res.physical_idx < physical_resource_dims_.size()) {
+  //         // auto& dims = physical_resource_dims_[res.physical_idx];
+  //         // LINFO("{} {}", res.physical_idx, string_VkImageUsageFlags(dims.image_usage_flags));
+  //       }
+  //     }
+  //   }
+  // }
 
   {
     ZoneScopedN("build physical passes");

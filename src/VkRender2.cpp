@@ -35,7 +35,6 @@
 #include "shaders/shadow_depth_common.h.glsl"
 #include "util/CVar.hpp"
 #include "util/IndexAllocator.hpp"
-#include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/Device.hpp"
 #include "vk2/Initializers.hpp"
@@ -142,27 +141,16 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   device_->init_imgui();
 
   StagingBufferPool::init();
-  main_set_ = ResourceAllocator::get().main_set();
-  main_set2_ = ResourceAllocator::get().main_set2_;
   imm_cmd_pool_ = device_->create_command_pool(QueueType::Graphics,
                                                VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
   imm_cmd_buf_ = device_->create_command_buffer(imm_cmd_pool_);
-  VkPushConstantRange default_range{.stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = 128};
-  // TODO: refactor
-  VkDescriptorSetLayout main_set_layout = ResourceAllocator::get().main_set_layout();
-  VkDescriptorSetLayout layouts[] = {main_set_layout, ResourceAllocator::get().main_set2_layout_};
-  VkPipelineLayoutCreateInfo pipeline_info{.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-                                           .setLayoutCount = COUNTOF(layouts),
-                                           .pSetLayouts = layouts,
-                                           .pushConstantRangeCount = 1,
-                                           .pPushConstantRanges = &default_range};
-  VK_CHECK(vkCreatePipelineLayout(device_->device(), &pipeline_info, nullptr,
-                                  &default_pipeline_layout_));
   PipelineManager::init(device_->device(), resource_dir_ / "shaders", true,
-                        default_pipeline_layout_);
+                        device_->default_pipeline_layout_);
 
   uint32_t white = glm::packUnorm4x8(glm::vec4(1, 1, 1, 1));
-  Buffer* staging = StagingBufferPool::get().acquire(32);
+  Holder<BufferHandle> staging_handle = StagingBufferPool::get().acquire(32);
+  auto* staging = device_->get_buffer(staging_handle);
+
   memcpy((char*)staging->mapped_data(), (void*)&white, sizeof(u32));
   default_data_.white_img = Holder<ImageHandle>{device_->create_image(ImageDesc{
       .format = Format::R8G8B8A8Srgb, .dims = {1, 1, 1}, .bind_flags = BindFlag::ShaderResource})};
@@ -199,7 +187,7 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
     state_.flush_barriers();
   });
 
-  StagingBufferPool::get().free(staging);
+  StagingBufferPool::get().free(std::move(staging_handle));
 
   nearest_sampler_ = device_->get_or_create_sampler({
       .min_filter = FilterMode::Nearest,
@@ -236,9 +224,10 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
     // per frame scene uniforms
     per_frame_data_.resize(device_->get_frames_in_flight());
     for (auto& d : per_frame_data_) {
-      d.scene_uniform_buf = Buffer{BufferCreateInfo{.size = sizeof(SceneUniforms),
-                                                    .usage = BufferUsage_Storage,
-                                                    .flags = BufferCreateFlags_HostVisible}};
+      d.scene_uniform_buf =
+          device_->create_buffer_holder(BufferCreateInfo{.size = sizeof(SceneUniforms),
+                                                         .usage = BufferUsage_Storage,
+                                                         .flags = BufferCreateFlags_HostVisible});
 
       d.line_draw_buf =
           device_->create_buffer_holder(BufferCreateInfo{.size = sizeof(LineVertex) * 1000,
@@ -282,7 +271,8 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   // TODO: make a function for this lmao, so cringe
   {
     auto vert_buf_size = sizeof(cube_vertices);
-    auto* staging = StagingBufferPool::get().acquire(vert_buf_size);
+    auto staging_handle = StagingBufferPool::get().acquire(vert_buf_size);
+    auto* staging = device_->get_buffer(staging_handle);
     memcpy(staging->mapped_data(), cube_vertices, vert_buf_size);
     cube_vertex_buf_ = device_->create_buffer_holder(
         BufferCreateInfo{.size = vert_buf_size, .usage = BufferUsage_Storage});
@@ -376,7 +366,7 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
             static_vertex_buf_.get_buffer()->device_addr(),
             static_instance_data_buf_.get_buffer()->device_addr(),
             static_object_data_buf_.get_buffer()->device_addr(),
-            curr_frame().scene_uniform_buf->resource_info_->handle,
+            device_->get_buffer(curr_frame().scene_uniform_buf)->resource_info_->handle,
             static_materials_buf_.get_buffer()->resource_info_->handle,
             device_->get_bindless_idx(linear_sampler_),
         };
@@ -393,7 +383,7 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
       },
       [this](RenderGraphPass& pass) {
         MeshPass opaque_passes[] = {MeshPass_Opaque, MeshPass_OpaqueAlphaMask};
-        for (int draw_pass_i = 0; draw_pass_i < COUNTOF(opaque_passes); draw_pass_i++) {
+        for (size_t draw_pass_i = 0; draw_pass_i < COUNTOF(opaque_passes); draw_pass_i++) {
           auto& mgr = static_draw_mgrs_[draw_pass_i];
           if (mgr.should_draw()) {
             for (u32 cascade_i = 0; cascade_i < csm_->get_num_cascade_levels(); cascade_i++) {
@@ -441,9 +431,6 @@ void VkRender2::draw(const SceneDrawInfo& info) {
     // }
 
     device_->begin_frame();
-    ResourceAllocator::get().set_frame_num(device_->curr_frame_num(),
-                                           device_->get_frames_in_flight());
-    ResourceAllocator::get().flush_deletions();
   }
   {
     ZoneScopedN("scene uniform buffer");
@@ -471,7 +458,8 @@ void VkRender2::draw(const SceneDrawInfo& info) {
     scene_uniform_cpu_data_.debug_flags.w = debug_mode_;
     scene_uniform_cpu_data_.view_pos = info.view_pos;
     scene_uniform_cpu_data_.ambient_intensity = info.ambient_intensity;
-    memcpy(d.scene_uniform_buf->mapped_data(), &scene_uniform_cpu_data_, sizeof(SceneUniforms));
+    memcpy(device_->get_buffer(d.scene_uniform_buf)->mapped_data(), &scene_uniform_cpu_data_,
+           sizeof(SceneUniforms));
   }
   if (draw_debug_aabbs_) {
     ZoneScopedN("debug aabbs");
@@ -489,12 +477,9 @@ void VkRender2::draw(const SceneDrawInfo& info) {
   auto cmd_begin_info = init::command_buffer_begin_info();
   VK_CHECK(vkBeginCommandBuffer(cmd_buf, &cmd_begin_info));
 
-  CmdEncoder cmd{device_, cmd_buf, default_pipeline_layout_, curr_frame().tracy_vk_ctx};
-
-  bind_bindless_descriptors(cmd);
-  ResourceAllocator::get().set_frame_num(device_->curr_frame_num(),
-                                         device_->get_frames_in_flight());
-  ResourceAllocator::get().flush_deletions();
+  // TODO: device should initialize command buffer
+  CmdEncoder cmd{device_, cmd_buf, device_->default_pipeline_layout_, curr_frame().tracy_vk_ctx};
+  device_->bind_bindless_descriptors(cmd);
 
   for (auto& instance : to_delete_static_model_instances_) {
     free(cmd, instance);
@@ -663,7 +648,7 @@ VkRender2::~VkRender2() {
   ZoneScoped;
   device_->wait_idle();
   device_->destroy_command_pool(imm_cmd_pool_);
-  vkDestroyPipelineLayout(device_->device(), default_pipeline_layout_, nullptr);
+  vkDestroyPipelineLayout(device_->device(), device_->default_pipeline_layout_, nullptr);
   StagingBufferPool::destroy();
   for (auto& frame : per_frame_data_) {
     device_->destroy_command_pool(frame.cmd_pool);
@@ -671,7 +656,6 @@ VkRender2::~VkRender2() {
     frame.scene_uniform_buf = {};
     frame.line_draw_buf = {};
   }
-  device_->destroy_resources();
 }
 
 ModelHandle VkRender2::load_model(const std::filesystem::path& path, bool dynamic,
@@ -703,8 +687,9 @@ ModelHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
       auto vertices_gpu_slot = static_vertex_buf_.allocator.allocate(vertices_size);
       auto indices_gpu_slot = static_index_buf_.allocator.allocate(indices_size);
 
-      auto staging = LinearStagingBuffer{
-          StagingBufferPool::get().acquire(material_data_size + vertices_size + indices_size)};
+      auto staging_handle =
+          StagingBufferPool::get().acquire(material_data_size + vertices_size + indices_size);
+      auto staging = LinearStagingBuffer{device_->get_buffer(staging_handle)};
       u64 material_data_staging_offset = staging.copy(res.materials.data(), material_data_size);
       u64 vertices_staging_offset = staging.copy(res.vertices.data(), vertices_size);
       u64 indices_staging_offset = staging.copy(res.indices.data(), indices_size);
@@ -750,25 +735,13 @@ ModelHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
           path.string(), 0u);
       resources = static_models_pool_.get(resources_handle);
       static_model_name_to_handle_.emplace(resources->name, resources_handle);
+      StagingBufferPool::get().free(std::move(staging_handle));
     }
     static_draw_stats_.total_vertices += resources->num_vertices;
     static_draw_stats_.total_indices += resources->num_indices;
 
     u32 pass_double_sided_draw_cnts[MeshPass_Count] = {};
     u32 pass_obj_counts[MeshPass_Count] = {};
-
-    auto mesh_pass_to_pass_flag = [](MeshPass pass) {
-      switch (pass) {
-        case MeshPass_Opaque:
-          return PassFlags_Opaque;
-        case MeshPass_OpaqueAlphaMask:
-          return PassFlags_OpaqueAlpha;
-        case MeshPass_Transparent:
-          return PassFlags_Transparent;
-        default:
-          return PassFlags_None;
-      }
-    };
 
     for (auto& node : resources->scene_graph_data.node_datas) {
       for (auto& mesh_indices : node.meshes) {
@@ -895,8 +868,9 @@ ModelHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
     for (auto& cmds : pass_cmds) {
       tot_draw_cmds_buf_size += cmds.size() * sizeof(GPUDrawInfo);
     }
-    auto staging = LinearStagingBuffer{StagingBufferPool::get().acquire(
-        tot_draw_cmds_buf_size + obj_datas_size + instance_datas_size)};
+    auto staging_handle = StagingBufferPool::get().acquire(tot_draw_cmds_buf_size + obj_datas_size +
+                                                           instance_datas_size);
+    auto staging = LinearStagingBuffer{device_->get_buffer(staging_handle)};
 
     u64 cmds_staging_offsets[MeshPass_Count] = {};
     for (int i = 0; i < MeshPass_Count; i++) {
@@ -936,6 +910,7 @@ ModelHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
                           VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT)
           .flush_barriers();
     });
+    StagingBufferPool::get().free(std::move(staging_handle));
     return {};
   }
   return {};
@@ -995,7 +970,8 @@ ImageHandle VkRender2::load_hdr_img(CmdEncoder& ctx, const std::filesystem::path
   }
   auto cnt = cpu_img_data->w * cpu_img_data->h;
   u64 cpu_img_size = sizeof(float) * cnt * 4;
-  auto* staging_buf = StagingBufferPool::get().acquire(cpu_img_size);
+  auto staging_buf_handle = StagingBufferPool::get().acquire(cpu_img_size);
+  auto* staging_buf = device_->get_buffer(staging_buf_handle);
   auto* mapped = (float*)staging_buf->mapped_data();
   const float* src = cpu_img_data->data;
   memcpy(mapped, src, cpu_img_size);
@@ -1020,6 +996,7 @@ ImageHandle VkRender2::load_hdr_img(CmdEncoder& ctx, const std::filesystem::path
       .pRegions = &img_copy_info};
   vkCmdCopyBufferToImage2KHR(cmd, &copy_to_img_info);
   transition_image(cmd, *tex, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  StagingBufferPool::get().free(std::move(staging_buf_handle));
   return tex_handle;
 }
 
@@ -1093,20 +1070,12 @@ void VkRender2::set_env_map(const std::filesystem::path& path) {
   immediate_submit([this, &path](CmdEncoder& ctx) { ibl_->load_env_map(ctx, path); });
 }
 
-void VkRender2::bind_bindless_descriptors(CmdEncoder& ctx) {
-  ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, default_pipeline_layout_, &main_set_, 0);
-  ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_COMPUTE, default_pipeline_layout_, &main_set_, 0);
-  ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, default_pipeline_layout_, &main_set2_,
-                          1);
-  ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_COMPUTE, default_pipeline_layout_, &main_set2_, 1);
-}
-
 void VkRender2::immediate_submit(std::function<void(CmdEncoder& ctx)>&& function) {
   VkFence imm_fence = device_->allocate_fence(true);
   VK_CHECK(vkResetCommandBuffer(imm_cmd_buf_, 0));
   auto info = vk2::init::command_buffer_begin_info();
   VK_CHECK(vkBeginCommandBuffer(imm_cmd_buf_, &info));
-  CmdEncoder ctx{device_, imm_cmd_buf_, default_pipeline_layout_};
+  CmdEncoder ctx{device_, imm_cmd_buf_, device_->default_pipeline_layout_};
   function(ctx);
   VK_CHECK(vkEndCommandBuffer(imm_cmd_buf_));
   VkCommandBufferSubmitInfo cmd_info = init::command_buffer_submit_info(imm_cmd_buf_);
@@ -1274,7 +1243,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
                 top,
                 near,
                 far,
-                curr_frame().scene_uniform_buf->device_addr(),
+                device_->get_buffer(curr_frame().scene_uniform_buf)->device_addr(),
                 count,
                 mgr.get_draw_info_buf()->resource_info_->handle,
                 draw_pass.get_frame_out_draw_cmd_buf(false)->resource_info_->handle,
@@ -1328,7 +1297,6 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
       auto* tex = rg.get_texture(final_out_handle);
       assert(tex);
       if (!tex) return;
-      VkClearValue clear_value{.color = {{0.2, 0.2, 0.2, 1.0}}};
       cmd.begin_rendering(
           {.extent = tex->size()},
           {{&tex->view(), RenderingAttachmentInfo::Type::Color,
@@ -1339,7 +1307,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
       cmd.set_cull_mode(CullMode::None);
 
       BasicPushConstants pc{
-          curr_frame().scene_uniform_buf->resource_info_->handle,
+          device_->get_buffer(curr_frame().scene_uniform_buf)->resource_info_->handle,
           static_vertex_buf_.get_buffer()->resource_info_->handle,
           static_instance_data_buf_.get_buffer()->resource_info_->handle,
           static_object_data_buf_.get_buffer()->resource_info_->handle,
@@ -1353,7 +1321,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
           device_->get_bindless_idx(ibl_->brdf_lut_.handle, SubresourceType::Shader),
           device_->get_bindless_idx(ibl_->prefiltered_env_map_tex_.handle, SubresourceType::Shader),
           device_->get_bindless_idx(linear_sampler_clamp_to_edge_)};
-      cmd.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
+      cmd.push_constants(sizeof(pc), &pc);
       // TODO: double sided
       PipelineManager::get().bind_graphics(cmd.cmd(), draw_pipeline_);
       for (int pass_i = 0; pass_i < MeshPass_Count; pass_i++) {
@@ -1411,7 +1379,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
             PipelineManager::get().bind_graphics(cmd.cmd(), gbuffer_pipeline_);
             GBufferPushConstants pc{
                 static_vertex_buf_.get_buffer()->device_addr(),
-                curr_frame().scene_uniform_buf->device_addr(),
+                device_->get_buffer(curr_frame().scene_uniform_buf)->device_addr(),
                 static_instance_data_buf_.get_buffer()->device_addr(),
                 static_object_data_buf_.get_buffer()->device_addr(),
                 static_materials_buf_.get_buffer()->device_addr(),
@@ -1469,7 +1437,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
             depth_img->view().sampled_img_resource().handle,
             shade_out_tex->view().storage_img_resource().handle,
             device_->get_bindless_idx(nearest_sampler_),
-            curr_frame().scene_uniform_buf->resource_info_->handle,
+            device_->get_buffer(curr_frame().scene_uniform_buf)->resource_info_->handle,
             device_->get_image(csm_->get_shadow_map_img())->view().sampled_img_resource().handle,
             device_->get_bindless_idx(shadow_sampler_),
             device_->get_buffer(csm_->get_shadow_data_buffer(device_->curr_frame_in_flight()))
@@ -1535,7 +1503,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
         } pc{rg.get_texture(draw_out_handle)->view().storage_img_resource().handle,
              post_processed_img->view().storage_img_resource().handle, postprocess_flags,
              tonemap_type_};
-        cmd.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
+        cmd.push_constants(sizeof(pc), &pc);
         vkCmdDispatch(cmd.cmd(), (post_processed_img->size().x + 16) / 16,
                       (post_processed_img->size().y + 16) / 16, 1);
       }
@@ -1564,36 +1532,37 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
     }
     auto color_handle = imgui_p.add_image_access("final_out", Access::ColorRW);
     auto depth_handle = imgui_p.add_image_access("depth", Access::DepthStencilRead);
-    imgui_p.set_execute_fn([this, color_handle, &rg, csm_debug_img_handle,
-                            depth_handle](CmdEncoder& cmd) {
-      TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "imgui");
-      if (csm_enabled.get() && csm_->get_debug_render_enabled()) {
-        assert(csm_debug_img_handle.is_valid());
-        auto* csm_debug_img = rg.get_texture(csm_debug_img_handle);
-        assert(csm_debug_img);
-        if (csm_debug_img) {
-          csm_->imgui_pass(cmd, linear_sampler_, *csm_debug_img);
-        }
-      }
-      auto* color_tex = rg.get_texture(color_handle);
-      auto* depth_tex = rg.get_texture(depth_handle);
-      if (line_draw_vertices_.size()) {
-        uvec2 extent = color_tex->size();
-        cmd.begin_rendering({.extent = extent},
-                            {{&color_tex->view(), RenderingAttachmentInfo::Type::Color,
-                              RenderingAttachmentInfo::LoadOp::Load},
-                             {&depth_tex->view(), RenderingAttachmentInfo::Type::Depth,
-                              RenderingAttachmentInfo::LoadOp::Load}});
-        PipelineManager::get().bind_graphics(cmd.cmd(), line_draw_pipeline_);
-        Buffer* line_draw_buf = device_->get_buffer(curr_frame().line_draw_buf);
-        LinesRenderPushConstants pc{.vtx = line_draw_buf->device_addr(),
-                                    .scene_buffer = curr_frame().scene_uniform_buf->device_addr()};
-        cmd.push_constants(sizeof(pc), &pc);
-        vkCmdDraw(cmd.cmd(), line_draw_vertices_.size(), 1, 0, 0);
-        vkCmdEndRenderingKHR(cmd.cmd());
-      }
-      render_imgui(cmd, color_tex->size(), color_tex->view());
-    });
+    imgui_p.set_execute_fn(
+        [this, color_handle, &rg, csm_debug_img_handle, depth_handle](CmdEncoder& cmd) {
+          TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "imgui");
+          if (csm_enabled.get() && csm_->get_debug_render_enabled()) {
+            assert(csm_debug_img_handle.is_valid());
+            auto* csm_debug_img = rg.get_texture(csm_debug_img_handle);
+            assert(csm_debug_img);
+            if (csm_debug_img) {
+              csm_->imgui_pass(cmd, linear_sampler_, *csm_debug_img);
+            }
+          }
+          auto* color_tex = rg.get_texture(color_handle);
+          auto* depth_tex = rg.get_texture(depth_handle);
+          if (line_draw_vertices_.size()) {
+            uvec2 extent = color_tex->size();
+            cmd.begin_rendering({.extent = extent},
+                                {{&color_tex->view(), RenderingAttachmentInfo::Type::Color,
+                                  RenderingAttachmentInfo::LoadOp::Load},
+                                 {&depth_tex->view(), RenderingAttachmentInfo::Type::Depth,
+                                  RenderingAttachmentInfo::LoadOp::Load}});
+            PipelineManager::get().bind_graphics(cmd.cmd(), line_draw_pipeline_);
+            Buffer* line_draw_buf = device_->get_buffer(curr_frame().line_draw_buf);
+            LinesRenderPushConstants pc{
+                .vtx = line_draw_buf->device_addr(),
+                .scene_buffer = device_->get_buffer(curr_frame().scene_uniform_buf)->device_addr()};
+            cmd.push_constants(sizeof(pc), &pc);
+            vkCmdDraw(cmd.cmd(), line_draw_vertices_.size(), 1, 0, 0);
+            vkCmdEndRenderingKHR(cmd.cmd());
+          }
+          render_imgui(cmd, color_tex->size(), color_tex->view());
+        });
   }
 }
 
@@ -1797,10 +1766,10 @@ void VkRender2::draw_skybox(CmdEncoder& cmd) {
   struct {
     u32 scene_buffer, tex_idx;
   } pc{
-      curr_frame().scene_uniform_buf->resource_info_->handle,
+      device_->get_buffer(curr_frame().scene_uniform_buf)->resource_info_->handle,
       skybox_handle,
   };
-  cmd.push_constants(default_pipeline_layout_, sizeof(pc), &pc);
+  cmd.push_constants(sizeof(pc), &pc);
   cmd.set_cull_mode(CullMode::None);
   vkCmdDraw(cmd.cmd(), 36, 1, 0, 0);
 }

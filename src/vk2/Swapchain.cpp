@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "core/Logger.hpp"
-#include "vk2/BindlessResourceAllocator.hpp"
 #include "vk2/Device.hpp"
 #include "vk2/Texture.hpp"
 #include "vk2/VkCommon.hpp"
@@ -196,7 +195,7 @@ void create_swapchain(Swapchain& swapchain, const SwapchainDesc& desc) {
   VK_CHECK(vkCreateSwapchainKHR(get_device().device(), &swap_info, nullptr, &swapchain.swapchain));
 
   if (swap_info.oldSwapchain) {
-    ResourceAllocator::get().enqueue_delete_swapchain(swap_info.oldSwapchain);
+    get_device().enqueue_delete_swapchain(swap_info.oldSwapchain);
   }
 
   uint32_t new_img_cnt = 0;
@@ -211,7 +210,7 @@ void create_swapchain(Swapchain& swapchain, const SwapchainDesc& desc) {
   for (u32 i = 0; i < swapchain.img_views.size(); i++) {
     auto& img_view = swapchain.img_views[i];
     if (img_view) {
-      ResourceAllocator::get().delete_texture_view(TextureViewDeleteInfo{.view = img_view});
+      get_device().delete_texture_view(TextureViewDeleteInfo{.view = img_view});
       img_view = nullptr;
     }
 

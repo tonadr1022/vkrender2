@@ -78,6 +78,7 @@ struct Pool {
     }
     return &entries_[handle.idx_].object;
   }
+  std::vector<Entry>& get_entries() { return entries_; }
 
  private:
   std::vector<IndexT> free_list_;

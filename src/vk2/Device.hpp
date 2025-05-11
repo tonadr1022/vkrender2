@@ -3,6 +3,7 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan_core.h>
 
+#include <deque>
 #include <mutex>
 #include <span>
 
@@ -28,6 +29,7 @@ void destroy(gfx::ImageViewHandle data);
 struct GLFWwindow;
 namespace gfx {
 class Device;
+struct CmdEncoder;
 namespace constants {
 inline constexpr u32 remaining_array_layers = ~0U;
 inline constexpr u32 remaining_mip_layers = ~0U;
@@ -132,10 +134,6 @@ class Device {
   void destroy_fence(VkFence fence) const;
   void destroy_semaphore(VkSemaphore semaphore) const;
   void destroy_command_pool(VkCommandPool pool) const;
-  void create_buffer(const VkBufferCreateInfo* info, const VmaAllocationCreateInfo* alloc_info,
-                     VkBuffer& buffer, VmaAllocation& allocation,
-                     VmaAllocationInfo& out_alloc_info);
-  void destroy_resources();
 
   [[nodiscard]] VmaAllocator allocator() const { return allocator_; }
 
@@ -210,7 +208,6 @@ class Device {
   VkPhysicalDeviceVulkan12Features supported_features12_{
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
   Queue queues_[(u32)QueueType::Count];
-  Image make_img_impl(const ImageCreateInfo& info);
   void init_impl(const CreateInfo& info);
   void set_name(const char* name, u64 handle, VkObjectType type);
 
@@ -228,6 +225,82 @@ class Device {
   u32 curr_frame_num_{};
   bool resize_swapchain_req_{};
   static constexpr u32 frames_in_flight = 2;
+
+  void destroy(ImageView& view);
+  void destroy(Image& img);
+  void destroy(Buffer& buffer);
+
+ public:
+  static constexpr u32 max_resource_descriptors{100'000};
+  static constexpr u32 max_sampler_descriptors{128};
+  static constexpr u32 bindless_storage_image_binding{0};
+  static constexpr u32 bindless_storage_buffer_binding{1};
+  static constexpr u32 bindless_sampled_image_binding{2};
+  static constexpr u32 bindless_combined_image_sampler_binding{3};
+  static constexpr u32 bindless_sampler_binding{0};
+
+  static void init(VkDevice device, VmaAllocator allocator);
+  static void shutdown();
+  [[nodiscard]] VkDescriptorSetLayout main_set_layout() const { return main_set_layout_; }
+  [[nodiscard]] VkDescriptorSet main_set() const { return main_set_; }
+
+  BindlessResourceInfo allocate_storage_buffer_descriptor(VkBuffer buffer);
+  BindlessResourceInfo allocate_storage_img_descriptor(VkImageView view, VkImageLayout layout);
+  BindlessResourceInfo allocate_sampled_img_descriptor(VkImageView view, VkImageLayout layout);
+  BindlessResourceInfo allocate_sampler_descriptor(VkSampler sampler);
+  void allocate_bindless_resource(VkDescriptorType descriptor_type, VkDescriptorImageInfo* img,
+                                  VkDescriptorBufferInfo* buffer, u32 idx, u32 binding);
+
+  void delete_texture(const TextureDeleteInfo& img);
+  void delete_texture_view(const TextureViewDeleteInfo& info);
+  void delete_buffer(const BufferDeleteInfo& info);
+  void enqueue_delete_swapchain(VkSwapchainKHR swapchain);
+  void enqueue_delete_pipeline(VkPipeline pipeline);
+  void enqueue_delete_sempahore(VkSemaphore semaphore);
+
+  void flush_deletions();
+
+  VkDescriptorSetLayout main_set2_layout_{};
+  VkDescriptorSet main_set2_{};
+
+ private:
+  u32 resource_to_binding(ResourceType type);
+  void init_bindless();
+  template <typename T>
+  struct DeleteQEntry {
+    T data;
+    u32 frame;
+  };
+
+  std::deque<DeleteQEntry<TextureDeleteInfo>> texture_delete_q_;
+  std::deque<DeleteQEntry<TextureViewDeleteInfo>> texture_view_delete_q_;
+  std::deque<DeleteQEntry<BufferDeleteInfo>> storage_buffer_delete_q_;
+  std::deque<DeleteQEntry<VkSwapchainKHR>> swapchain_delete_q_;
+  std::deque<DeleteQEntry<VkSemaphore>> semaphore_delete_q_;
+  std::deque<DeleteQEntry<VkPipeline>> pipeline_delete_q_;
+
+  struct IndexAllocator {
+    explicit IndexAllocator(u32 size = 64);
+    void free(u32 idx);
+    [[nodiscard]] u32 alloc();
+
+   private:
+    std::vector<u32> free_list_;
+    u32 next_index_{};
+  };
+
+  IndexAllocator storage_image_allocator_{max_resource_descriptors};
+  IndexAllocator storage_buffer_allocator_{max_resource_descriptors};
+  IndexAllocator sampled_image_allocator_{max_resource_descriptors};
+  IndexAllocator sampler_allocator_{max_sampler_descriptors};
+  VkDescriptorPool main_pool_{};
+  VkDescriptorSet main_set_{};
+  VkDescriptorSetLayout main_set_layout_{};
+  bool running_{};
+  // TODO: fix
+ public:
+  VkPipelineLayout default_pipeline_layout_{};
+  void bind_bindless_descriptors(CmdEncoder& cmd);
 };
 
 Device& get_device();  // forward declaration

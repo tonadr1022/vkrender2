@@ -680,8 +680,8 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
     u64 img_i{};
     u64 curr_staging_offset = 0;
     u64 start_copy_idx{};
-    Buffer* img_staging_buf = StagingBufferPool::get().acquire(batch_upload_size);
-    // u64 end_copy_idx{};
+    auto img_staging_buf_handle = StagingBufferPool::get().acquire(batch_upload_size);
+    auto* img_staging_buf = get_device().get_buffer(img_staging_buf_handle);
     StateTracker state;
     auto flush_uploads = [&]() {
       for (u64 i = 0; i < img_i; i++) {
@@ -694,7 +694,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
       futures.clear();
       VkRender2::get().immediate_submit([start_copy_idx, end_copy_idx = img_i - 1,
                                          &img_upload_infos, &result, &state, curr_staging_offset,
-                                         &img_staging_buf, batch_upload_size](VkCommandBuffer cmd) {
+                                         &img_staging_buf](VkCommandBuffer cmd) {
         state.reset(cmd);
         for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
           const auto& img_upload = img_upload_infos[i];
@@ -739,7 +739,6 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
         }
         state.flush_barriers();
         // transfers.emplace(img_staging_buf, fence);
-        img_staging_buf = StagingBufferPool::get().acquire(batch_upload_size);
       });
 
       curr_staging_offset += max_batch_upload_size;
@@ -772,6 +771,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
       if (f.valid()) f.get();
     }
     futures.clear();
+    StagingBufferPool::get().free(std::move(img_staging_buf_handle));
   }
   {
     ZoneScopedN("free imgs");

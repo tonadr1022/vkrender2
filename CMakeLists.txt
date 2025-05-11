@@ -24,8 +24,6 @@ src/techniques/CSM.cpp
 src/CommandEncoder.cpp
 src/vk2/VkTypes.cpp
 src/vk2/StagingBufferPool.cpp
-src/vk2/BindlessResourceAllocator.cpp
-src/vk2/Buffer.cpp
 src/vk2/Definitions.cpp
 src/vk2/Device.cpp
 src/vk2/Initializers.cpp
@@ -42,10 +40,9 @@ src/App.cpp
 target_compile_options(vkrender2
     PRIVATE
     $<$<OR:$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>>:
-    -Werror
     -Wall
     -Wextra
-    -pedantic-errors
+    -pedantic
     -Wno-missing-field-initializers
     -Wno-unused-result
     >
@@ -77,21 +74,14 @@ if (${VKRENDER2_VALIDATION_LAYERS_ENABLED})
 endif()
 
 
+target_include_directories(vkrender2 SYSTEM PRIVATE
+    ${CMAKE_SOURCE_DIR}/third_party/vma/include
+)
 target_include_directories(vkrender2 PRIVATE
 third_party
 resources
 src
 )
-
-target_compile_options(VulkanMemoryAllocator INTERFACE
-    -Wno-error
-    -Wno-all
-    -Wno-extra
-    -Wno-unused-parameter
-    -Wno-nullability-extension
-)
-set_property(TARGET fastgltf PROPERTY COMPILE_FLAGS "-Wno-sign-compare")
-# target_compile_options(VulkanMemoryAllocator PRIVATE -Wno-error)
 
 target_link_libraries(vkrender2 PRIVATE
 ktx

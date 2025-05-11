@@ -10,7 +10,7 @@
 #include <cassert>
 #include <tracy/Tracy.hpp>
 
-#include "BindlessResourceAllocator.hpp"
+#include "CommandEncoder.hpp"
 #include "Common.hpp"
 #include "GLFW/glfw3.h"
 #include "PipelineManager.hpp"
@@ -261,14 +261,16 @@ void Device::init_impl(const CreateInfo& info) {
   vma_vulkan_func.vkCmdCopyBuffer = vkCmdCopyBuffer;
   VmaAllocatorCreateInfo allocator_info{
       .flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
-      .physicalDevice = get_physical_device(),
-      .device = device(),
+      .physicalDevice = vkb_phys_device_.physical_device,
+      .device = device_,
       .pVulkanFunctions = &vma_vulkan_func,
       .instance = instance_,
   };
 
+#ifndef NDEBUG
+  allocator_info.flags |= VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
+#endif
   VK_CHECK(vmaCreateAllocator(&allocator_info, &allocator_));
-
   volkLoadDevice(device_);
 
   for (u64 i = 0; i < vkb_device_.queue_families.size(); i++) {
@@ -327,8 +329,19 @@ void Device::init_impl(const CreateInfo& info) {
     }
   }
   assert(device_ && device());
-  ResourceAllocator::init(device_, allocator_);
+
+  init_bindless();
   null_sampler_ = get_or_create_sampler({.address_mode = AddressMode::MirroredRepeat});
+  // default pipeline layout
+  VkPushConstantRange default_range{.stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = 128};
+  VkDescriptorSetLayout layouts[] = {main_set_layout_, main_set2_layout_};
+  VkPipelineLayoutCreateInfo pipeline_info{.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+                                           .setLayoutCount = COUNTOF(layouts),
+                                           .pSetLayouts = layouts,
+                                           .pushConstantRangeCount = 1,
+                                           .pPushConstantRanges = &default_range};
+  VK_CHECK(vkCreatePipelineLayout(device_, &pipeline_info, nullptr, &default_pipeline_layout_));
+  running_ = true;
 }
 
 Device& get_device() { return Device::get(); }
@@ -392,13 +405,21 @@ void Device::destroy_command_pool(VkCommandPool pool) const {
   vkDestroyCommandPool(device_, pool, nullptr);
 }
 
-void Device::create_buffer(const VkBufferCreateInfo* info,
-                           const VmaAllocationCreateInfo* alloc_info, VkBuffer& buffer,
-                           VmaAllocation& allocation, VmaAllocationInfo& out_alloc_info) {
-  VK_CHECK(vmaCreateBuffer(allocator_, info, alloc_info, &buffer, &allocation, &out_alloc_info));
+void Device::destroy(ImageHandle handle) {
+  auto* img = img_pool_.get(handle);
+  if (img) {
+    destroy(*img);
+    img_pool_.destroy(handle);
+  }
 }
 
-void Device::destroy(ImageHandle handle) { img_pool_.destroy(handle); }
+void Device::destroy(ImageViewHandle handle) {
+  auto* view = img_view_pool_.get(handle);
+  if (view) {
+    destroy(*view);
+    img_view_pool_.destroy(handle);
+  }
+}
 
 void Device::destroy(SamplerHandle handle) {
   if (auto* samp = sampler_pool_.get(handle); samp) {
@@ -407,13 +428,11 @@ void Device::destroy(SamplerHandle handle) {
   sampler_pool_.destroy(handle);
 }
 
-void Device::destroy(ImageViewHandle handle) { img_view_pool_.destroy(handle); }
-void Device::destroy(BufferHandle handle) { buffer_pool_.destroy(handle); }
-
-void Device::destroy_resources() {
-  img_pool_.clear();
-  img_view_pool_.clear();
-  buffer_pool_.clear();
+void Device::destroy(BufferHandle handle) {
+  if (auto* buf = buffer_pool_.get(handle); buf) {
+    destroy(*buf);
+    buffer_pool_.destroy(handle);
+  }
 }
 
 void Device::on_imgui() const {
@@ -427,10 +446,68 @@ void Device::on_imgui() const {
 }
 
 Holder<BufferHandle> Device::create_buffer_holder(const BufferCreateInfo& info) {
-  return Holder<BufferHandle>{buffer_pool_.alloc(info)};
+  return Holder<BufferHandle>{create_buffer(info)};
 }
-BufferHandle Device::create_buffer(const BufferCreateInfo& info) {
-  return buffer_pool_.alloc(info);
+
+BufferHandle Device::create_buffer(const BufferCreateInfo& cinfo) {
+  if (cinfo.size == 0) {
+    return {};
+  }
+  // https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/usage_patterns.html
+  VmaAllocationCreateInfo alloc_info{.usage = VMA_MEMORY_USAGE_AUTO};
+  VkBufferUsageFlags usage{};
+  // if no usage, it's 99% chance a staging buffer
+  if (cinfo.usage == 0) {
+    usage |= VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+  }
+  if (cinfo.flags & BufferCreateFlags_HostVisible) {
+    alloc_info.flags |= VMA_ALLOCATION_CREATE_MAPPED_BIT |
+                        ((cinfo.flags & BufferCreateFlags_HostAccessRandom)
+                             ? VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT
+                             : VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+  } else {
+    // device
+    usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+  }
+  if (cinfo.usage & BufferUsage_Index) {
+    usage |= VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+  }
+  if (cinfo.usage & BufferUsage_Vertex) {
+    usage |= VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+  }
+  if (cinfo.usage & BufferUsage_Storage) {
+    usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+  }
+  if (cinfo.usage & BufferUsage_Indirect) {
+    usage |= VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+  }
+
+  auto handle = buffer_pool_.alloc();
+  auto* buffer = buffer_pool_.get(handle);
+
+  VkBufferCreateInfo buffer_create_info{
+      .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = cinfo.size, .usage = usage};
+
+  VK_CHECK(vmaCreateBuffer(allocator_, &buffer_create_info, &alloc_info, &buffer->buffer_,
+                           &buffer->allocation_, &buffer->info_));
+  if (buffer->info_.size == 0) {
+    return {};
+  }
+  if (cinfo.usage & BufferUsage_Storage) {
+    buffer->resource_info_ = allocate_storage_buffer_descriptor(buffer->buffer_);
+  }
+  if (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) {
+    VkBufferDeviceAddressInfo info{.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+                                   .buffer = buffer->buffer_};
+    buffer->buffer_address_ = vkGetBufferDeviceAddress(get_device().device(), &info);
+    assert(buffer->buffer_address_);
+  }
+
+  buffer->size_ = cinfo.size;
+  buffer->usage_ = cinfo.usage;
+
+  return handle;
 }
 
 CopyAllocator::CopyCmd CopyAllocator::allocate(u64 size) {
@@ -569,9 +646,8 @@ VkImage Device::acquire_next_image() {
       // need to make new semaphore since wsi doesn't unsignal it
 
       for (auto& sem : swapchain_.acquire_semaphores) {
-        ResourceAllocator::get().enqueue_delete_sempahore(sem);
+        enqueue_delete_sempahore(sem);
       }
-      LINFO("new semapohres create");
       swapchain_.acquire_semaphores.clear();
       int x, y;
       glfwGetWindowSize(window_, &x, &y);
@@ -608,6 +684,7 @@ void Device::begin_frame() {
   u64 timeout = 1000000000;
   vkWaitForFences(device_, 1, &curr_frame().render_fence, true, timeout);
   VK_CHECK(vkResetFences(device_, 1, &curr_frame().render_fence));
+  flush_deletions();
 }
 
 VkFence Device::allocate_fence(bool reset) {
@@ -636,11 +713,16 @@ void Device::free_fence(VkFence fence) { free_fences_.push_back(fence); }
 Device::~Device() {
   ZoneScoped;
   PipelineManager::shutdown();
-  ResourceAllocator::get().set_frame_num(UINT32_MAX, 0);
+  curr_frame_num_ = UINT32_MAX;
   for (auto& it : sampler_cache_) {
     destroy(it.second.first);
   }
-  ResourceAllocator::shutdown();
+
+  flush_deletions();
+
+  vkDestroyDescriptorPool(device_, main_pool_, nullptr);
+  vkDestroyDescriptorSetLayout(device_, main_set_layout_, nullptr);
+  vkDestroyDescriptorSetLayout(device_, main_set2_layout_, nullptr);
 
   for (auto& d : per_frame_data_) {
     vkDestroySemaphore(device_, d.render_semaphore, nullptr);
@@ -784,7 +866,7 @@ SamplerHandle Device::get_or_create_sampler(const SamplerCreateInfo& info) {
   Sampler* sampler = sampler_pool_.get(handle);
   VK_CHECK(vkCreateSampler(device_, &cinfo, nullptr, &sampler->sampler_));
   assert(sampler->sampler_);
-  sampler->bindless_info_ = ResourceAllocator::get().allocate_sampler_descriptor(sampler->sampler_);
+  sampler->bindless_info_ = allocate_sampler_descriptor(sampler->sampler_);
   sampler_cache_.emplace(hash, std::make_pair(handle, 1));
   return handle;
 }
@@ -881,7 +963,7 @@ ImageHandle Device::create_image(const ImageDesc& desc) {
   VK_CHECK(vmaCreateImage(get_device().allocator(), &cinfo, &alloc_create_info, &image.image_,
                           &image.allocation_, nullptr));
   if (!image.image()) {
-    return;
+    return {};
   }
 
   if (desc.usage == Usage::Default) {
@@ -934,20 +1016,19 @@ ImageHandle Device::create_image(const ImageDesc& desc) {
     if (image.view_) {
       if (has_flag(desc.bind_flags, BindFlag::Storage)) {
         image.view_->storage_image_resource_info_ =
-            ResourceAllocator::get().allocate_storage_img_descriptor(image.view_->view_,
-                                                                     VK_IMAGE_LAYOUT_GENERAL);
+            allocate_storage_img_descriptor(image.view_->view_, VK_IMAGE_LAYOUT_GENERAL);
       }
       if (has_flag(desc.bind_flags, BindFlag::ShaderResource)) {
         image.view_->sampled_image_resource_info_ =
-            ResourceAllocator::get().allocate_sampled_img_descriptor(
-                image.view_->view_, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
+            allocate_sampled_img_descriptor(image.view_->view_, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
       }
     } else {
       LCRITICAL("todo: handle image view create fail");
       exit(1);
     }
   }
-  auto handle = img_pool_.alloc(std::move(image));
+  auto handle = img_pool_.alloc(image);
+
   return handle;
 }
 
@@ -1006,12 +1087,12 @@ ImageViewHandle Device::create_image_view(ImageHandle image_handle, u32 base_mip
   VK_CHECK(vkCreateImageView(device_, &view_info, nullptr, &view->view_));
   if (view->view_) {
     if (has_flag(desc.bind_flags, BindFlag::Storage)) {
-      view->storage_image_resource_info_ = ResourceAllocator::get().allocate_storage_img_descriptor(
-          view->view_, VK_IMAGE_LAYOUT_GENERAL);
+      view->storage_image_resource_info_ =
+          allocate_storage_img_descriptor(view->view_, VK_IMAGE_LAYOUT_GENERAL);
     }
     if (has_flag(desc.bind_flags, BindFlag::ShaderResource)) {
-      view->sampled_image_resource_info_ = ResourceAllocator::get().allocate_sampled_img_descriptor(
-          view->view_, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
+      view->sampled_image_resource_info_ =
+          allocate_sampled_img_descriptor(view->view_, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
     }
   } else {
     LCRITICAL("todo: handle image view create fail");
@@ -1032,4 +1113,317 @@ u32 Device::get_bindless_idx(ImageHandle img, SubresourceType type) {
   return image->view().sampled_img_resource().handle;
 }
 
+void Device::destroy(ImageView& view) {
+  if (view.view_) {
+    delete_texture_view(
+        {view.storage_image_resource_info_, view.sampled_image_resource_info_, view.view_});
+    view.view_ = nullptr;
+  }
+}
+
+void Device::destroy(Image& img) {
+  if (img.image_) {
+    delete_texture(TextureDeleteInfo{img.image_, img.allocation_});
+    if (img.view_.has_value()) {
+      destroy(img.view());
+    }
+    img.image_ = nullptr;
+  }
+}
+
+void Device::destroy(Buffer& buffer) {
+  if (buffer.buffer_) {
+    assert(buffer.allocation_);
+    delete_buffer(BufferDeleteInfo{buffer.buffer_, buffer.allocation_, buffer.resource_info_});
+    buffer.buffer_ = nullptr;
+  }
+}
+
+BindlessResourceInfo Device::allocate_sampled_img_descriptor(VkImageView view,
+                                                             VkImageLayout layout) {
+  u32 handle = sampled_image_allocator_.alloc();
+  VkDescriptorImageInfo img{.sampler = nullptr, .imageView = view, .imageLayout = layout};
+  allocate_bindless_resource(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &img, nullptr, handle,
+                             bindless_sampled_image_binding);
+  return {ResourceType::SampledImage, handle};
+}
+
+BindlessResourceInfo Device::allocate_storage_img_descriptor(VkImageView view,
+                                                             VkImageLayout layout) {
+  u32 handle = storage_image_allocator_.alloc();
+  VkDescriptorImageInfo img{.sampler = nullptr, .imageView = view, .imageLayout = layout};
+  allocate_bindless_resource(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &img, nullptr, handle,
+                             resource_to_binding(ResourceType::StorageImage));
+  return {ResourceType::StorageImage, handle};
+}
+
+BindlessResourceInfo Device::allocate_sampler_descriptor(VkSampler sampler) {
+  u32 handle = sampler_allocator_.alloc();
+  VkDescriptorImageInfo info{.sampler = sampler};
+  VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                             .dstSet = main_set2_,
+                             .dstBinding = bindless_sampler_binding,
+                             .dstArrayElement = handle,
+                             .descriptorCount = 1,
+                             .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
+                             .pImageInfo = &info,
+                             .pBufferInfo = nullptr};
+  vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+  return {ResourceType::Sampler, handle};
+}
+
+void Device::allocate_bindless_resource(VkDescriptorType descriptor_type,
+                                        VkDescriptorImageInfo* img, VkDescriptorBufferInfo* buffer,
+                                        u32 idx, u32 binding) {
+  VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                             .dstSet = main_set_,
+                             .dstBinding = binding,
+                             .dstArrayElement = idx,
+                             .descriptorCount = 1,
+                             .descriptorType = descriptor_type,
+                             .pImageInfo = img,
+                             .pBufferInfo = buffer};
+  vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+}
+
+u32 Device::resource_to_binding(ResourceType type) {
+  switch (type) {
+    default:
+    case ResourceType::StorageImage:
+      return bindless_storage_image_binding;
+    case ResourceType::StorageBuffer:
+      return bindless_storage_buffer_binding;
+    case ResourceType::SampledImage:
+      return bindless_sampled_image_binding;
+    case ResourceType::Sampler:
+      return bindless_sampler_binding;
+    case ResourceType::CombinedImageSampler:
+      return bindless_combined_image_sampler_binding;
+  }
+}
+
+void Device::delete_texture(const TextureDeleteInfo& img) {
+  texture_delete_q_.emplace_back(img, curr_frame_num());
+}
+
+void Device::flush_deletions() {
+  ZoneScoped;
+
+  std::erase_if(texture_delete_q_, [this](const DeleteQEntry<TextureDeleteInfo>& entry) {
+    if (entry.frame + frames_in_flight < curr_frame_num()) {
+      vmaDestroyImage(allocator_, entry.data.img, entry.data.allocation);
+      return true;
+    }
+    return false;
+  });
+
+  std::erase_if(semaphore_delete_q_, [this](const DeleteQEntry<VkSemaphore>& entry) {
+    if (entry.frame + frames_in_flight < curr_frame_num()) {
+      vkDestroySemaphore(device_, entry.data, nullptr);
+      return true;
+    }
+    return false;
+  });
+
+  std::erase_if(pipeline_delete_q_, [this](const DeleteQEntry<VkPipeline>& entry) {
+    if (entry.frame + frames_in_flight < curr_frame_num()) {
+      vkDestroyPipeline(device_, entry.data, nullptr);
+      return true;
+    }
+    return false;
+  });
+
+  std::erase_if(swapchain_delete_q_, [this](const DeleteQEntry<VkSwapchainKHR>& entry) {
+    if (entry.frame + frames_in_flight < curr_frame_num()) {
+      vkDestroySwapchainKHR(device_, entry.data, nullptr);
+      return true;
+    }
+    return false;
+  });
+
+  std::erase_if(texture_view_delete_q_, [this](const DeleteQEntry<TextureViewDeleteInfo>& entry) {
+    if (entry.frame + frames_in_flight < curr_frame_num()) {
+      if (entry.data.sampled_image_resource_info.has_value()) {
+        sampled_image_allocator_.free(entry.data.sampled_image_resource_info->handle);
+      }
+      if (entry.data.storage_image_resource_info.has_value()) {
+        storage_image_allocator_.free(entry.data.storage_image_resource_info->handle);
+      }
+      vkDestroyImageView(device_, entry.data.view, nullptr);
+      return true;
+    }
+    return false;
+  });
+
+  std::erase_if(storage_buffer_delete_q_, [this](const DeleteQEntry<BufferDeleteInfo>& entry) {
+    if (entry.frame + frames_in_flight < curr_frame_num()) {
+      assert(entry.data.buffer);
+      if (entry.data.resource_info.has_value()) {
+        storage_buffer_allocator_.free(entry.data.resource_info->handle);
+      }
+      vmaDestroyBuffer(allocator_, entry.data.buffer, entry.data.allocation);
+      return true;
+    }
+    return false;
+  });
+}
+
+void Device::delete_texture_view(const TextureViewDeleteInfo& info) {
+  texture_view_delete_q_.emplace_back(info, curr_frame_num_);
+}
+
+void Device::delete_buffer(const BufferDeleteInfo& info) {
+  // TODO: fix
+  storage_buffer_delete_q_.emplace_back(info, curr_frame_num_);
+}
+
+BindlessResourceInfo Device::allocate_storage_buffer_descriptor(VkBuffer buffer) {
+  u32 handle = storage_buffer_allocator_.alloc();
+  VkDescriptorBufferInfo buf{.buffer = buffer, .offset = 0, .range = VK_WHOLE_SIZE};
+  allocate_bindless_resource(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &buf, handle,
+                             resource_to_binding(ResourceType::StorageBuffer));
+  return {ResourceType::StorageBuffer, handle};
+}
+
+void Device::enqueue_delete_swapchain(VkSwapchainKHR swapchain) {
+  swapchain_delete_q_.emplace_back(swapchain, curr_frame_num_);
+}
+
+void Device::enqueue_delete_pipeline(VkPipeline pipeline) {
+  pipeline_delete_q_.emplace_back(pipeline, curr_frame_num_);
+}
+
+void Device::enqueue_delete_sempahore(VkSemaphore semaphore) {
+  semaphore_delete_q_.emplace_back(semaphore, curr_frame_num_);
+}
+
+u32 Device::IndexAllocator::alloc() {
+  if (free_list_.empty()) {
+    return next_index_++;
+  }
+  auto ret = free_list_.back();
+  free_list_.pop_back();
+  return ret;
+}
+
+void Device::IndexAllocator::free(u32 idx) { free_list_.push_back(idx); }
+
+Device::IndexAllocator::IndexAllocator(u32 size) { free_list_.reserve(size); }
+
+void Device::init_bindless() {
+  {
+    VkDescriptorSetLayoutBinding bindings[] = {
+        VkDescriptorSetLayoutBinding{
+            .binding = bindless_storage_image_binding,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            .descriptorCount = max_resource_descriptors,
+            .stageFlags = VK_SHADER_STAGE_ALL,
+        },
+        VkDescriptorSetLayoutBinding{
+            .binding = bindless_combined_image_sampler_binding,
+            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .descriptorCount = max_sampler_descriptors,
+            .stageFlags = VK_SHADER_STAGE_ALL,
+        },
+        VkDescriptorSetLayoutBinding{
+            .binding = bindless_storage_buffer_binding,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .descriptorCount = max_resource_descriptors,
+            .stageFlags = VK_SHADER_STAGE_ALL,
+        },
+        VkDescriptorSetLayoutBinding{
+            .binding = bindless_sampled_image_binding,
+            .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+            .descriptorCount = max_resource_descriptors,
+            .stageFlags = VK_SHADER_STAGE_ALL,
+        },
+    };
+
+    std::array<VkDescriptorBindingFlags, COUNTOF(bindings)> flags;
+    for (auto& f : flags) {
+      f = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
+          VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT_EXT;
+    }
+
+    VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
+        .bindingCount = flags.size(),
+        .pBindingFlags = flags.data()};
+    VkDescriptorSetLayoutCreateInfo set_info{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .pNext = &binding_flags,
+        .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
+        .bindingCount = COUNTOF(bindings),
+        .pBindings = bindings};
+    VK_CHECK(vkCreateDescriptorSetLayout(device_, &set_info, nullptr, &main_set_layout_));
+
+    VkDescriptorPoolSize sizes[] = {
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, max_resource_descriptors},
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, max_resource_descriptors},
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLER, max_sampler_descriptors},
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, max_resource_descriptors},
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, max_sampler_descriptors},
+    };
+
+    VkDescriptorPoolCreateInfo info{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+                                    .flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT,
+                                    // TODO: fine tune this? just one?
+                                    .maxSets = 10,
+                                    .poolSizeCount = COUNTOF(sizes),
+                                    .pPoolSizes = sizes};
+    VK_CHECK(vkCreateDescriptorPool(device_, &info, nullptr, &main_pool_));
+    assert(main_pool_);
+    assert(main_set_layout_);
+    VkDescriptorSetAllocateInfo set_layout_info{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = main_pool_,
+        .descriptorSetCount = 1,
+        .pSetLayouts = &main_set_layout_};
+    VK_CHECK(vkAllocateDescriptorSets(device_, &set_layout_info, &main_set_));
+    assert(main_set_);
+  }
+  VkDescriptorSetLayoutBinding bindings[] = {
+      VkDescriptorSetLayoutBinding{
+          .binding = bindless_sampler_binding,
+          .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
+          .descriptorCount = max_sampler_descriptors,
+          .stageFlags = VK_SHADER_STAGE_ALL,
+      },
+  };
+
+  std::array<VkDescriptorBindingFlags, COUNTOF(bindings)> flags;
+  for (auto& f : flags) {
+    f = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
+        VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT_EXT;
+  }
+
+  VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags{
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
+      .bindingCount = flags.size(),
+      .pBindingFlags = flags.data()};
+  VkDescriptorSetLayoutCreateInfo set_info{
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+      .pNext = &binding_flags,
+      .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
+      .bindingCount = COUNTOF(bindings),
+      .pBindings = bindings};
+  VK_CHECK(vkCreateDescriptorSetLayout(device_, &set_info, nullptr, &main_set2_layout_));
+  assert(main_pool_);
+  assert(main_set2_layout_);
+  VkDescriptorSetAllocateInfo set_layout_info{
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+      .descriptorPool = main_pool_,
+      .descriptorSetCount = 1,
+      .pSetLayouts = &main_set2_layout_};
+  VK_CHECK(vkAllocateDescriptorSets(device_, &set_layout_info, &main_set2_));
+  assert(main_set2_);
+}
+
+void Device::bind_bindless_descriptors(CmdEncoder& cmd) {
+  cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, default_pipeline_layout_, &main_set_, 0);
+  cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_COMPUTE, default_pipeline_layout_, &main_set_, 0);
+  cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, default_pipeline_layout_, &main_set2_,
+                          1);
+  cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_COMPUTE, default_pipeline_layout_, &main_set2_, 1);
+}
 }  // namespace gfx

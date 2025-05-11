@@ -1,22 +1,25 @@
 #pragma once
 
-#include <memory>
 #include <mutex>
 #include <vector>
 
-#include "vk2/Buffer.hpp"
+#include "Types.hpp"
+#include "vk2/Pool.hpp"
+
 namespace gfx {
 
 struct StagingBufferPool {
   static StagingBufferPool& get();
+  static void shutdown();
+  ~StagingBufferPool();
   static void destroy();
   static void init();
-  Buffer* acquire(u64 size);
-  void free(Buffer* buffer);
+  Holder<BufferHandle> acquire(u64 size);
+  void free(Holder<BufferHandle>&& buffer);
 
  private:
   std::mutex mtx_;
-  std::vector<std::unique_ptr<Buffer>> free_buffers_;
-  std::vector<std::unique_ptr<Buffer>> allocated_buffers_;
+  std::vector<Holder<BufferHandle>> free_buffers_;
+  std::vector<Holder<BufferHandle>> allocated_buffers_;
 };
 }  // namespace gfx
