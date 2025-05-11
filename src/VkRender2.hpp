@@ -18,7 +18,6 @@
 #include "techniques/IBL.hpp"
 #include "util/IndexAllocator.hpp"
 #include "vk2/Buffer.hpp"
-#include "vk2/Device.hpp"
 #include "vk2/PipelineManager.hpp"
 #include "vk2/Texture.hpp"
 
@@ -47,7 +46,7 @@ struct LinearStagingBuffer {
 struct FreeListBuffer {
   Holder<BufferHandle> buffer;
   util::FreeListAllocator allocator;
-  [[nodiscard]] Buffer* get_buffer() const { return get_device().get_buffer(buffer); }
+  [[nodiscard]] Buffer* get_buffer() const;
 };
 
 struct SceneDrawInfo {
@@ -123,9 +122,7 @@ class VkRender2 final {
     Holder<BufferHandle> line_draw_buf;
   };
   std::vector<PerFrameData> per_frame_data_;
-  u64 curr_frame_in_flight_num() const {
-    return device_->curr_frame_num() % get_device().get_frames_in_flight();
-  }
+  u64 curr_frame_in_flight_num() const;
   void on_imgui();
   static constexpr u32 max_draws{100'000};
 
@@ -390,13 +387,11 @@ class VkRender2 final {
   };
   std::vector<LineVertex> line_draw_vertices_;
   void draw_skybox(CmdEncoder& cmd);
-  void render_imgui(CmdEncoder& cmd, uvec2 draw_extent, const ImageView& target_img_view);
+  void render_imgui(CmdEncoder& cmd, uvec2 draw_extent, ImageViewHandle target_img_view);
 
   [[nodiscard]] float aspect_ratio() const;
   [[nodiscard]] uvec2 window_dims() const;
-  PerFrameData& curr_frame() {
-    return per_frame_data_[device_->curr_frame_num() % device_->get_frames_in_flight()];
-  }
+  PerFrameData& curr_frame();
 
   bool render_prefilter_mip_skybox_{};
   bool draw_imgui_{true};

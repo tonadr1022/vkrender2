@@ -7,6 +7,7 @@
 #include "core/FixedVector.hpp"
 #include "core/Logger.hpp"
 #include "vk2/Buffer.hpp"
+#include "vk2/Device.hpp"
 #include "vk2/PipelineManager.hpp"
 #include "vk2/Texture.hpp"
 #include "vk2/VkTypes.hpp"
@@ -154,8 +155,8 @@ void CmdEncoder::begin_rendering(const RenderArea& render_area,
         : att_desc.type == RenderingAttachmentInfo::Type::Depth ? depth_att
                                                                 : stencil_att;
     att.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-    if (att_desc.img_view) {
-      att.imageView = att_desc.img_view->view();
+    if (att_desc.img_view.is_valid()) {
+      att.imageView = device_->get_image_view(att_desc.img_view)->view();
     } else {
       LCRITICAL("cannot begin rendering, image not found");
       exit(1);

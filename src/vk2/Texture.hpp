@@ -6,6 +6,7 @@
 #include <optional>
 
 #include "Types.hpp"
+#include "vk2/Pool.hpp"
 #include "vk2/Resource.hpp"
 
 namespace gfx {
@@ -57,15 +58,15 @@ class Image {
   [[nodiscard]] VkImage image() const { return image_; }
   [[nodiscard]] Format format() const { return desc_.format; }
   [[nodiscard]] uvec3 size() const { return desc_.dims; }
-  [[nodiscard]] ImageView& view() { return view_.value(); }
-  [[nodiscard]] const ImageView& view() const { return view_.value(); }
+  [[nodiscard]] ImageViewHandle view() const { return view_.handle; }
   [[nodiscard]] const ImageDesc& get_desc() const { return desc_; }
   VkImageLayout curr_layout{};
 
  private:
   friend class Device;
   ImageDesc desc_;
-  std::optional<ImageView> view_;
+  std::vector<ImageView> image_views_;
+  Holder<ImageViewHandle> view_;
   VkImage image_{};
   VmaAllocation allocation_{};
 };
@@ -77,12 +78,6 @@ void blit_img(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent3D extent,
 struct TextureDeleteInfo {
   VkImage img;
   VmaAllocation allocation;
-};
-
-struct TextureViewDeleteInfo {
-  std::optional<BindlessResourceInfo> storage_image_resource_info;
-  std::optional<BindlessResourceInfo> sampled_image_resource_info;
-  VkImageView view;
 };
 
 uint32_t get_mip_levels(VkExtent2D size);

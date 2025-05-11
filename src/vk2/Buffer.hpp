@@ -51,14 +51,7 @@ class Buffer {
   VkDeviceAddress buffer_address_{};
   VmaAllocation allocation_{};
 
- public:
-  std::optional<BindlessResourceInfo> resource_info_;
-};
-
-struct BufferDeleteInfo {
-  VkBuffer buffer{};
-  VmaAllocation allocation{};
-  std::optional<BindlessResourceInfo> resource_info;
+  BindlessResourceInfo resource_info_;
 };
 
 }  // namespace gfx

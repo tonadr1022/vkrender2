@@ -366,8 +366,8 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
             static_vertex_buf_.get_buffer()->device_addr(),
             static_instance_data_buf_.get_buffer()->device_addr(),
             static_object_data_buf_.get_buffer()->device_addr(),
-            device_->get_buffer(curr_frame().scene_uniform_buf)->resource_info_->handle,
-            static_materials_buf_.get_buffer()->resource_info_->handle,
+            device_->get_bindless_idx(curr_frame().scene_uniform_buf),
+            device_->get_bindless_idx(static_materials_buf_.buffer),
             device_->get_bindless_idx(linear_sampler_),
         };
         cmd.push_constants(sizeof(pc), &pc);
@@ -1245,10 +1245,10 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
                 far,
                 device_->get_buffer(curr_frame().scene_uniform_buf)->device_addr(),
                 count,
-                mgr.get_draw_info_buf()->resource_info_->handle,
-                draw_pass.get_frame_out_draw_cmd_buf(false)->resource_info_->handle,
-                draw_pass.get_frame_out_draw_cmd_buf(true)->resource_info_->handle,
-                static_object_data_buf_.get_buffer()->resource_info_->handle,
+                device_->get_bindless_idx(mgr.get_draw_info_buf_handle()),
+                device_->get_bindless_idx(draw_pass.get_frame_out_draw_cmd_buf_handle(false)),
+                device_->get_bindless_idx(draw_pass.get_frame_out_draw_cmd_buf_handle(true)),
+                device_->get_bindless_idx(static_object_data_buf_.buffer.handle),
                 flags,
             };
             cmd.push_constants(sizeof(pc), &pc);
@@ -1295,28 +1295,25 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
     forward.set_execute_fn([&rg, final_out_handle, this, depth_out_handle](CmdEncoder& cmd) {
       TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "forward");
       auto* tex = rg.get_texture(final_out_handle);
-      assert(tex);
-      if (!tex) return;
       cmd.begin_rendering(
           {.extent = tex->size()},
-          {{&tex->view(), RenderingAttachmentInfo::Type::Color,
+          {{tex->view(), RenderingAttachmentInfo::Type::Color,
             RenderingAttachmentInfo::LoadOp::Clear},
-           {&rg.get_texture(depth_out_handle)->view(), RenderingAttachmentInfo::Type::Depth,
+           {rg.get_texture(depth_out_handle)->view(), RenderingAttachmentInfo::Type::Depth,
             RenderingAttachmentInfo::LoadOp::Clear}});
       cmd.set_viewport_and_scissor(tex->size());
       cmd.set_cull_mode(CullMode::None);
 
       BasicPushConstants pc{
-          device_->get_buffer(curr_frame().scene_uniform_buf)->resource_info_->handle,
-          static_vertex_buf_.get_buffer()->resource_info_->handle,
-          static_instance_data_buf_.get_buffer()->resource_info_->handle,
-          static_object_data_buf_.get_buffer()->resource_info_->handle,
-          static_materials_buf_.get_buffer()->resource_info_->handle,
+          device_->get_bindless_idx(curr_frame().scene_uniform_buf),
+          device_->get_bindless_idx(static_vertex_buf_.buffer),
+          device_->get_bindless_idx(static_instance_data_buf_.buffer),
+          device_->get_bindless_idx(static_object_data_buf_.buffer),
+          device_->get_bindless_idx(static_materials_buf_.buffer),
           device_->get_bindless_idx(linear_sampler_),
-          device_->get_buffer(csm_->get_shadow_data_buffer(device_->curr_frame_in_flight()))
-              ->resource_info_->handle,
+          device_->get_bindless_idx(csm_->get_shadow_data_buffer(device_->curr_frame_in_flight())),
           device_->get_bindless_idx(shadow_sampler_),
-          device_->get_image(csm_->get_shadow_map_img())->view().sampled_img_resource().handle,
+          device_->get_bindless_idx(csm_->get_shadow_map_img(), SubresourceType::Shader),
           device_->get_bindless_idx(ibl_->irradiance_cubemap_tex_.handle, SubresourceType::Shader),
           device_->get_bindless_idx(ibl_->brdf_lut_.handle, SubresourceType::Shader),
           device_->get_bindless_idx(ibl_->prefiltered_env_map_tex_.handle, SubresourceType::Shader),
@@ -1366,13 +1363,13 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
             uvec2 extent = gbuffer_a->size();
             cmd.begin_rendering(
                 {.extent = extent},
-                {{&gbuffer_a->view(), RenderingAttachmentInfo::Type::Color,
+                {{gbuffer_a->view(), RenderingAttachmentInfo::Type::Color,
                   RenderingAttachmentInfo::LoadOp::Clear},
-                 {&gbuffer_b->view(), RenderingAttachmentInfo::Type::Color,
+                 {gbuffer_b->view(), RenderingAttachmentInfo::Type::Color,
                   RenderingAttachmentInfo::LoadOp::Clear},
-                 {&gbuffer_c->view(), RenderingAttachmentInfo::Type::Color,
+                 {gbuffer_c->view(), RenderingAttachmentInfo::Type::Color,
                   RenderingAttachmentInfo::LoadOp::Clear},
-                 {&rg.get_texture(depth_out_handle)->view(), RenderingAttachmentInfo::Type::Depth,
+                 {rg.get_texture(depth_out_handle)->view(), RenderingAttachmentInfo::Type::Depth,
                   RenderingAttachmentInfo::LoadOp::Clear}});
             cmd.set_viewport_and_scissor(extent);
 
@@ -1420,28 +1417,24 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
       shade.set_execute_fn([&rg, rg_gbuffer_b, rg_gbuffer_c, rg_gbuffer_a, final_out_handle, this,
                             depth_handle](CmdEncoder& cmd) {
         TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "shade");
-        auto* gbuffer_a = rg.get_texture(rg_gbuffer_a);
-        auto* gbuffer_b = rg.get_texture(rg_gbuffer_b);
-        auto* gbuffer_c = rg.get_texture(rg_gbuffer_c);
-        auto* depth_img = rg.get_texture(depth_handle);
-        auto* shade_out_tex = rg.get_texture(final_out_handle);
-        assert(gbuffer_a && gbuffer_b && gbuffer_c && shade_out_tex && depth_img);
-        if (!gbuffer_a || !gbuffer_b || !gbuffer_c || !shade_out_tex || !depth_img) {
-          return;
-        }
+        auto gbuffer_a_handle = rg.get_texture_handle(rg_gbuffer_a);
+        auto gbuffer_b_handle = rg.get_texture_handle(rg_gbuffer_b);
+        auto gbuffer_c_handle = rg.get_texture_handle(rg_gbuffer_c);
+        auto depth_img = rg.get_texture_handle(depth_handle);
+        auto shade_out_tex = rg.get_texture_handle(final_out_handle);
         DeferredShadePushConstants pc{
             glm::inverse(scene_uniform_cpu_data_.view_proj),
-            gbuffer_a->view().storage_img_resource().handle,
-            gbuffer_b->view().storage_img_resource().handle,
-            gbuffer_c->view().storage_img_resource().handle,
-            depth_img->view().sampled_img_resource().handle,
-            shade_out_tex->view().storage_img_resource().handle,
+            device_->get_bindless_idx(gbuffer_a_handle, SubresourceType::Storage),
+            device_->get_bindless_idx(gbuffer_b_handle, SubresourceType::Storage),
+            device_->get_bindless_idx(gbuffer_c_handle, SubresourceType::Storage),
+            device_->get_bindless_idx(depth_img, SubresourceType::Shader),
+            device_->get_bindless_idx(shade_out_tex, SubresourceType::Storage),
             device_->get_bindless_idx(nearest_sampler_),
-            device_->get_buffer(curr_frame().scene_uniform_buf)->resource_info_->handle,
-            device_->get_image(csm_->get_shadow_map_img())->view().sampled_img_resource().handle,
+            device_->get_bindless_idx(curr_frame().scene_uniform_buf),
+            device_->get_bindless_idx(csm_->get_shadow_map_img(), SubresourceType::Shader),
             device_->get_bindless_idx(shadow_sampler_),
-            device_->get_buffer(csm_->get_shadow_data_buffer(device_->curr_frame_in_flight()))
-                ->resource_info_->handle,
+            device_->get_bindless_idx(
+                csm_->get_shadow_data_buffer(device_->curr_frame_in_flight())),
             device_->get_bindless_idx(ibl_->irradiance_cubemap_tex_.handle,
                                       SubresourceType::Shader),
             device_->get_bindless_idx(ibl_->brdf_lut_.handle, SubresourceType::Shader),
@@ -1450,7 +1443,8 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
             device_->get_bindless_idx(linear_sampler_clamp_to_edge_)};
         PipelineManager::get().bind_compute(cmd.cmd(), deferred_shade_pipeline_);
         cmd.push_constants(sizeof(pc), &pc);
-        cmd.dispatch((gbuffer_a->size().x + 16) / 16, (gbuffer_a->size().y + 16) / 16, 1);
+        auto dims = device_->get_image(gbuffer_a_handle)->size();
+        cmd.dispatch((dims.x + 16) / 16, (dims.y + 16) / 16, 1);
       });
     }
     {
@@ -1465,9 +1459,9 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
 
         cmd.begin_rendering(
             {.extent = tex->size()},
-            {{&tex->view(), RenderingAttachmentInfo::Type::Color,
+            {{tex->view(), RenderingAttachmentInfo::Type::Color,
               RenderingAttachmentInfo::LoadOp::Load},
-             {&rg.get_texture(depth_handle)->view(), RenderingAttachmentInfo::Type::Depth,
+             {rg.get_texture(depth_handle)->view(), RenderingAttachmentInfo::Type::Depth,
               RenderingAttachmentInfo::LoadOp::Load}});
         cmd.set_viewport_and_scissor(tex->size());
 
@@ -1479,11 +1473,11 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
 
   {
     auto& pp = rg.add_pass("post_process");
-    auto draw_out_handle = pp.add("draw_out", {.format = draw_img_format_}, Access::ComputeRead);
+    auto rg_draw_out_handle = pp.add("draw_out", {.format = draw_img_format_}, Access::ComputeRead);
     auto final_out_handle =
         pp.add("final_out", AttachmentInfo{.format = device_->get_swapchain_info().format},
                Access::ComputeWrite);
-    pp.set_execute_fn([this, &rg, draw_out_handle, final_out_handle](CmdEncoder& cmd) {
+    pp.set_execute_fn([this, &rg, rg_draw_out_handle, final_out_handle](CmdEncoder& cmd) {
       TracyVkZone(curr_frame().tracy_vk_ctx, cmd.cmd(), "post_process");
       if (postprocess_pass_enabled.get()) {
         u32 postprocess_flags = 0;
@@ -1497,15 +1491,16 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
           postprocess_flags |= 0x1;
         }
         PipelineManager::get().bind_compute(cmd.cmd(), postprocess_pipeline_);
-        auto* post_processed_img = rg.get_texture(final_out_handle);
+        auto post_processed_img_handle = rg.get_texture_handle(final_out_handle);
         struct {
           u32 in_tex_idx, out_tex_idx, flags, tonemap_type;
-        } pc{rg.get_texture(draw_out_handle)->view().storage_img_resource().handle,
-             post_processed_img->view().storage_img_resource().handle, postprocess_flags,
-             tonemap_type_};
+        } pc{device_->get_bindless_idx(rg.get_texture_handle(rg_draw_out_handle),
+                                       SubresourceType::Storage),
+             device_->get_bindless_idx(post_processed_img_handle, SubresourceType::Storage),
+             postprocess_flags, tonemap_type_};
         cmd.push_constants(sizeof(pc), &pc);
-        vkCmdDispatch(cmd.cmd(), (post_processed_img->size().x + 16) / 16,
-                      (post_processed_img->size().y + 16) / 16, 1);
+        auto dims = device_->get_image(post_processed_img_handle)->size();
+        vkCmdDispatch(cmd.cmd(), (dims.x + 16) / 16, (dims.y + 16) / 16, 1);
       }
     });
   }
@@ -1548,9 +1543,9 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
           if (line_draw_vertices_.size()) {
             uvec2 extent = color_tex->size();
             cmd.begin_rendering({.extent = extent},
-                                {{&color_tex->view(), RenderingAttachmentInfo::Type::Color,
+                                {{color_tex->view(), RenderingAttachmentInfo::Type::Color,
                                   RenderingAttachmentInfo::LoadOp::Load},
-                                 {&depth_tex->view(), RenderingAttachmentInfo::Type::Depth,
+                                 {depth_tex->view(), RenderingAttachmentInfo::Type::Depth,
                                   RenderingAttachmentInfo::LoadOp::Load}});
             PipelineManager::get().bind_graphics(cmd.cmd(), line_draw_pipeline_);
             Buffer* line_draw_buf = device_->get_buffer(curr_frame().line_draw_buf);
@@ -1748,12 +1743,12 @@ void VkRender2::draw_skybox(CmdEncoder& cmd) {
   PipelineManager::get().bind_graphics(cmd.cmd(), skybox_pipeline_);
   u32 skybox_handle{};
   if (render_prefilter_mip_skybox_) {
-    assert(ibl_->prefiltered_env_tex_views_mips_.size() >
+    assert(ibl_->prefiltered_env_map_tex_views_.size() >
            (size_t)prefilter_mip_skybox_render_mip_level_);
     skybox_handle =
         device_
             ->get_image_view(
-                ibl_->prefiltered_env_tex_views_mips_[prefilter_mip_skybox_render_mip_level_])
+                ibl_->prefiltered_env_map_tex_views_[prefilter_mip_skybox_render_mip_level_])
             ->sampled_img_resource()
             .handle;
   } else {
@@ -1766,7 +1761,7 @@ void VkRender2::draw_skybox(CmdEncoder& cmd) {
   struct {
     u32 scene_buffer, tex_idx;
   } pc{
-      device_->get_buffer(curr_frame().scene_uniform_buf)->resource_info_->handle,
+      device_->get_bindless_idx(curr_frame().scene_uniform_buf),
       skybox_handle,
   };
   cmd.push_constants(sizeof(pc), &pc);
@@ -1869,10 +1864,10 @@ void VkRender2::free(CmdEncoder& cmd, StaticModelInstanceResources& instance) {
   free(instance);
 }
 
-void VkRender2::render_imgui(CmdEncoder& cmd, uvec2 draw_extent, const ImageView& target_img_view) {
+void VkRender2::render_imgui(CmdEncoder& cmd, uvec2 draw_extent, ImageViewHandle target_img_view) {
   cmd.begin_rendering(
       {.extent = draw_extent},
-      {RenderingAttachmentInfo{&target_img_view, RenderingAttachmentInfo::Type::Color,
+      {RenderingAttachmentInfo{target_img_view, RenderingAttachmentInfo::Type::Color,
                                RenderingAttachmentInfo::LoadOp::Load}});
   ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd.cmd());
   cmd.end_rendering();
@@ -1907,5 +1902,14 @@ void VkRender2::StaticMeshDrawManager::init(MeshPass type, size_t initial_max_dr
   });
   draw_cmds_buf_.allocator.init(initial_max_draw_cnt * sizeof(GPUDrawInfo), sizeof(GPUDrawInfo),
                                 100);
+}
+
+Buffer* FreeListBuffer::get_buffer() const { return get_device().get_buffer(buffer); }
+u64 VkRender2::curr_frame_in_flight_num() const {
+  return device_->curr_frame_num() % get_device().get_frames_in_flight();
+}
+
+VkRender2::PerFrameData& VkRender2::curr_frame() {
+  return per_frame_data_[device_->curr_frame_num() % device_->get_frames_in_flight()];
 }
 }  // namespace gfx

@@ -341,7 +341,6 @@ void Device::init_impl(const CreateInfo& info) {
                                            .pushConstantRangeCount = 1,
                                            .pPushConstantRanges = &default_range};
   VK_CHECK(vkCreatePipelineLayout(device_, &pipeline_info, nullptr, &default_pipeline_layout_));
-  running_ = true;
 }
 
 Device& get_device() { return Device::get(); }
@@ -414,11 +413,7 @@ void Device::destroy(ImageHandle handle) {
 }
 
 void Device::destroy(ImageViewHandle handle) {
-  auto* view = img_view_pool_.get(handle);
-  if (view) {
-    destroy(*view);
-    img_view_pool_.destroy(handle);
-  }
+  texture_view_delete_q_.emplace_back(handle, curr_frame_num_);
 }
 
 void Device::destroy(SamplerHandle handle) {
@@ -429,10 +424,7 @@ void Device::destroy(SamplerHandle handle) {
 }
 
 void Device::destroy(BufferHandle handle) {
-  if (auto* buf = buffer_pool_.get(handle); buf) {
-    destroy(*buf);
-    buffer_pool_.destroy(handle);
-  }
+  storage_buffer_delete_q_.emplace_back(handle, curr_frame_num());
 }
 
 void Device::on_imgui() const {
@@ -758,7 +750,7 @@ bool Device::is_supported(DeviceFeature feature) const {
 void Device::set_name(ImageViewHandle handle, const char* name) {
 #ifdef DEBUG_VK_OBJECT_NAMES
   if (auto* img = get_image_view(handle); img) {
-    set_name(name, reinterpret_cast<u64>(img->view()), VK_OBJECT_TYPE_IMAGE_VIEW);
+    set_name(name, reinterpret_cast<u64>(img->view_), VK_OBJECT_TYPE_IMAGE_VIEW);
   }
 #else
   (void)handle;
@@ -958,76 +950,20 @@ ImageHandle Device::create_image(const ImageDesc& desc) {
   if (desc.usage == Usage::Default) {
     alloc_create_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
   }
-  Image image;
-  image.desc_ = desc;
-  VK_CHECK(vmaCreateImage(get_device().allocator(), &cinfo, &alloc_create_info, &image.image_,
-                          &image.allocation_, nullptr));
-  if (!image.image()) {
+  auto handle = img_pool_.alloc();
+  auto* image = img_pool_.get(handle);
+
+  image->desc_ = desc;
+  VK_CHECK(vmaCreateImage(get_device().allocator(), &cinfo, &alloc_create_info, &image->image_,
+                          &image->allocation_, nullptr));
+  if (!image->image()) {
     return {};
   }
 
   if (desc.usage == Usage::Default) {
-    // make image view
-    VkImageAspectFlags aspect = VK_IMAGE_ASPECT_NONE;
-    if (format_is_color(desc.format)) {
-      aspect |= VK_IMAGE_ASPECT_COLOR_BIT;
-    }
-    if (format_is_depth(desc.format)) {
-      aspect |= VK_IMAGE_ASPECT_DEPTH_BIT;
-    }
-    if (format_is_stencil(desc.format)) {
-      aspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
-    }
-
-    VkImageViewCreateInfo view_info{.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-                                    .image = image.image_,
-                                    .format = cinfo.format,
-                                    .subresourceRange = {
-                                        .aspectMask = aspect,
-                                        .baseMipLevel = 0,
-                                        .levelCount = desc.mip_levels,
-                                        .baseArrayLayer = 0,
-                                        .layerCount = desc.array_layers,
-                                    }};
-    if (desc.array_layers > 1) {
-      if (has_flag(desc.misc_flags, ResourceMiscFlag::ImageCube)) {
-        if (desc.array_layers > 6 && desc.array_layers != constants::remaining_array_layers) {
-          view_info.viewType = VK_IMAGE_VIEW_TYPE_CUBE_ARRAY;
-        } else {
-          view_info.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
-        }
-      } else {
-        if (desc.type == ImageDesc::Type::TwoD) {
-          view_info.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-        } else if (desc.type == ImageDesc::Type::OneD) {
-          view_info.viewType = VK_IMAGE_VIEW_TYPE_1D_ARRAY;
-        }
-      }
-    } else {
-      if (desc.type == ImageDesc::Type::TwoD) {
-        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-      } else if (desc.type == ImageDesc::Type::OneD) {
-        view_info.viewType = VK_IMAGE_VIEW_TYPE_1D;
-      }
-    }
-
-    image.view_ = ImageView{};
-    VK_CHECK(vkCreateImageView(device_, &view_info, nullptr, &image.view_->view_));
-    if (image.view_) {
-      if (has_flag(desc.bind_flags, BindFlag::Storage)) {
-        image.view_->storage_image_resource_info_ =
-            allocate_storage_img_descriptor(image.view_->view_, VK_IMAGE_LAYOUT_GENERAL);
-      }
-      if (has_flag(desc.bind_flags, BindFlag::ShaderResource)) {
-        image.view_->sampled_image_resource_info_ =
-            allocate_sampled_img_descriptor(image.view_->view_, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
-      }
-    } else {
-      LCRITICAL("todo: handle image view create fail");
-      exit(1);
-    }
+    image->view_ = Holder<ImageViewHandle>(create_image_view(
+        handle, 0, constants::remaining_mip_layers, 0, constants::remaining_array_layers));
   }
-  auto handle = img_pool_.alloc(image);
 
   return handle;
 }
@@ -1108,34 +1044,18 @@ u32 Device::get_bindless_idx(ImageHandle img, SubresourceType type) {
     return 0;
   }
   if (type == SubresourceType::Storage) {
-    return image->view().storage_img_resource().handle;
+    return get_image_view(image->view())->storage_img_resource().handle;
   }
-  return image->view().sampled_img_resource().handle;
-}
-
-void Device::destroy(ImageView& view) {
-  if (view.view_) {
-    delete_texture_view(
-        {view.storage_image_resource_info_, view.sampled_image_resource_info_, view.view_});
-    view.view_ = nullptr;
-  }
+  return get_image_view(image->view())->sampled_img_resource().handle;
 }
 
 void Device::destroy(Image& img) {
   if (img.image_) {
     delete_texture(TextureDeleteInfo{img.image_, img.allocation_});
-    if (img.view_.has_value()) {
+    if (img.view_.handle.is_valid()) {
       destroy(img.view());
     }
     img.image_ = nullptr;
-  }
-}
-
-void Device::destroy(Buffer& buffer) {
-  if (buffer.buffer_) {
-    assert(buffer.allocation_);
-    delete_buffer(BufferDeleteInfo{buffer.buffer_, buffer.allocation_, buffer.resource_info_});
-    buffer.buffer_ = nullptr;
   }
 }
 
@@ -1241,40 +1161,46 @@ void Device::flush_deletions() {
     return false;
   });
 
-  std::erase_if(texture_view_delete_q_, [this](const DeleteQEntry<TextureViewDeleteInfo>& entry) {
+  std::erase_if(texture_view_delete_q2_, [this](const DeleteQEntry<VkImageView>& entry) {
     if (entry.frame + frames_in_flight < curr_frame_num()) {
-      if (entry.data.sampled_image_resource_info.has_value()) {
-        sampled_image_allocator_.free(entry.data.sampled_image_resource_info->handle);
-      }
-      if (entry.data.storage_image_resource_info.has_value()) {
-        storage_image_allocator_.free(entry.data.storage_image_resource_info->handle);
-      }
-      vkDestroyImageView(device_, entry.data.view, nullptr);
+      vkDestroyImageView(device_, entry.data, nullptr);
       return true;
     }
     return false;
   });
 
-  std::erase_if(storage_buffer_delete_q_, [this](const DeleteQEntry<BufferDeleteInfo>& entry) {
+  std::erase_if(texture_view_delete_q_, [this](const DeleteQEntry<ImageViewHandle>& entry) {
     if (entry.frame + frames_in_flight < curr_frame_num()) {
-      assert(entry.data.buffer);
-      if (entry.data.resource_info.has_value()) {
-        storage_buffer_allocator_.free(entry.data.resource_info->handle);
+      if (auto* view = img_view_pool_.get(entry.data); view) {
+        if (view->sampled_image_resource_info_.has_value()) {
+          sampled_image_allocator_.free(view->sampled_image_resource_info_->handle);
+        }
+        if (view->storage_image_resource_info_.has_value()) {
+          storage_image_allocator_.free(view->storage_image_resource_info_->handle);
+        }
+        vkDestroyImageView(device_, view->view_, nullptr);
+        view->view_ = nullptr;
+
+        img_view_pool_.destroy(entry.data);
+        return true;
       }
-      vmaDestroyBuffer(allocator_, entry.data.buffer, entry.data.allocation);
-      return true;
     }
     return false;
   });
-}
 
-void Device::delete_texture_view(const TextureViewDeleteInfo& info) {
-  texture_view_delete_q_.emplace_back(info, curr_frame_num_);
-}
-
-void Device::delete_buffer(const BufferDeleteInfo& info) {
-  // TODO: fix
-  storage_buffer_delete_q_.emplace_back(info, curr_frame_num_);
+  std::erase_if(storage_buffer_delete_q_, [this](const DeleteQEntry<BufferHandle>& entry) {
+    if (entry.frame + frames_in_flight < curr_frame_num()) {
+      if (auto* buf = buffer_pool_.get(entry.data); buf) {
+        if (buf->resource_info_.is_valid()) {
+          storage_buffer_allocator_.free(buf->resource_info_.handle);
+        }
+        vmaDestroyBuffer(allocator_, buf->buffer_, buf->allocation_);
+        buffer_pool_.destroy(entry.data);
+        return true;
+      }
+    }
+    return false;
+  });
 }
 
 BindlessResourceInfo Device::allocate_storage_buffer_descriptor(VkBuffer buffer) {
@@ -1306,7 +1232,11 @@ u32 Device::IndexAllocator::alloc() {
   return ret;
 }
 
-void Device::IndexAllocator::free(u32 idx) { free_list_.push_back(idx); }
+void Device::IndexAllocator::free(u32 idx) {
+  if (idx != UINT32_MAX) {
+    free_list_.push_back(idx);
+  }
+}
 
 Device::IndexAllocator::IndexAllocator(u32 size) { free_list_.reserve(size); }
 
@@ -1425,5 +1355,19 @@ void Device::bind_bindless_descriptors(CmdEncoder& cmd) {
   cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, default_pipeline_layout_, &main_set2_,
                           1);
   cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_COMPUTE, default_pipeline_layout_, &main_set2_, 1);
+}
+
+u32 Device::get_bindless_idx(BufferHandle buffer) {
+  auto* buf = buffer_pool_.get(buffer);
+  if (buf) {
+    return buf->resource_info_.handle;
+  }
+  return 0;
+}
+
+// TODO: custom imgui backend
+VkDescriptorSet Device::add_imgui_tex(SamplerHandle sampler, ImageViewHandle image_view) {
+  return ImGui_ImplVulkan_AddTexture(get_sampler_vk(sampler), get_image_view(image_view)->view_,
+                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 }  // namespace gfx

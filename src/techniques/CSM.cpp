@@ -69,16 +69,6 @@ mat4 calc_light_space_matrix(const mat4& cam_view, const mat4& cam_proj, vec3 li
   float z_padding = (max.z - min.z) * z_pad.get();
   min.z -= z_padding;
   max.z += z_padding;
-  // if (min.z < 0) {
-  //   min.z *= z_mult;
-  // } else {
-  //   min.z /= z_mult;
-  // }
-  // if (max.z < 0) {
-  //   max.z /= z_mult;
-  // } else {
-  //   max.z *= z_mult;
-  // }
   light_proj = glm::orthoRH_ZO(min.x, max.x, max.y, min.y, min.z, max.z);
   return light_proj * light_view;
 }
@@ -182,8 +172,8 @@ void CSM::imgui_pass(CmdEncoder&, SamplerHandle sampler, const Image& tex) {
     if (imgui_set_) {
       ImGui_ImplVulkan_RemoveTexture(imgui_set_);
     }
-    imgui_set_ = ImGui_ImplVulkan_AddTexture(device_->get_sampler_vk(sampler), tex.view().view(),
-                                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    // TODO: custom imgui backend
+    imgui_set_ = device_->add_imgui_tex(sampler, tex.view());
     curr_debug_img_size_ = tex.size();
   }
 }
@@ -292,15 +282,14 @@ void CSM::add_pass(RenderGraph& rg) {
     }
 
     for (u32 i = 0; i < cascade_count_; i++) {
-      auto* sm_img = get_device().get_image(shadow_map_img_);
-      cmd.begin_rendering({.extent = sm_img->size()},
-                          {{get_device().get_image_view(shadow_map_img_views_[i]),
-                            RenderingAttachmentInfo::Type::Depth,
-                            RenderingAttachmentInfo::LoadOp::Clear,
-                            RenderingAttachmentInfo::StoreOp::Store,
-                            {.depth_stencil = {.depth = 1}}}});
+      auto dims = get_device().get_image(shadow_map_img_)->size();
+      cmd.begin_rendering({.extent = dims}, {{shadow_map_img_views_[i].handle,
+                                              RenderingAttachmentInfo::Type::Depth,
+                                              RenderingAttachmentInfo::LoadOp::Clear,
+                                              RenderingAttachmentInfo::StoreOp::Store,
+                                              {.depth_stencil = {.depth = 1}}}});
       cmd.set_cull_mode(CullMode::None);
-      cmd.set_viewport_and_scissor(sm_img->size());
+      cmd.set_viewport_and_scissor(dims);
       if (depth_bias_enabled_) {
         cmd.set_depth_bias(depth_bias_constant_factor_, 0.0f, depth_bias_slope_factor_);
       } else {
@@ -339,7 +328,7 @@ void CSM::debug_shadow_pass(RenderGraph& rg, SamplerHandle linear_sampler) {
       auto* tex = rg.get_texture(shadow_map_debug_img_handle);
       cmd.begin_rendering(
           {.extent = tex->size()},
-          {RenderingAttachmentInfo{&tex->view(), RenderingAttachmentInfo::Type::Color,
+          {RenderingAttachmentInfo{tex->view(), RenderingAttachmentInfo::Type::Color,
                                    RenderingAttachmentInfo::LoadOp::Load}});
       cmd.set_viewport_and_scissor(tex->size());
 
@@ -351,7 +340,7 @@ void CSM::debug_shadow_pass(RenderGraph& rg, SamplerHandle linear_sampler) {
         u32 tex_idx;
         u32 sampler_idx;
         u32 array_idx;
-      } pc{get_device().get_image(shadow_map_img_)->view().sampled_img_resource().handle,
+      } pc{device_->get_bindless_idx(shadow_map_img_, SubresourceType::Shader),
            device_->get_bindless_idx(linear_sampler), static_cast<u32>(debug_cascade_idx_)};
       cmd.push_constants(sizeof(pc), &pc);
       cmd.draw(3);
