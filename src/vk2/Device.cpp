@@ -413,18 +413,24 @@ void Device::destroy(ImageHandle handle) {
 }
 
 void Device::destroy(ImageViewHandle handle) {
-  texture_view_delete_q_.emplace_back(handle, curr_frame_num_);
+  if (handle.is_valid()) {
+    texture_view_delete_q_.emplace_back(handle, curr_frame_num_);
+  }
 }
 
 void Device::destroy(SamplerHandle handle) {
-  if (auto* samp = sampler_pool_.get(handle); samp) {
-    vkDestroySampler(device_, samp->sampler_, nullptr);
+  if (handle.is_valid()) {
+    if (auto* samp = sampler_pool_.get(handle); samp) {
+      vkDestroySampler(device_, samp->sampler_, nullptr);
+    }
+    sampler_pool_.destroy(handle);
   }
-  sampler_pool_.destroy(handle);
 }
 
 void Device::destroy(BufferHandle handle) {
-  storage_buffer_delete_q_.emplace_back(handle, curr_frame_num());
+  if (handle.is_valid()) {
+    storage_buffer_delete_q_.emplace_back(handle, curr_frame_num());
+  }
 }
 
 void Device::on_imgui() const {
