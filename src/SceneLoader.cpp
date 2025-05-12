@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstring>
 
+#include "Types.hpp"
 #include "vk2/VkTypes.hpp"
 
 #pragma GCC diagnostic push
@@ -802,11 +803,8 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
         const auto& tex = gltf.textures[info.textureIndex];
         auto gltf_idx = tex.basisuImageIndex.value_or(tex.imageIndex.value_or(UINT32_MAX));
         if (gltf_idx != UINT32_MAX) {
-          return get_device()
-              .get_image(result->textures[gltf_idx])
-              ->view()
-              .sampled_img_resource()
-              .handle;
+          return get_device().get_bindless_idx(result->textures[gltf_idx].handle,
+                                               SubresourceType::Shader);
         }
         LERROR("uh oh, no texture for gltf material");
         return default_mat.white_img_handle;

@@ -145,8 +145,13 @@ class Device {
   SamplerHandle get_or_create_sampler(const SamplerCreateInfo& info);
   u32 get_bindless_idx(SamplerHandle sampler);
   u32 get_bindless_idx(ImageHandle img, SubresourceType type);
-  // TODO: remove
-  VkSampler get_sampler_vk(SamplerHandle sampler);
+  u32 get_bindless_idx(const Holder<ImageHandle>& img, SubresourceType type) {
+    return get_bindless_idx(img.handle, type);
+  }
+  u32 get_bindless_idx(BufferHandle buffer);
+  u32 get_bindless_idx(const Holder<BufferHandle>& buffer) {
+    return get_bindless_idx(buffer.handle);
+  }
 
   // contains hash -> [handle, ref count]
   std::unordered_map<uint64_t, std::pair<SamplerHandle, u32>> sampler_cache_;
@@ -176,6 +181,8 @@ class Device {
   Buffer* get_buffer(BufferHandle handle) { return buffer_pool_.get(handle); }
   Buffer* get_buffer(const Holder<BufferHandle>& handle) { return get_buffer(handle.handle); }
   void init_imgui();
+  // TODO: custom imgui backend
+  VkDescriptorSet add_imgui_tex(SamplerHandle sampler, ImageViewHandle image_view);
 
   [[nodiscard]] const Queue& get_queue(QueueType type) const { return queues_[(u32)type]; }
 
@@ -228,7 +235,6 @@ class Device {
 
   void destroy(ImageView& view);
   void destroy(Image& img);
-  void destroy(Buffer& buffer);
 
  public:
   static constexpr u32 max_resource_descriptors{100'000};
@@ -251,17 +257,16 @@ class Device {
   void allocate_bindless_resource(VkDescriptorType descriptor_type, VkDescriptorImageInfo* img,
                                   VkDescriptorBufferInfo* buffer, u32 idx, u32 binding);
 
+  void delete_texture_view(VkImageView view) {
+    texture_view_delete_q2_.emplace_back(view, curr_frame_num());
+  }
   void delete_texture(const TextureDeleteInfo& img);
-  void delete_texture_view(const TextureViewDeleteInfo& info);
-  void delete_buffer(const BufferDeleteInfo& info);
+  void delete_texture_view(const ImageView& info);
   void enqueue_delete_swapchain(VkSwapchainKHR swapchain);
   void enqueue_delete_pipeline(VkPipeline pipeline);
   void enqueue_delete_sempahore(VkSemaphore semaphore);
 
   void flush_deletions();
-
-  VkDescriptorSetLayout main_set2_layout_{};
-  VkDescriptorSet main_set2_{};
 
  private:
   u32 resource_to_binding(ResourceType type);
@@ -273,8 +278,9 @@ class Device {
   };
 
   std::deque<DeleteQEntry<TextureDeleteInfo>> texture_delete_q_;
-  std::deque<DeleteQEntry<TextureViewDeleteInfo>> texture_view_delete_q_;
-  std::deque<DeleteQEntry<BufferDeleteInfo>> storage_buffer_delete_q_;
+  std::deque<DeleteQEntry<ImageView>> texture_view_delete_q_;
+  std::deque<DeleteQEntry<VkImageView>> texture_view_delete_q2_;
+  std::deque<DeleteQEntry<BufferHandle>> storage_buffer_delete_q_;
   std::deque<DeleteQEntry<VkSwapchainKHR>> swapchain_delete_q_;
   std::deque<DeleteQEntry<VkSemaphore>> semaphore_delete_q_;
   std::deque<DeleteQEntry<VkPipeline>> pipeline_delete_q_;
@@ -296,10 +302,12 @@ class Device {
   VkDescriptorPool main_pool_{};
   VkDescriptorSet main_set_{};
   VkDescriptorSetLayout main_set_layout_{};
-  bool running_{};
+  VkDescriptorSetLayout main_set2_layout_{};
+  VkDescriptorSet main_set2_{};
   // TODO: fix
  public:
   VkPipelineLayout default_pipeline_layout_{};
+  VkSampler get_sampler_vk(SamplerHandle sampler);
   void bind_bindless_descriptors(CmdEncoder& cmd);
 };
 

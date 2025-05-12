@@ -9,7 +9,6 @@
 
 #include "core/Logger.hpp"
 #include "vk2/Device.hpp"
-#include "vk2/Texture.hpp"
 #include "vk2/VkCommon.hpp"
 
 namespace gfx::vk2 {
@@ -210,7 +209,7 @@ void create_swapchain(Swapchain& swapchain, const SwapchainDesc& desc) {
   for (u32 i = 0; i < swapchain.img_views.size(); i++) {
     auto& img_view = swapchain.img_views[i];
     if (img_view) {
-      get_device().delete_texture_view(TextureViewDeleteInfo{.view = img_view});
+      get_device().delete_texture_view(img_view);
       img_view = nullptr;
     }
 

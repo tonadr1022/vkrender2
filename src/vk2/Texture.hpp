@@ -3,8 +3,6 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan_core.h>
 
-#include <optional>
-
 #include "Types.hpp"
 #include "vk2/Resource.hpp"
 
@@ -37,18 +35,18 @@ class ImageView {
  public:
   ImageView() = default;
   [[nodiscard]] const BindlessResourceInfo& storage_img_resource() const {
-    return storage_image_resource_info_.value();
+    return storage_image_resource_info_;
   }
   [[nodiscard]] const BindlessResourceInfo& sampled_img_resource() const {
-    return sampled_image_resource_info_.value();
+    return sampled_image_resource_info_;
   }
   [[nodiscard]] VkImageView view() const { return view_; }
 
  private:
   friend class Device;
   VkImageView view_{};
-  std::optional<BindlessResourceInfo> storage_image_resource_info_;
-  std::optional<BindlessResourceInfo> sampled_image_resource_info_;
+  BindlessResourceInfo storage_image_resource_info_;
+  BindlessResourceInfo sampled_image_resource_info_;
 };
 
 class Image {
@@ -57,15 +55,15 @@ class Image {
   [[nodiscard]] VkImage image() const { return image_; }
   [[nodiscard]] Format format() const { return desc_.format; }
   [[nodiscard]] uvec3 size() const { return desc_.dims; }
-  [[nodiscard]] ImageView& view() { return view_.value(); }
-  [[nodiscard]] const ImageView& view() const { return view_.value(); }
+  [[nodiscard]] ImageViewHandle view() const { return view_; }
   [[nodiscard]] const ImageDesc& get_desc() const { return desc_; }
   VkImageLayout curr_layout{};
 
  private:
   friend class Device;
   ImageDesc desc_;
-  std::optional<ImageView> view_;
+  ImageViewHandle view_;
+  // std::optional<ImageView> view_;
   VkImage image_{};
   VmaAllocation allocation_{};
 };
@@ -77,12 +75,6 @@ void blit_img(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent3D extent,
 struct TextureDeleteInfo {
   VkImage img;
   VmaAllocation allocation;
-};
-
-struct TextureViewDeleteInfo {
-  std::optional<BindlessResourceInfo> storage_image_resource_info;
-  std::optional<BindlessResourceInfo> sampled_image_resource_info;
-  VkImageView view;
 };
 
 uint32_t get_mip_levels(VkExtent2D size);

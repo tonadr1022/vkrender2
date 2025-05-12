@@ -182,7 +182,8 @@ void CSM::imgui_pass(CmdEncoder&, SamplerHandle sampler, const Image& tex) {
     if (imgui_set_) {
       ImGui_ImplVulkan_RemoveTexture(imgui_set_);
     }
-    imgui_set_ = ImGui_ImplVulkan_AddTexture(device_->get_sampler_vk(sampler), tex.view().view(),
+    imgui_set_ = ImGui_ImplVulkan_AddTexture(device_->get_sampler_vk(sampler),
+                                             device_->get_image_view(tex.view())->view(),
                                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     curr_debug_img_size_ = tex.size();
   }
@@ -293,12 +294,11 @@ void CSM::add_pass(RenderGraph& rg) {
 
     for (u32 i = 0; i < cascade_count_; i++) {
       auto* sm_img = get_device().get_image(shadow_map_img_);
-      cmd.begin_rendering({.extent = sm_img->size()},
-                          {{get_device().get_image_view(shadow_map_img_views_[i]),
-                            RenderingAttachmentInfo::Type::Depth,
-                            RenderingAttachmentInfo::LoadOp::Clear,
-                            RenderingAttachmentInfo::StoreOp::Store,
-                            {.depth_stencil = {.depth = 1}}}});
+      cmd.begin_rendering({.extent = sm_img->size()}, {{shadow_map_img_views_[i].handle,
+                                                        RenderingAttachmentInfo::Type::Depth,
+                                                        RenderingAttachmentInfo::LoadOp::Clear,
+                                                        RenderingAttachmentInfo::StoreOp::Store,
+                                                        {.depth_stencil = {.depth = 1}}}});
       cmd.set_cull_mode(CullMode::None);
       cmd.set_viewport_and_scissor(sm_img->size());
       if (depth_bias_enabled_) {
@@ -339,7 +339,7 @@ void CSM::debug_shadow_pass(RenderGraph& rg, SamplerHandle linear_sampler) {
       auto* tex = rg.get_texture(shadow_map_debug_img_handle);
       cmd.begin_rendering(
           {.extent = tex->size()},
-          {RenderingAttachmentInfo{&tex->view(), RenderingAttachmentInfo::Type::Color,
+          {RenderingAttachmentInfo{tex->view(), RenderingAttachmentInfo::Type::Color,
                                    RenderingAttachmentInfo::LoadOp::Load}});
       cmd.set_viewport_and_scissor(tex->size());
 
@@ -351,7 +351,7 @@ void CSM::debug_shadow_pass(RenderGraph& rg, SamplerHandle linear_sampler) {
         u32 tex_idx;
         u32 sampler_idx;
         u32 array_idx;
-      } pc{get_device().get_image(shadow_map_img_)->view().sampled_img_resource().handle,
+      } pc{device_->get_bindless_idx(shadow_map_img_, SubresourceType::Shader),
            device_->get_bindless_idx(linear_sampler), static_cast<u32>(debug_cascade_idx_)};
       cmd.push_constants(sizeof(pc), &pc);
       cmd.draw(3);

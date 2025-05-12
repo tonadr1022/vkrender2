@@ -9,7 +9,6 @@
 #include "VkRender2.hpp"
 #include "shaders/ibl/eq_to_cube_comp_common.h.glsl"
 #include "vk2/Device.hpp"
-#include "vk2/Initializers.hpp"
 #include "vk2/ShaderCompiler.hpp"
 #include "vk2/Texture.hpp"
 #include "vk2/VkTypes.hpp"
@@ -144,7 +143,6 @@ void IBL::equirect_to_cube(CmdEncoder& ctx) {
   VkCommandBuffer cmd = ctx.cmd();
   device_->bind_bindless_descriptors(ctx);
   auto* env_cubemap_tex = device_->get_image(env_cubemap_tex_);
-  auto* env_equirect_tex = device_->get_image(env_equirect_tex_);
   transition_image(cmd, *env_cubemap_tex, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
   PipelineManager::get().bind_compute(cmd, equirect_to_cube_pipeline2_);
   // TODO: define linear sampler idx in the shader
@@ -155,8 +153,8 @@ void IBL::equirect_to_cube(CmdEncoder& ctx) {
                                                            .mag_filter = FilterMode::Linear,
                                                            .mipmap_mode = FilterMode::Linear,
                                                            .address_mode = AddressMode::Repeat})),
-      .tex_idx = env_equirect_tex->view().sampled_img_resource().handle,
-      .out_tex_idx = env_cubemap_tex->view().storage_img_resource().handle};
+      .tex_idx = device_->get_bindless_idx(env_equirect_tex_, SubresourceType::Shader),
+      .out_tex_idx = device_->get_bindless_idx(env_cubemap_tex_, SubresourceType::Storage)};
   ctx.push_constants(sizeof(pc), &pc);
   ctx.dispatch(env_cubemap_tex->size().x / 16, env_cubemap_tex->size().y / 16, 6);
   transition_image(cmd, *env_cubemap_tex, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -169,11 +167,10 @@ void IBL::convolute_cube(CmdEncoder& cmd) {
   transition_image(cmd.cmd(), *env_cubemap_tex, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
   transition_image(cmd.cmd(), *irradiance_cubemap_tex, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
   for (u32 i = 0; i < 6; i++) {
-    cmd.begin_rendering(
-        {.extent = irradiance_cubemap_tex->size()},
-        {RenderingAttachmentInfo{device_->get_image_view(convoluted_cubemap_tex_views_[i]),
-                                 RenderingAttachmentInfo::Type::Color,
-                                 RenderingAttachmentInfo::LoadOp::Load}});
+    cmd.begin_rendering({.extent = irradiance_cubemap_tex->size()},
+                        {RenderingAttachmentInfo{convoluted_cubemap_tex_views_[i].handle,
+                                                 RenderingAttachmentInfo::Type::Color,
+                                                 RenderingAttachmentInfo::LoadOp::Load}});
     cmd.set_viewport_and_scissor(irradiance_cubemap_tex->size());
     PipelineManager::get().bind_graphics(cmd.cmd(), convolute_cube_raster_pipeline_);
     struct {
@@ -214,10 +211,10 @@ void IBL::prefilter_env_map(CmdEncoder& ctx) {
         unsigned int mip_width = size * std::pow(0.5, mip);
         unsigned int mip_height = size * std::pow(0.5, mip);
         uvec2 extent{mip_width, mip_height};
-        ctx.begin_rendering({.extent = extent}, {RenderingAttachmentInfo{
-                                                    device_->get_image_view(cube_mip_views[mip][i]),
-                                                    RenderingAttachmentInfo::Type::Color,
-                                                    RenderingAttachmentInfo::LoadOp::Load}});
+        ctx.begin_rendering({.extent = extent},
+                            {RenderingAttachmentInfo{cube_mip_views[mip][i].handle,
+                                                     RenderingAttachmentInfo::Type::Color,
+                                                     RenderingAttachmentInfo::LoadOp::Load}});
         ctx.set_viewport_and_scissor(mip_width, mip_height);
         PipelineManager::get().bind_graphics(cmd, prefilter_env_map_pipeline_);
 
