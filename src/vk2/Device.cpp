@@ -1200,19 +1200,6 @@ void Device::flush_deletions() {
     }
     return false;
   });
-  std::erase_if(texture_view_delete_q_, [this](const DeleteQEntry<ImageView>& entry) {
-    if (entry.frame + frames_in_flight < curr_frame_num()) {
-      if (entry.data.sampled_image_resource_info_.is_valid()) {
-        sampled_image_allocator_.free(entry.data.sampled_image_resource_info_.handle);
-      }
-      if (entry.data.storage_image_resource_info_.is_valid()) {
-        storage_image_allocator_.free(entry.data.storage_image_resource_info_.handle);
-      }
-      vkDestroyImageView(device_, entry.data.view_, nullptr);
-      return true;
-    }
-    return false;
-  });
 
   std::erase_if(storage_buffer_delete_q_, [this](const DeleteQEntry<BufferHandle>& entry) {
     if (entry.frame + frames_in_flight < curr_frame_num()) {
@@ -1227,10 +1214,6 @@ void Device::flush_deletions() {
     }
     return false;
   });
-}
-
-void Device::delete_texture_view(const ImageView& info) {
-  texture_view_delete_q_.emplace_back(info, curr_frame_num_);
 }
 
 BindlessResourceInfo Device::allocate_storage_buffer_descriptor(VkBuffer buffer) {
@@ -1401,7 +1384,6 @@ u32 Device::get_bindless_idx(ImageHandle img, SubresourceType type, int subresou
     LCRITICAL("failed to get bindless index, image doesn't exist");
     return 0;
   }
-  ImageView* view{};
   if (subresource == -1) {
     switch (type) {
       case gfx::SubresourceType::Shader:
@@ -1413,18 +1395,13 @@ u32 Device::get_bindless_idx(ImageHandle img, SubresourceType type, int subresou
         return 0;
     }
     assert(0);
-  } else {
-    if (subresource < 0 || static_cast<size_t>(subresource) >= image->subresources_.size()) {
-      LCRITICAL("invalid subresource index: {}", subresource);
-      exit(1);
-    }
-    return image->subresources_[subresource].resource_info.handle;
+    return 0;
   }
-  assert(0);
-  if (type == SubresourceType::Storage) {
-    return view->storage_image_resource_info_.handle;
+  if (subresource < 0 || static_cast<size_t>(subresource) >= image->subresources_.size()) {
+    LCRITICAL("invalid subresource index: {}", subresource);
+    exit(1);
   }
-  return view->sampled_image_resource_info_.handle;
+  return image->subresources_[subresource].resource_info.handle;
 }
 
 u32 Device::get_bindless_idx(const Holder<ImageHandle>& img, SubresourceType type,

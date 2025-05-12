@@ -269,7 +269,6 @@ class Device {
   };
 
   std::deque<DeleteQEntry<TextureDeleteInfo>> texture_delete_q_;
-  std::deque<DeleteQEntry<ImageView>> texture_view_delete_q_;
   std::deque<DeleteQEntry<ImageView2>> texture_view_delete_q3_;
   std::deque<DeleteQEntry<VkImageView>> texture_view_delete_q2_;
   std::deque<DeleteQEntry<BufferHandle>> storage_buffer_delete_q_;

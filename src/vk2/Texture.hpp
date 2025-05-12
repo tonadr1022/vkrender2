@@ -30,25 +30,6 @@ struct ImageDesc {
   Usage usage{Usage::Default};
 };
 
-class Image;
-class ImageView {
- public:
-  ImageView() = default;
-  [[nodiscard]] const BindlessResourceInfo& storage_img_resource() const {
-    return storage_image_resource_info_;
-  }
-  [[nodiscard]] const BindlessResourceInfo& sampled_img_resource() const {
-    return sampled_image_resource_info_;
-  }
-  [[nodiscard]] VkImageView view() const { return view_; }
-
- private:
-  friend class Device;
-  VkImageView view_{};
-  BindlessResourceInfo storage_image_resource_info_;
-  BindlessResourceInfo sampled_image_resource_info_;
-};
-
 struct ImageView2 {
   VkImageView view;
   BindlessResourceInfo resource_info;
