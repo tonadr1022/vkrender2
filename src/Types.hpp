@@ -599,17 +599,13 @@ class Image;
 class Buffer;
 class Sampler;
 
-using ImageViewHandle = GenerationalHandle<class ::gfx::ImageView>;
 using ImageHandle = GenerationalHandle<class ::gfx::Image>;
 using BufferHandle = GenerationalHandle<class ::gfx::Buffer>;
 using SamplerHandle = GenerationalHandle<class ::gfx::Sampler>;
 // TODO: move
 VK2_DEFINE_HANDLE_WITH_NAME(Pipeline, PipelineAndMetadata);
 
-enum class SubresourceType : u8 {
-  Storage,
-  Shader,
-};
+enum class SubresourceType : u8 { Storage, Shader, Attachment };
 
 union ClearValue {
   vec4 color;
@@ -619,25 +615,51 @@ union ClearValue {
   } depth_stencil;
 };
 
-struct RenderingAttachmentInfo {
-  enum class Type : u8 { Color, Depth, DepthStencil };
-  enum class LoadOp : u8 { Load, Clear, DontCare };
-  enum class StoreOp : u8 { Store, DontCare };
+enum class LoadOp : u8 { Load, Clear, DontCare };
+enum class StoreOp : u8 { Store, DontCare };
 
-  ImageViewHandle img_view;
+struct RenderingAttachmentInfo {
+  enum class Type : u8 { Color, DepthStencil };
+
+  ImageHandle image;
+  i32 subresource{-1};
   Type type{Type::Color};
   LoadOp load_op{LoadOp::Load};
   StoreOp store_op{StoreOp::Store};
   ClearValue clear_value{};
+
+  static RenderingAttachmentInfo color_att(ImageHandle image, LoadOp load_op = LoadOp::Load,
+                                           ClearValue clear_value = {},
+                                           StoreOp store_op = StoreOp::Store,
+                                           int subresource = -1) {
+    return {.image = image,
+            .subresource = subresource,
+            .type = Type::Color,
+            .load_op = load_op,
+            .store_op = store_op,
+            .clear_value = clear_value};
+  }
+
+  static RenderingAttachmentInfo depth_stencil_att(ImageHandle image, LoadOp load_op = LoadOp::Load,
+                                                   ClearValue clear_value = {},
+                                                   StoreOp store_op = StoreOp::Store,
+                                                   int subresource = -1) {
+    return {.image = image,
+            .subresource = subresource,
+            .type = Type::DepthStencil,
+            .load_op = load_op,
+            .store_op = store_op,
+            .clear_value = clear_value};
+  }
 };
 
 }  // namespace gfx
 
 template <>
 struct EnableBitmaskOperators<gfx::ResourceMiscFlag> {
-  static const bool enable = true;
+  static constexpr bool enable = true;
 };
 template <>
 struct EnableBitmaskOperators<gfx::BindFlag> {
-  static const bool enable = true;
+  static constexpr bool enable = true;
 };

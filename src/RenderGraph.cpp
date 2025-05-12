@@ -849,9 +849,9 @@ void RenderGraph::setup_attachments() {
           .mip_levels = dims.levels,
           .array_layers = dims.layers,
           .sample_count = dims.samples,
+          .bind_flags = get_bind_flags(dims.access_usage),
           .usage = Usage::Default,
       };
-      desc.bind_flags = get_bind_flags(dims.access_usage);
 
       assert(i < physical_image_attachments_.size());
       {

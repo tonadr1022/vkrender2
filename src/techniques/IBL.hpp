@@ -31,14 +31,12 @@ class IBL {
   Holder<ImageHandle> env_cubemap_tex_;
   Holder<ImageHandle> irradiance_cubemap_tex_;
   Holder<ImageHandle> prefiltered_env_map_tex_;
-  std::array<Holder<ImageViewHandle>, 6> prefiltered_env_tex_views_mips_;
   std::vector<i32> prefiltered_env_map_tex_views_;
   Holder<ImageHandle> brdf_lut_;
 
  private:
   Device* device_{};
-  std::array<Holder<ImageViewHandle>, 6> cubemap_tex_views_;
-  std::array<Holder<ImageViewHandle>, 6> convoluted_cubemap_tex_views_;
+  std::array<i32, 6> convoluted_cubemap_tex_views_;
   PipelineHandle equirect_to_cube_pipeline2_;
   PipelineHandle convolute_cube_pipeline_;
   PipelineHandle integrate_brdf_pipeline_;

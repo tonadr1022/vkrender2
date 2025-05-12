@@ -9,7 +9,6 @@
 #include "vk2/Buffer.hpp"
 #include "vk2/Device.hpp"
 #include "vk2/PipelineManager.hpp"
-#include "vk2/Texture.hpp"
 #include "vk2/VkTypes.hpp"
 
 namespace gfx {
@@ -115,24 +114,24 @@ void CmdEncoder::end_rendering() { vkCmdEndRenderingKHR(cmd_); }
 
 namespace {
 
-VkAttachmentLoadOp convert_load_op(RenderingAttachmentInfo::LoadOp op) {
+VkAttachmentLoadOp convert_load_op(LoadOp op) {
   switch (op) {
     default:
-    case RenderingAttachmentInfo::LoadOp::Load:
+    case LoadOp::Load:
       return VK_ATTACHMENT_LOAD_OP_LOAD;
-    case RenderingAttachmentInfo::LoadOp::Clear:
+    case LoadOp::Clear:
       return VK_ATTACHMENT_LOAD_OP_CLEAR;
-    case RenderingAttachmentInfo::LoadOp::DontCare:
+    case LoadOp::DontCare:
       return VK_ATTACHMENT_LOAD_OP_DONT_CARE;
   }
 }
 
-VkAttachmentStoreOp convert_store_op(RenderingAttachmentInfo::StoreOp op) {
+VkAttachmentStoreOp convert_store_op(StoreOp op) {
   switch (op) {
     default:
-    case RenderingAttachmentInfo::StoreOp::Store:
+    case StoreOp::Store:
       return VK_ATTACHMENT_STORE_OP_STORE;
-    case RenderingAttachmentInfo::StoreOp::DontCare:
+    case StoreOp::DontCare:
       return VK_ATTACHMENT_STORE_OP_DONT_CARE;
   }
 }
@@ -150,25 +149,17 @@ void CmdEncoder::begin_rendering(const RenderArea& render_area,
   }
 
   for (const auto& att_desc : attachment_descs) {
-    VkRenderingAttachmentInfo& att =
-        att_desc.type == RenderingAttachmentInfo::Type::Color   ? color_atts.emplace_back()
-        : att_desc.type == RenderingAttachmentInfo::Type::Depth ? depth_att
-                                                                : stencil_att;
+    VkRenderingAttachmentInfo& att = att_desc.type == RenderingAttachmentInfo::Type::Color
+                                         ? color_atts.emplace_back()
+                                         : depth_att;
     att.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-    auto* view = device_->get_image_view(att_desc.img_view);
-    if (view) {
-      att.imageView = view->view();
-    } else {
-      LCRITICAL("can't render, view not found");
-      exit(1);
-    }
+    att.imageView =
+        device_->get_image_view(att_desc.image, SubresourceType::Attachment, att_desc.subresource);
 
     if (att_desc.type == RenderingAttachmentInfo::Type::Color) {
       att.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    } else if (att_desc.type == RenderingAttachmentInfo::Type::Depth) {
-      att.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
     } else if (att_desc.type == RenderingAttachmentInfo::Type::DepthStencil) {
-      att.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+      att.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
     }
 
     att.loadOp = convert_load_op(att_desc.load_op);

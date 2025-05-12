@@ -4,7 +4,6 @@
 #include <vulkan/vulkan_core.h>
 
 #include "Types.hpp"
-#include "vk2/Pool.hpp"
 #include "vk2/Resource.hpp"
 
 namespace gfx {
@@ -50,21 +49,28 @@ class ImageView {
   BindlessResourceInfo sampled_image_resource_info_;
 };
 
+struct ImageView2 {
+  VkImageView view;
+  BindlessResourceInfo resource_info;
+  [[nodiscard]] bool is_valid() const { return view != VK_NULL_HANDLE; }
+};
+
 class Image {
  public:
   Image() = default;
   [[nodiscard]] VkImage image() const { return image_; }
   [[nodiscard]] Format format() const { return desc_.format; }
   [[nodiscard]] uvec3 size() const { return desc_.dims; }
-  [[nodiscard]] ImageViewHandle view() const { return view_.handle; }
   [[nodiscard]] const ImageDesc& get_desc() const { return desc_; }
   VkImageLayout curr_layout{};
 
  private:
   friend class Device;
   ImageDesc desc_;
-  Holder<ImageViewHandle> view_;
-  std::vector<ImageView> subresources_;
+  VkImageView attachment_view_{};
+  ImageView2 storage_view_;
+  ImageView2 sampled_view_;
+  std::vector<ImageView2> subresources_;
   VkImage image_{};
   VmaAllocation allocation_{};
 };

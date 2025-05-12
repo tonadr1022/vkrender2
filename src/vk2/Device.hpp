@@ -23,8 +23,6 @@ template <>
 void destroy(gfx::ImageHandle data);
 template <>
 void destroy(gfx::BufferHandle data);
-template <>
-void destroy(gfx::ImageViewHandle data);
 
 struct GLFWwindow;
 namespace gfx {
@@ -138,14 +136,17 @@ class Device {
   [[nodiscard]] VmaAllocator allocator() const { return allocator_; }
 
   Pool<ImageHandle, Image> img_pool_;
-  Pool<ImageViewHandle, ImageView> img_view_pool_;
+  // Pool<ImageViewHandle, ImageView> img_view_pool_;
   Pool<BufferHandle, Buffer> buffer_pool_;
   Pool<SamplerHandle, Sampler> sampler_pool_;
   SamplerHandle null_sampler_;
   SamplerHandle get_or_create_sampler(const SamplerCreateInfo& info);
   u32 get_bindless_idx(SamplerHandle sampler);
   u32 get_bindless_idx(ImageHandle img, SubresourceType type, int subresource = -1);
+  // TODO: remove
+  VkImageView get_image_view(ImageHandle img, SubresourceType type, int subresource = -1);
   u32 get_bindless_idx(const Holder<ImageHandle>& img, SubresourceType type, int subresource = -1);
+
   u32 get_bindless_idx(BufferHandle buffer);
   u32 get_bindless_idx(const Holder<BufferHandle>& buffer) {
     return get_bindless_idx(buffer.handle);
@@ -160,29 +161,20 @@ class Device {
   // returns subresource handle
   i32 create_subresource(ImageHandle image_handle, u32 base_mip_level, u32 level_count,
                          u32 base_array_layer, u32 layer_count);
-  ImageViewHandle create_image_view(ImageHandle image_handle, u32 base_mip_level, u32 level_count,
-                                    u32 base_array_layer, u32 layer_count);
+  ImageView2 create_image_view2(ImageHandle image_handle, SubresourceType type, u32 base_mip_level,
+                                u32 level_count, u32 base_array_layer, u32 layer_count);
   ImageHandle create_image(const ImageDesc& desc);
   Holder<ImageHandle> create_image_holder(const ImageDesc& desc);
   void destroy(ImageHandle handle);
   void destroy(SamplerHandle handle);
-  void destroy(ImageViewHandle handle);
   void destroy(BufferHandle handle);
   void set_name(VkPipeline pipeline, const char* name);
   void set_name(ImageHandle handle, const char* name);
-  void set_name(ImageViewHandle handle, const char* name);
-
   Image* get_image(ImageHandle handle) { return img_pool_.get(handle); }
   Image* get_image(const Holder<ImageHandle>& handle) { return img_pool_.get(handle.handle); }
-  ImageView* get_image_view(ImageViewHandle handle) { return img_view_pool_.get(handle); }
-  ImageView* get_image_view(const Holder<ImageViewHandle>& handle) {
-    return img_view_pool_.get(handle.handle);
-  }
   Buffer* get_buffer(BufferHandle handle) { return buffer_pool_.get(handle); }
   Buffer* get_buffer(const Holder<BufferHandle>& handle) { return get_buffer(handle.handle); }
   void init_imgui();
-  // TODO: custom imgui backend
-  VkDescriptorSet add_imgui_tex(SamplerHandle sampler, ImageViewHandle image_view);
 
   [[nodiscard]] const Queue& get_queue(QueueType type) const { return queues_[(u32)type]; }
 
@@ -233,7 +225,6 @@ class Device {
   bool resize_swapchain_req_{};
   static constexpr u32 frames_in_flight = 2;
 
-  void destroy(ImageView& view);
   void destroy(Image& img);
 
  public:
@@ -279,6 +270,7 @@ class Device {
 
   std::deque<DeleteQEntry<TextureDeleteInfo>> texture_delete_q_;
   std::deque<DeleteQEntry<ImageView>> texture_view_delete_q_;
+  std::deque<DeleteQEntry<ImageView2>> texture_view_delete_q3_;
   std::deque<DeleteQEntry<VkImageView>> texture_view_delete_q2_;
   std::deque<DeleteQEntry<BufferHandle>> storage_buffer_delete_q_;
   std::deque<DeleteQEntry<VkSwapchainKHR>> swapchain_delete_q_;

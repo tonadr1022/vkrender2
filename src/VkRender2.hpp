@@ -355,13 +355,6 @@ class VkRender2 final {
 
   std::vector<Buffer> free_staging_buffers_;
 
-  std::unordered_map<u64, VkDescriptorSet> imgui_desc_sets_;
-  VkDescriptorSet get_imgui_set(VkSampler sampler, VkImageView view);
-  // non owning
-  // VkDescriptorSet main_set_{};
-  // VkDescriptorSet main_set2_{};
-  // end non owning
-
   std::vector<std::optional<LoadedSceneData>> loaded_scenes_;
   u32 debug_mode_{DEBUG_MODE_NONE};
   const char* debug_mode_to_string(u32 mode);
@@ -370,8 +363,6 @@ class VkRender2 final {
   void generate_mipmaps(StateTracker& state, VkCommandBuffer cmd, Image& tex);
   Holder<BufferHandle> cube_vertex_buf_;
   void add_rendering_passes(RenderGraph& rg);
-
-  // AttachmentInfo swapchain_att_info_;
 
   u32 tonemap_type_{1};
   const char* tonemap_type_names_[2] = {"Optimized Filmic", "ACES Film"};
@@ -387,7 +378,7 @@ class VkRender2 final {
   };
   std::vector<LineVertex> line_draw_vertices_;
   void draw_skybox(CmdEncoder& cmd);
-  void render_imgui(CmdEncoder& cmd, uvec2 draw_extent, ImageViewHandle target_img_view);
+  void render_imgui(CmdEncoder& cmd, ImageHandle img);
 
   [[nodiscard]] float aspect_ratio() const;
   [[nodiscard]] uvec2 window_dims() const;

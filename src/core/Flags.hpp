@@ -45,5 +45,5 @@ constexpr E operator~(E rhs)
 }
 template <typename E>
 constexpr bool has_flag(E lhs, E rhs) {
-  return (lhs & rhs) == rhs;
+  return (size_t)(lhs & rhs) != 0;
 }

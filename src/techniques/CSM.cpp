@@ -176,16 +176,16 @@ CSM::CSM(Device* device, DrawFunc draw_fn, AddRenderDependenciesFunc add_deps_fn
                               .layers = cascade_count_};
 }
 
-void CSM::imgui_pass(CmdEncoder&, SamplerHandle sampler, const Image& tex) {
-  if (tex.image() != curr_debug_img_) {
-    curr_debug_img_ = tex.image();
+void CSM::imgui_pass(CmdEncoder&, SamplerHandle sampler, ImageHandle image) {
+  if (image != curr_debug_img_) {
+    curr_debug_img_ = image;
     if (imgui_set_) {
       ImGui_ImplVulkan_RemoveTexture(imgui_set_);
     }
-    imgui_set_ = ImGui_ImplVulkan_AddTexture(device_->get_sampler_vk(sampler),
-                                             device_->get_image_view(tex.view())->view(),
-                                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    curr_debug_img_size_ = tex.size();
+    imgui_set_ = ImGui_ImplVulkan_AddTexture(
+        device_->get_sampler_vk(sampler), device_->get_image_view(image, SubresourceType::Shader),
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    curr_shadow_debug_img_size_ = device_->get_image(image)->size();
   }
 }
 
@@ -209,8 +209,8 @@ void CSM::on_imgui() {
     ImGui::SliderInt("view level", &debug_cascade_idx_, 0, cascade_count_ - 1);
     if (debug_render_enabled_) {
       ImVec2 window_size = ImGui::GetContentRegionAvail();
-      float scale_width = window_size.x / curr_debug_img_size_.x;
-      float scaled_height = curr_debug_img_size_.y * scale_width;
+      float scale_width = window_size.x / curr_shadow_debug_img_size_.x;
+      float scaled_height = curr_shadow_debug_img_size_.y * scale_width;
       ImGui::Image(reinterpret_cast<ImTextureID>(imgui_set_),
                    ImVec2(window_size.x * .8f, scaled_height * .8f));
     }
@@ -287,20 +287,18 @@ void CSM::add_pass(RenderGraph& rg) {
     if (curr_shadow_map_img_ != shadow_map_img_) {
       curr_shadow_map_img_ = shadow_map_img_;
       for (u32 i = 0; i < cascade_count_; i++) {
-        shadow_map_img_views_[i] =
-            Holder<ImageViewHandle>{device_->create_image_view(curr_shadow_map_img_, 0, 1, i, 1)};
+        shadow_map_img_views_[i] = device_->create_subresource(curr_shadow_map_img_, 0, 1, i, 1);
       }
     }
 
     for (u32 i = 0; i < cascade_count_; i++) {
-      auto* sm_img = get_device().get_image(shadow_map_img_);
-      cmd.begin_rendering({.extent = sm_img->size()}, {{shadow_map_img_views_[i].handle,
-                                                        RenderingAttachmentInfo::Type::Depth,
-                                                        RenderingAttachmentInfo::LoadOp::Clear,
-                                                        RenderingAttachmentInfo::StoreOp::Store,
-                                                        {.depth_stencil = {.depth = 1}}}});
+      auto dims = device_->get_image(shadow_map_img_)->size();
+      cmd.begin_rendering({.extent = dims},
+                          {RenderingAttachmentInfo::depth_stencil_att(
+                              shadow_map_img_, LoadOp::Clear, {.depth_stencil = {.depth = 1}},
+                              StoreOp::Store, shadow_map_img_views_[i])});
       cmd.set_cull_mode(CullMode::None);
-      cmd.set_viewport_and_scissor(sm_img->size());
+      cmd.set_viewport_and_scissor(dims);
       if (depth_bias_enabled_) {
         cmd.set_depth_bias(depth_bias_constant_factor_, 0.0f, depth_bias_slope_factor_);
       } else {
@@ -336,13 +334,10 @@ void CSM::debug_shadow_pass(RenderGraph& rg, SamplerHandle linear_sampler) {
                  Access::ColorWrite);
     pass.add_image_access("shadow_map_img", Access::FragmentRead);
     pass.set_execute_fn([this, &linear_sampler, &rg, shadow_map_debug_img_handle](CmdEncoder& cmd) {
-      auto* tex = rg.get_texture(shadow_map_debug_img_handle);
-      cmd.begin_rendering(
-          {.extent = tex->size()},
-          {RenderingAttachmentInfo{tex->view(), RenderingAttachmentInfo::Type::Color,
-                                   RenderingAttachmentInfo::LoadOp::Load}});
-      cmd.set_viewport_and_scissor(tex->size());
-
+      auto tex = rg.get_texture_handle(shadow_map_debug_img_handle);
+      auto dims = device_->get_image(tex)->size();
+      cmd.begin_rendering({.extent = dims}, {RenderingAttachmentInfo::color_att(tex)});
+      cmd.set_viewport_and_scissor(dims);
       assert(debug_cascade_idx_ >= 0 && (u32)debug_cascade_idx_ < cascade_count_);
 
       cmd.bind_pipeline(PipelineBindPoint::Graphics, depth_debug_pipeline_);

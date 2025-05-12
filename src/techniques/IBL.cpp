@@ -68,17 +68,14 @@ IBL::IBL(Device* device, BufferHandle cube_vertex_buf)
       .misc_flags = ResourceMiscFlag::ImageCube});
   make_cubemap_views_all_mips(prefiltered_env_map_tex_.handle, prefiltered_env_map_tex_views_);
 
-  auto make_cubemap_views = [this](ImageHandle handle,
-                                   std::array<Holder<ImageViewHandle>, 6>& result) {
+  auto make_cubemap_views2 = [this](ImageHandle handle, std::array<i32, 6>& result) {
     auto* tex = device_->get_image(handle);
     for (u32 i = 0; i < 6; i++) {
-      result[i] = Holder<ImageViewHandle>(
-          device_->create_image_view(handle, 0, tex->get_desc().mip_levels, i, 1));
+      result[i] = device_->create_subresource(handle, 0, tex->get_desc().mip_levels, i, 1);
     }
   };
 
-  make_cubemap_views(env_cubemap_tex_.handle, cubemap_tex_views_);
-  make_cubemap_views(irradiance_cubemap_tex_.handle, convoluted_cubemap_tex_views_);
+  make_cubemap_views2(irradiance_cubemap_tex_.handle, convoluted_cubemap_tex_views_);
   brdf_lut_ = device_->create_image_holder(ImageDesc{
       .type = ImageDesc::Type::TwoD,
       .format = Format::R16G16Sfloat,
@@ -165,10 +162,10 @@ void IBL::convolute_cube(CmdEncoder& cmd) {
   transition_image(cmd.cmd(), *env_cubemap_tex, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
   transition_image(cmd.cmd(), *irradiance_cubemap_tex, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
   for (u32 i = 0; i < 6; i++) {
-    cmd.begin_rendering({.extent = irradiance_cubemap_tex->size()},
-                        {RenderingAttachmentInfo{convoluted_cubemap_tex_views_[i].handle,
-                                                 RenderingAttachmentInfo::Type::Color,
-                                                 RenderingAttachmentInfo::LoadOp::Load}});
+    cmd.begin_rendering(
+        {.extent = irradiance_cubemap_tex->size()},
+        {RenderingAttachmentInfo::color_att(irradiance_cubemap_tex_.handle, LoadOp::Load, {},
+                                            StoreOp::Store, convoluted_cubemap_tex_views_[i])});
     cmd.set_viewport_and_scissor(irradiance_cubemap_tex->size());
     PipelineManager::get().bind_graphics(cmd.cmd(), convolute_cube_raster_pipeline_);
     struct {
@@ -191,13 +188,13 @@ void IBL::prefilter_env_map(CmdEncoder& ctx) {
   transition_image(cmd, *prefiltered_env_map_tex, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
   // make image views
-  std::vector<std::array<Holder<ImageViewHandle>, 6>> cube_mip_views;
+  std::vector<std::array<i32, 6>> cube_mip_views;
   u32 mip_levels = prefiltered_env_map_tex->get_desc().mip_levels;
   for (u32 mip = 0; mip < mip_levels; mip++) {
-    cube_mip_views.emplace_back(std::array<Holder<ImageViewHandle>, 6>{});
+    cube_mip_views.emplace_back(std::array<i32, 6>{});
     for (u32 layer = 0; layer < 6; layer++) {
-      cube_mip_views.back()[layer] = Holder<ImageViewHandle>{
-          device_->create_image_view(prefiltered_env_map_tex_.handle, mip, 1, layer, 1)};
+      cube_mip_views.back()[layer] =
+          device_->create_subresource(prefiltered_env_map_tex_.handle, mip, 1, layer, 1);
     }
   }
 
@@ -209,10 +206,11 @@ void IBL::prefilter_env_map(CmdEncoder& ctx) {
         unsigned int mip_width = size * std::pow(0.5, mip);
         unsigned int mip_height = size * std::pow(0.5, mip);
         uvec2 extent{mip_width, mip_height};
-        ctx.begin_rendering({.extent = extent},
-                            {RenderingAttachmentInfo{cube_mip_views[mip][i].handle,
-                                                     RenderingAttachmentInfo::Type::Color,
-                                                     RenderingAttachmentInfo::LoadOp::Load}});
+        ctx.begin_rendering({.extent = extent}, {RenderingAttachmentInfo::color_att(
+                                                    prefiltered_env_map_tex_.handle, LoadOp::Load,
+                                                    {}, StoreOp::Store, cube_mip_views[mip][i]
+
+                                                    )});
         ctx.set_viewport_and_scissor(mip_width, mip_height);
         PipelineManager::get().bind_graphics(cmd, prefilter_env_map_pipeline_);
 

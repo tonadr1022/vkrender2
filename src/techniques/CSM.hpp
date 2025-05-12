@@ -5,7 +5,6 @@
 #include "CommandEncoder.hpp"
 #include "Types.hpp"
 #include "vk2/Pool.hpp"
-#include "vk2/Texture.hpp"
 
 struct AABB;
 
@@ -56,7 +55,7 @@ class CSM {
   [[nodiscard]] ImageHandle get_shadow_map_img() const { return shadow_map_img_; }
 
   [[nodiscard]] u32 get_num_cascade_levels() const { return cascade_count_; }
-  void imgui_pass(CmdEncoder& cmd, SamplerHandle sampler, const Image& tex);
+  void imgui_pass(CmdEncoder& cmd, SamplerHandle sampler, ImageHandle image);
 
   [[nodiscard]] bool get_debug_render_enabled() const { return debug_render_enabled_; }
 
@@ -80,11 +79,12 @@ class CSM {
   Format debug_shadow_img_format_{Format::R16G16B16A16Sfloat};
 
   VkDescriptorSet imgui_set_{};
-  VkImage curr_debug_img_{};
-  uvec2 curr_debug_img_size_{};
+  ImageHandle curr_debug_img_;
+  uvec2 curr_shadow_debug_img_size_{};
   LightMatrixArray light_matrices_;
   ImageHandle curr_shadow_map_img_;
-  std::array<Holder<ImageViewHandle>, max_cascade_levels> shadow_map_img_views_;
+  std::array<i32, max_cascade_levels> shadow_map_img_views_;
+  // std::array<Holder<ImageViewHandle>, max_cascade_levels> shadow_map_img_views_;
   Device* device_{};
   i32 debug_cascade_idx_{0};
   float shadow_z_near_{.1};
