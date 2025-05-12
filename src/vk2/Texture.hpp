@@ -4,6 +4,7 @@
 #include <vulkan/vulkan_core.h>
 
 #include "Types.hpp"
+#include "vk2/Pool.hpp"
 #include "vk2/Resource.hpp"
 
 namespace gfx {
@@ -55,15 +56,15 @@ class Image {
   [[nodiscard]] VkImage image() const { return image_; }
   [[nodiscard]] Format format() const { return desc_.format; }
   [[nodiscard]] uvec3 size() const { return desc_.dims; }
-  [[nodiscard]] ImageViewHandle view() const { return view_; }
+  [[nodiscard]] ImageViewHandle view() const { return view_.handle; }
   [[nodiscard]] const ImageDesc& get_desc() const { return desc_; }
   VkImageLayout curr_layout{};
 
  private:
   friend class Device;
   ImageDesc desc_;
-  ImageViewHandle view_;
-  // std::optional<ImageView> view_;
+  Holder<ImageViewHandle> view_;
+  std::vector<ImageView> subresources_;
   VkImage image_{};
   VmaAllocation allocation_{};
 };

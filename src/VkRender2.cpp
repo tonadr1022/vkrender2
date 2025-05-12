@@ -1746,14 +1746,16 @@ void VkRender2::draw_skybox(CmdEncoder& cmd) {
   PipelineManager::get().bind_graphics(cmd.cmd(), skybox_pipeline_);
   u32 skybox_handle{};
   if (render_prefilter_mip_skybox_) {
-    assert(ibl_->prefiltered_env_tex_views_mips_.size() >
+    assert(ibl_->prefiltered_env_map_tex_views_.size() >
            (size_t)prefilter_mip_skybox_render_mip_level_);
-    skybox_handle =
-        device_
-            ->get_image_view(
-                ibl_->prefiltered_env_tex_views_mips_[prefilter_mip_skybox_render_mip_level_])
-            ->sampled_img_resource()
-            .handle;
+    skybox_handle = device_->get_bindless_idx(
+        ibl_->prefiltered_env_map_tex_.handle, SubresourceType::Shader,
+        ibl_->prefiltered_env_map_tex_views_[prefilter_mip_skybox_render_mip_level_]);
+    // device_
+    //     ->get_image_view(
+    //         ibl_->prefiltered_env_map_tex_views_[prefilter_mip_skybox_render_mip_level_])
+    //     ->sampled_img_resource()
+    //     .handle;
   } else {
     skybox_handle =
         convoluted_skybox.get()

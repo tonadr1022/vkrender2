@@ -144,10 +144,8 @@ class Device {
   SamplerHandle null_sampler_;
   SamplerHandle get_or_create_sampler(const SamplerCreateInfo& info);
   u32 get_bindless_idx(SamplerHandle sampler);
-  u32 get_bindless_idx(ImageHandle img, SubresourceType type);
-  u32 get_bindless_idx(const Holder<ImageHandle>& img, SubresourceType type) {
-    return get_bindless_idx(img.handle, type);
-  }
+  u32 get_bindless_idx(ImageHandle img, SubresourceType type, int subresource = -1);
+  u32 get_bindless_idx(const Holder<ImageHandle>& img, SubresourceType type, int subresource = -1);
   u32 get_bindless_idx(BufferHandle buffer);
   u32 get_bindless_idx(const Holder<BufferHandle>& buffer) {
     return get_bindless_idx(buffer.handle);
@@ -160,6 +158,8 @@ class Device {
   BufferHandle create_buffer(const BufferCreateInfo& info);
   Holder<BufferHandle> create_buffer_holder(const BufferCreateInfo& info);
   // returns subresource handle
+  i32 create_subresource(ImageHandle image_handle, u32 base_mip_level, u32 level_count,
+                         u32 base_array_layer, u32 layer_count);
   ImageViewHandle create_image_view(ImageHandle image_handle, u32 base_mip_level, u32 level_count,
                                     u32 base_array_layer, u32 layer_count);
   ImageHandle create_image(const ImageDesc& desc);

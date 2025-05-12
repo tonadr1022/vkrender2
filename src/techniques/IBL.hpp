@@ -21,7 +21,7 @@ class IBL {
   void init_post_pipeline_load();
 
  private:
-  void make_cubemap_views_all_mips(ImageHandle handle, std::vector<Holder<ImageViewHandle>>& views);
+  void make_cubemap_views_all_mips(ImageHandle handle, std::vector<i32>& views);
   void equirect_to_cube(CmdEncoder& ctx);
   void convolute_cube(CmdEncoder& cmd);
   void prefilter_env_map(CmdEncoder& ctx);
@@ -32,7 +32,7 @@ class IBL {
   Holder<ImageHandle> irradiance_cubemap_tex_;
   Holder<ImageHandle> prefiltered_env_map_tex_;
   std::array<Holder<ImageViewHandle>, 6> prefiltered_env_tex_views_mips_;
-  std::vector<Holder<ImageViewHandle>> prefiltered_env_map_tex_views_;
+  std::vector<i32> prefiltered_env_map_tex_views_;
   Holder<ImageHandle> brdf_lut_;
 
  private:

@@ -77,7 +77,6 @@ IBL::IBL(Device* device, BufferHandle cube_vertex_buf)
     }
   };
 
-  make_cubemap_views(prefiltered_env_map_tex_.handle, prefiltered_env_tex_views_mips_);
   make_cubemap_views(env_cubemap_tex_.handle, cubemap_tex_views_);
   make_cubemap_views(irradiance_cubemap_tex_.handle, convoluted_cubemap_tex_views_);
   brdf_lut_ = device_->create_image_holder(ImageDesc{
@@ -88,15 +87,14 @@ IBL::IBL(Device* device, BufferHandle cube_vertex_buf)
   });
 }
 
-void IBL::make_cubemap_views_all_mips(ImageHandle handle,
-                                      std::vector<Holder<ImageViewHandle>>& views) {
+void IBL::make_cubemap_views_all_mips(ImageHandle handle, std::vector<i32>& views) {
   auto* tex = device_->get_image(handle);
   if (!tex) {
     return;
   }
   for (u32 mip = 0; mip < tex->get_desc().mip_levels; mip++) {
     views.emplace_back(
-        device_->create_image_view(handle, mip, 1, 0, constants::remaining_array_layers));
+        device_->create_subresource(handle, mip, 1, 0, constants::remaining_array_layers));
   }
 }
 

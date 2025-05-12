@@ -1007,8 +1007,8 @@ ImageHandle Device::create_image(const ImageDesc& desc) {
       }
     }
 
-    image.view_ = img_view_pool_.alloc();
-    auto* view = img_view_pool_.get(image.view_);
+    image.view_ = Holder<ImageViewHandle>{img_view_pool_.alloc()};
+    auto* view = img_view_pool_.get(image.view_.handle);
 
     VK_CHECK(vkCreateImageView(device_, &view_info, nullptr, &view->view_));
     if (view->view_) {
@@ -1025,8 +1025,78 @@ ImageHandle Device::create_image(const ImageDesc& desc) {
       exit(1);
     }
   }
-  auto handle = img_pool_.alloc(image);
+  auto handle = img_pool_.alloc(std::move(image));
 
+  return handle;
+}
+
+i32 Device::create_subresource(ImageHandle image_handle, u32 base_mip_level, u32 level_count,
+                               u32 base_array_layer, u32 layer_count) {
+  auto* img = get_image(image_handle);
+  if (!img) {
+    LCRITICAL("can't create subresource: no image found");
+    return {};
+  }
+
+  VkImageViewCreateInfo view_info{.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                                  .image = img->image(),
+                                  .format = vk2::convert_format(img->get_desc().format),
+                                  .subresourceRange = {
+                                      .baseMipLevel = base_mip_level,
+                                      .levelCount = level_count,
+                                      .baseArrayLayer = base_array_layer,
+                                      .layerCount = layer_count,
+                                  }};
+  // make image view
+  if (format_is_color(img->get_desc().format)) {
+    view_info.subresourceRange.aspectMask |= VK_IMAGE_ASPECT_COLOR_BIT;
+  }
+  if (format_is_depth(img->get_desc().format)) {
+    view_info.subresourceRange.aspectMask |= VK_IMAGE_ASPECT_DEPTH_BIT;
+  }
+  if (format_is_stencil(img->get_desc().format)) {
+    view_info.subresourceRange.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+  }
+
+  const auto& desc = img->get_desc();
+  if (layer_count > 1) {
+    if (has_flag(desc.misc_flags, ResourceMiscFlag::ImageCube)) {
+      if (layer_count > 6 && layer_count != constants::remaining_array_layers) {
+        view_info.viewType = VK_IMAGE_VIEW_TYPE_CUBE_ARRAY;
+      } else {
+        view_info.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
+      }
+    } else {
+      if (desc.type == ImageDesc::Type::TwoD) {
+        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+      } else if (desc.type == ImageDesc::Type::OneD) {
+        view_info.viewType = VK_IMAGE_VIEW_TYPE_1D_ARRAY;
+      }
+    }
+  } else {
+    if (desc.type == ImageDesc::Type::TwoD) {
+      view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    } else if (desc.type == ImageDesc::Type::OneD) {
+      view_info.viewType = VK_IMAGE_VIEW_TYPE_1D;
+    }
+  }
+
+  i32 handle = img->subresources_.size();
+  auto* view = &img->subresources_.emplace_back();
+  VK_CHECK(vkCreateImageView(device_, &view_info, nullptr, &view->view_));
+  if (view->view_) {
+    if (has_flag(desc.bind_flags, BindFlag::Storage)) {
+      view->storage_image_resource_info_ =
+          allocate_storage_img_descriptor(view->view_, VK_IMAGE_LAYOUT_GENERAL);
+    }
+    if (has_flag(desc.bind_flags, BindFlag::ShaderResource)) {
+      view->sampled_image_resource_info_ =
+          allocate_sampled_img_descriptor(view->view_, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
+    }
+  } else {
+    LCRITICAL("todo: handle image view create fail");
+    exit(1);
+  }
   return handle;
 }
 
@@ -1034,6 +1104,7 @@ ImageViewHandle Device::create_image_view(ImageHandle image_handle, u32 base_mip
                                           u32 level_count, u32 base_array_layer, u32 layer_count) {
   auto* img = get_image(image_handle);
   if (!img) {
+    LCRITICAL("can't create subresource: no image found");
     return {};
   }
 
@@ -1106,23 +1177,16 @@ void Device::destroy(ImageView& view) {
     view.view_ = nullptr;
   }
 }
-// u32 Device::get_bindless_idx(ImageHandle img, SubresourceType type) {
-//   auto* image = get_image(img);
-//   if (!image) {
-//     return 0;
-//   }
-//   if (type == SubresourceType::Storage) {
-//     return get_image_view(image->view())->storage_img_resource().handle;
-//   }
-//   return get_image_view(image->view())->sampled_img_resource().handle;
-// }
 
 void Device::destroy(Image& img) {
   if (img.image_) {
     delete_texture(TextureDeleteInfo{img.image_, img.allocation_});
-    if (img.view_.is_valid()) {
+    if (img.view_.handle.is_valid()) {
       destroy(img.view());
       img.view_ = {};
+    }
+    for (auto& view : img.subresources_) {
+      destroy(view);
     }
     img.image_ = nullptr;
   }
@@ -1431,15 +1495,31 @@ VkDescriptorSet Device::add_imgui_tex(SamplerHandle sampler, ImageViewHandle ima
                                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 
-u32 Device::get_bindless_idx(ImageHandle img, SubresourceType type) {
+u32 Device::get_bindless_idx(ImageHandle img, SubresourceType type, int subresource) {
   auto* image = get_image(img);
   if (!image) {
+    LCRITICAL("failed to get bindless index, image doesn't exist");
     return 0;
   }
-  if (type == SubresourceType::Storage) {
-    return get_image_view(image->view())->storage_img_resource().handle;
+  ImageView* view{};
+  if (subresource == -1) {
+    view = get_image_view(image->view_);
+  } else {
+    if (subresource < 0 || static_cast<size_t>(subresource) >= image->subresources_.size()) {
+      LCRITICAL("invalid subresource index: {}", subresource);
+      exit(1);
+    }
+    view = &image->subresources_[subresource];
   }
-  return get_image_view(image->view())->sampled_img_resource().handle;
+  if (type == SubresourceType::Storage) {
+    return view->storage_image_resource_info_.handle;
+  }
+  return view->sampled_image_resource_info_.handle;
+}
+
+u32 Device::get_bindless_idx(const Holder<ImageHandle>& img, SubresourceType type,
+                             int subresource) {
+  return get_bindless_idx(img.handle, type, subresource);
 }
 
 }  // namespace gfx

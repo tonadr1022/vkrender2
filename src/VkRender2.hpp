@@ -366,7 +366,7 @@ class VkRender2 final {
   u32 debug_mode_{DEBUG_MODE_NONE};
   const char* debug_mode_to_string(u32 mode);
   std::filesystem::path env_tex_path_;
-  i32 prefilter_mip_skybox_render_mip_level_{};
+  i32 prefilter_mip_skybox_render_mip_level_{1};
   void generate_mipmaps(StateTracker& state, VkCommandBuffer cmd, Image& tex);
   Holder<BufferHandle> cube_vertex_buf_;
   void add_rendering_passes(RenderGraph& rg);
@@ -393,7 +393,7 @@ class VkRender2 final {
   [[nodiscard]] uvec2 window_dims() const;
   PerFrameData& curr_frame();
 
-  bool render_prefilter_mip_skybox_{};
+  bool render_prefilter_mip_skybox_{true};
   bool draw_imgui_{true};
   bool deferred_enabled_{true};
   bool draw_debug_aabbs_{false};
