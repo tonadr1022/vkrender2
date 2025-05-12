@@ -22,7 +22,6 @@ int main(int argc, char* argv[]) {
       maximize = true;
     }
   }
-  vsync = false;
   w = std::min(std::max(w, 100u), 5000u);
   h = std::min(std::max(h, 100u), 5000u);
   App app{{.name = "VkRender2", .width = w, .height = h, .maximize = maximize, .vsync = vsync}};

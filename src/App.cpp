@@ -247,7 +247,18 @@ void App::draw_imgui() {
       ImGui::Text("File not found: %s", err_filename.c_str());
     }
 
-    ImGui::Text("Frame Time: %f ms/frame, FPS: %f", dt * 1000.f, 1.f / dt);
+    // TODO: frame time graph
+    static std::vector<float> frame_times;
+    frame_times.emplace_back(dt);
+    if (frame_times.size() > 30) {
+      frame_times.erase(frame_times.begin());
+    }
+    float tot = 0;
+    for (auto t : frame_times) {
+      tot += t;
+    }
+    float frame_time = tot / frame_times.size();
+    ImGui::Text("Frame Time: %f ms/frame, FPS: %f", frame_time * 1000.f, 1.f / frame_time);
     if (ImGui::TreeNodeEx("Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
       cam.on_imgui();
       ImGui::TreePop();

@@ -136,14 +136,12 @@ class Device {
   [[nodiscard]] VmaAllocator allocator() const { return allocator_; }
 
   Pool<ImageHandle, Image> img_pool_;
-  // Pool<ImageViewHandle, ImageView> img_view_pool_;
   Pool<BufferHandle, Buffer> buffer_pool_;
   Pool<SamplerHandle, Sampler> sampler_pool_;
   SamplerHandle null_sampler_;
   SamplerHandle get_or_create_sampler(const SamplerCreateInfo& info);
   u32 get_bindless_idx(SamplerHandle sampler);
   u32 get_bindless_idx(ImageHandle img, SubresourceType type, int subresource = -1);
-  // TODO: remove
   VkImageView get_image_view(ImageHandle img, SubresourceType type, int subresource = -1);
   u32 get_bindless_idx(const Holder<ImageHandle>& img, SubresourceType type, int subresource = -1);
 
@@ -240,7 +238,6 @@ class Device {
   static void shutdown();
   [[nodiscard]] VkDescriptorSetLayout main_set_layout() const { return main_set_layout_; }
   [[nodiscard]] VkDescriptorSet main_set() const { return main_set_; }
-
   BindlessResourceInfo allocate_storage_buffer_descriptor(VkBuffer buffer);
   BindlessResourceInfo allocate_storage_img_descriptor(VkImageView view, VkImageLayout layout);
   BindlessResourceInfo allocate_sampled_img_descriptor(VkImageView view, VkImageLayout layout);

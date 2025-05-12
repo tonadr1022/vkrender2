@@ -420,12 +420,7 @@ void VkRender2::draw(const SceneDrawInfo& info) {
   ZoneScoped;
   {
     on_imgui();
-    // ImGuiIO& io = ImGui::GetIO();
     ImGui::Render();
-    // if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-    //   ImGui::UpdatePlatformWindows();
-    //   ImGui::RenderPlatformWindowsDefault();
-    // }
 
     device_->begin_frame();
   }

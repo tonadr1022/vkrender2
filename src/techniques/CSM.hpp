@@ -84,7 +84,6 @@ class CSM {
   LightMatrixArray light_matrices_;
   ImageHandle curr_shadow_map_img_;
   std::array<i32, max_cascade_levels> shadow_map_img_views_;
-  // std::array<Holder<ImageViewHandle>, max_cascade_levels> shadow_map_img_views_;
   Device* device_{};
   i32 debug_cascade_idx_{0};
   float shadow_z_near_{.1};

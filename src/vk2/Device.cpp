@@ -663,6 +663,7 @@ void Device::submit_to_graphics_queue() {
   curr_frame_num_++;
 }
 void Device::begin_frame() {
+  ZoneScoped;
   // wait for fence
   u64 timeout = 1000000000;
   vkWaitForFences(device_, 1, &curr_frame().render_fence, true, timeout);
