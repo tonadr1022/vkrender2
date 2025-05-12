@@ -239,14 +239,6 @@ PipelineHandle PipelineManager::load(GraphicsPipelineCreateInfo info) {
   return handle;
 }
 
-void PipelineManager::bind_graphics(VkCommandBuffer cmd, PipelineHandle handle) {
-  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, get(handle)->pipeline);
-}
-
-void PipelineManager::bind_compute(VkCommandBuffer cmd, PipelineHandle handle) {
-  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, get(handle)->pipeline);
-}
-
 PipelineManager::LoadPipelineResult PipelineManager::load_graphics_pipeline_impl(
     const GraphicsPipelineCreateInfo& info, bool force) {
   LoadPipelineResult res{};

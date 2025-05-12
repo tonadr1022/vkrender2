@@ -19,7 +19,6 @@
 #include "util/IndexAllocator.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/PipelineManager.hpp"
-#include "vk2/Texture.hpp"
 
 struct GLFWwindow;
 namespace tracy {
@@ -78,7 +77,6 @@ class VkRender2 final {
                          const mat4& transform = mat4{1});
 
   // TODO: private
-  void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
   void immediate_submit(std::function<void(CmdEncoder& cmd)>&& function);
   void enqueue_transfer();
   void set_env_map(const std::filesystem::path& path);
@@ -87,7 +85,7 @@ class VkRender2 final {
   void set_imgui_enabled(bool imgui_enabled) { draw_imgui_ = imgui_enabled; }
   [[nodiscard]] bool get_imgui_enabled() const { return draw_imgui_; }
   ImageHandle load_hdr_img(CmdEncoder& ctx, const std::filesystem::path& path, bool flip = false);
-  void generate_mipmaps(CmdEncoder& ctx, Image& tex);
+  void generate_mipmaps(CmdEncoder& ctx, ImageHandle handle);
   void draw_line(const vec3& p1, const vec3& p2, const vec4& color);
 
   /**
@@ -195,7 +193,7 @@ class VkRender2 final {
     // TODO: this is a little jank
     Handle add_draws(StateTracker& state, CmdEncoder& cmd, size_t size, size_t staging_offset,
                      Buffer& staging, u32 num_double_sided_draws);
-    void remove_draws(StateTracker& state, VkCommandBuffer cmd, Handle handle);
+    void remove_draws(StateTracker& state, CmdEncoder& cmd, Handle handle);
 
     [[nodiscard]] const std::string& get_name() const { return name_; }
     [[nodiscard]] u32 get_num_draw_cmds(bool double_sided) const {
@@ -309,7 +307,7 @@ class VkRender2 final {
 
   [[nodiscard]] bool should_draw(const StaticMeshDrawManager& mgr) const;
   void execute_static_geo_draws(CmdEncoder& cmd, bool double_sided, MeshPass pass);
-  void execute_draw(CmdEncoder& cmd, const Buffer& buffer, u32 draw_count) const;
+  void execute_draw(CmdEncoder& cmd, BufferHandle buffer, u32 draw_count) const;
 
   AABB scene_aabb_{};
 
@@ -360,7 +358,7 @@ class VkRender2 final {
   const char* debug_mode_to_string(u32 mode);
   std::filesystem::path env_tex_path_;
   i32 prefilter_mip_skybox_render_mip_level_{1};
-  void generate_mipmaps(StateTracker& state, VkCommandBuffer cmd, Image& tex);
+  void generate_mipmaps(StateTracker& state, CmdEncoder& cmd, ImageHandle handle);
   Holder<BufferHandle> cube_vertex_buf_;
   void add_rendering_passes(RenderGraph& rg);
 
@@ -378,7 +376,6 @@ class VkRender2 final {
   };
   std::vector<LineVertex> line_draw_vertices_;
   void draw_skybox(CmdEncoder& cmd);
-  void render_imgui(CmdEncoder& cmd, ImageHandle img);
 
   [[nodiscard]] float aspect_ratio() const;
   [[nodiscard]] uvec2 window_dims() const;

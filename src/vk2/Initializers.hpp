@@ -34,8 +34,5 @@ VkImageSubresourceRange image_subresource_range(VkImageAspectFlags aspectMask);
 void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout currentLayout,
                       VkImageLayout newLayout);
 
-void begin_debug_utils_label(VkCommandBuffer cmd, const char* name);
-void end_debug_utils_label(VkCommandBuffer cmd);
-
 VkImageSubresourceRange subresource_range_whole(VkImageAspectFlags aspect);
 }  // namespace gfx::vk2::init

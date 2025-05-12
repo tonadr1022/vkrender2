@@ -11,6 +11,7 @@
 namespace gfx {
 class Buffer;
 class Image;
+struct CmdEncoder;
 }  // namespace gfx
 
 namespace gfx {
@@ -31,22 +32,13 @@ struct BufferBarrier {
 };
 
 VkBufferMemoryBarrier2 buffer_memory_barrier(const BufferBarrier& t);
-void transition_image(VkCommandBuffer cmd, Image& image, VkImageLayout old_layout,
-                      VkImageLayout new_layout,
-                      VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
 
-void transition_image(VkCommandBuffer cmd, Image& image, VkImageLayout new_layout,
-                      VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
 constexpr VkImageSubresourceRange default_image_subresource_range{
     .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
     .baseMipLevel = 0,
     .levelCount = VK_REMAINING_MIP_LEVELS,
     .baseArrayLayer = 0,
     .layerCount = VK_REMAINING_ARRAY_LAYERS};
-
-void transition_image_discard(
-    VkCommandBuffer cmd, Image& image, VkImageLayout layout, VkPipelineStageFlags2 stage,
-    VkAccessFlags2 access, const VkImageSubresourceRange& range = default_image_subresource_range);
 
 class StateTracker {
  public:
@@ -86,7 +78,7 @@ class StateTracker {
                                       VkAccessFlags2 dst_access, VkBuffer buffer, u32 src_queue,
                                       u32 dst_queue, u64 offset = 0, u64 size = VK_WHOLE_SIZE);
 
-  StateTracker& reset(VkCommandBuffer cmd);
+  StateTracker& reset(CmdEncoder& cmd);
   StateTracker& flush_transfers(u32 queue_idx);
   struct ImageState {
     VkImage image;
@@ -120,6 +112,7 @@ class StateTracker {
   std::array<std::vector<VkBufferMemoryBarrier2>, max_queue_idx> buffer_transfer_barriers_;
 
   VkCommandBuffer cmd_{};
+  CmdEncoder* cmd2_{};
 
   decltype(tracked_imgs_.end()) get_img(VkImage image) {
     for (auto it = tracked_imgs_.begin(); it != tracked_imgs_.end(); it++) {

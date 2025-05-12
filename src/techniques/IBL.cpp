@@ -31,11 +31,11 @@ const std::array<glm::mat4, 6> VIEW_MATRICES = {
 
 namespace gfx {
 
-void IBL::load_env_map(CmdEncoder& ctx, const std::filesystem::path& path) {
-  env_equirect_tex_ = Holder<ImageHandle>{VkRender2::get().load_hdr_img(ctx, path)};
-  equirect_to_cube(ctx);
-  convolute_cube(ctx);
-  prefilter_env_map(ctx);
+void IBL::load_env_map(CmdEncoder& cmd, const std::filesystem::path& path) {
+  env_equirect_tex_ = Holder<ImageHandle>{VkRender2::get().load_hdr_img(cmd, path)};
+  equirect_to_cube(cmd);
+  convolute_cube(cmd);
+  prefilter_env_map(cmd);
 }
 
 IBL::IBL(Device* device, BufferHandle cube_vertex_buf)
@@ -108,12 +108,13 @@ void IBL::init_post_pipeline_load() {
     VkCommandBuffer cmd = ctx.cmd();
     device_->bind_bindless_descriptors(ctx);
     StateTracker state;
-    state.reset(cmd);
+    state.reset(ctx);
     state
         .transition(*device_->get_image(brdf_lut_), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                     VK_ACCESS_2_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL)
         .flush_barriers();
-    PipelineManager::get().bind_compute(cmd, integrate_brdf_pipeline_);
+
+    ctx.bind_pipeline(PipelineBindPoint::Compute, integrate_brdf_pipeline_);
     struct {
       u32 tex_idx, sampler_idx;
     } pc{device_->get_bindless_idx(brdf_lut_.handle, SubresourceType::Storage),
@@ -134,12 +135,11 @@ void IBL::init_post_pipeline_load() {
   });
 }
 
-void IBL::equirect_to_cube(CmdEncoder& ctx) {
-  VkCommandBuffer cmd = ctx.cmd();
-  device_->bind_bindless_descriptors(ctx);
+void IBL::equirect_to_cube(CmdEncoder& cmd) {
+  device_->bind_bindless_descriptors(cmd);
   auto* env_cubemap_tex = device_->get_image(env_cubemap_tex_);
-  transition_image(cmd, *env_cubemap_tex, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-  PipelineManager::get().bind_compute(cmd, equirect_to_cube_pipeline2_);
+  cmd.transition_image(env_cubemap_tex_.handle, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  cmd.bind_pipeline(PipelineBindPoint::Compute, equirect_to_cube_pipeline2_);
   // TODO: define linear sampler idx in the shader
 
   EquirectToCubeComputePushConstants pc{
@@ -150,24 +150,23 @@ void IBL::equirect_to_cube(CmdEncoder& ctx) {
                                                            .address_mode = AddressMode::Repeat})),
       .tex_idx = device_->get_bindless_idx(env_equirect_tex_, SubresourceType::Shader),
       .out_tex_idx = device_->get_bindless_idx(env_cubemap_tex_, SubresourceType::Storage)};
-  ctx.push_constants(sizeof(pc), &pc);
-  ctx.dispatch(env_cubemap_tex->size().x / 16, env_cubemap_tex->size().y / 16, 6);
-  transition_image(cmd, *env_cubemap_tex, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-  VkRender2::get().generate_mipmaps(ctx, *env_cubemap_tex);
+  cmd.push_constants(sizeof(pc), &pc);
+  cmd.dispatch(env_cubemap_tex->size().x / 16, env_cubemap_tex->size().y / 16, 6);
+  cmd.transition_image(env_cubemap_tex_.handle, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  VkRender2::get().generate_mipmaps(cmd, env_cubemap_tex_.handle);
 }
 
 void IBL::convolute_cube(CmdEncoder& cmd) {
-  auto* env_cubemap_tex = device_->get_image(env_cubemap_tex_);
   auto* irradiance_cubemap_tex = device_->get_image(irradiance_cubemap_tex_);
-  transition_image(cmd.cmd(), *env_cubemap_tex, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-  transition_image(cmd.cmd(), *irradiance_cubemap_tex, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  cmd.transition_image(env_cubemap_tex_.handle, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  cmd.transition_image(irradiance_cubemap_tex_.handle, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
   for (u32 i = 0; i < 6; i++) {
     cmd.begin_rendering(
         {.extent = irradiance_cubemap_tex->size()},
         {RenderingAttachmentInfo::color_att(irradiance_cubemap_tex_.handle, LoadOp::Load, {},
                                             StoreOp::Store, convoluted_cubemap_tex_views_[i])});
     cmd.set_viewport_and_scissor(irradiance_cubemap_tex->size());
-    PipelineManager::get().bind_graphics(cmd.cmd(), convolute_cube_raster_pipeline_);
+    cmd.bind_pipeline(PipelineBindPoint::Graphics, convolute_cube_raster_pipeline_);
     struct {
       mat4 vp;
       u32 in_tex_idx, sampler_idx, vertex_buffer_idx;
@@ -182,10 +181,9 @@ void IBL::convolute_cube(CmdEncoder& cmd) {
   }
 }
 
-void IBL::prefilter_env_map(CmdEncoder& ctx) {
-  auto* cmd = ctx.cmd();
+void IBL::prefilter_env_map(CmdEncoder& cmd) {
   auto* prefiltered_env_map_tex = device_->get_image(prefiltered_env_map_tex_);
-  transition_image(cmd, *prefiltered_env_map_tex, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  cmd.transition_image(prefiltered_env_map_tex_.handle, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
   // make image views
   std::vector<std::array<i32, 6>> cube_mip_views;
@@ -206,13 +204,13 @@ void IBL::prefilter_env_map(CmdEncoder& ctx) {
         unsigned int mip_width = size * std::pow(0.5, mip);
         unsigned int mip_height = size * std::pow(0.5, mip);
         uvec2 extent{mip_width, mip_height};
-        ctx.begin_rendering({.extent = extent}, {RenderingAttachmentInfo::color_att(
+        cmd.begin_rendering({.extent = extent}, {RenderingAttachmentInfo::color_att(
                                                     prefiltered_env_map_tex_.handle, LoadOp::Load,
                                                     {}, StoreOp::Store, cube_mip_views[mip][i]
 
                                                     )});
-        ctx.set_viewport_and_scissor(mip_width, mip_height);
-        PipelineManager::get().bind_graphics(cmd, prefilter_env_map_pipeline_);
+        cmd.set_viewport_and_scissor(mip_width, mip_height);
+        cmd.bind_pipeline(PipelineBindPoint::Graphics, prefilter_env_map_pipeline_);
 
         struct {
           mat4 vp;
@@ -230,16 +228,15 @@ void IBL::prefilter_env_map(CmdEncoder& ctx) {
              })),
              get_device().get_buffer(cube_vertex_buf_)->resource_info_->handle,
              static_cast<float>(device_->get_image(env_cubemap_tex_)->size().x)};
-        ctx.push_constants(sizeof(pc), &pc);
-        ctx.set_cull_mode(CullMode::None);
-        ctx.draw(36);
-        ctx.end_rendering();
+        cmd.push_constants(sizeof(pc), &pc);
+        cmd.set_cull_mode(CullMode::None);
+        cmd.draw(36);
+        cmd.end_rendering();
       }
     }
   }
 
-  transition_image(cmd, *device_->get_image(irradiance_cubemap_tex_),
-                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  cmd.transition_image(irradiance_cubemap_tex_.handle, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 void IBL::load_pipelines(PipelineLoader& loader) {
   loader.add_compute("ibl/integrate_brdf.comp", &integrate_brdf_pipeline_);

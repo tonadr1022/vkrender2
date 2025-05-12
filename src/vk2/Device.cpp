@@ -697,6 +697,7 @@ void Device::free_fence(VkFence fence) { free_fences_.push_back(fence); }
 Device::~Device() {
   ZoneScoped;
   PipelineManager::shutdown();
+  vkDestroyPipelineLayout(device_, default_pipeline_layout_, nullptr);
   curr_frame_num_ = UINT32_MAX;
   for (auto& it : sampler_cache_) {
     destroy(it.second.first);
@@ -859,21 +860,11 @@ VkSampler Device::get_sampler_vk(SamplerHandle sampler) {
   return nullptr;
 }
 
-// struct ImageDesc {
-//   enum class Type : u8 { One, Two, Three };
-//   Type type{Type::Two};
-//   Format format{Format::Undefined};
-//   uvec3 dims{};
-//   u32 mip_levels{1};
-//   u32 array_layers{1};
-//   u32 sample_count{};
-//   BindFlag bind_flags{};
-// };
-
-Holder<ImageHandle> Device::create_image_holder(const ImageDesc& desc) {
-  return Holder<ImageHandle>{create_image(desc)};
+Holder<ImageHandle> Device::create_image_holder(const ImageDesc& desc, void* initial_data) {
+  return Holder<ImageHandle>{create_image(desc, initial_data)};
 }
-ImageHandle Device::create_image(const ImageDesc& desc) {
+
+ImageHandle Device::create_image(const ImageDesc& desc, void* initial_data) {
   VkImageCreateInfo cinfo{.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
   VmaAllocationCreateInfo alloc_create_info{.usage = VMA_MEMORY_USAGE_AUTO};
   if (has_flag(desc.bind_flags, BindFlag::ColorAttachment)) {
@@ -939,6 +930,9 @@ ImageHandle Device::create_image(const ImageDesc& desc) {
                           &image->allocation_, nullptr));
   if (!image->image()) {
     return {};
+  }
+
+  if (initial_data != nullptr) {
   }
 
   if (desc.usage == Usage::Default) {
@@ -1392,16 +1386,14 @@ u32 Device::get_bindless_idx(ImageHandle img, SubresourceType type, int subresou
       case gfx::SubresourceType::Storage:
         return image->storage_view_.resource_info.handle;
       case gfx::SubresourceType::Attachment:
-        assert(0);
+        assert(0 && "can't access attachment view bindlessly");
         return 0;
     }
-    assert(0);
+    assert(0);  // unreachable
     return 0;
   }
-  if (subresource < 0 || static_cast<size_t>(subresource) >= image->subresources_.size()) {
-    LCRITICAL("invalid subresource index: {}", subresource);
-    exit(1);
-  }
+
+  assert(subresource >= 0 && static_cast<size_t>(subresource) < image->subresources_.size());
   return image->subresources_[subresource].resource_info.handle;
 }
 
@@ -1518,4 +1510,13 @@ VkImageView Device::get_image_view(ImageHandle img, SubresourceType type, int su
   return VK_NULL_HANDLE;
 }
 
+void Device::render_imgui(CmdEncoder& cmd) {
+  ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd.cmd());
+}
+
+void Device::new_imgui_frame() {
+  ImGui_ImplVulkan_NewFrame();
+  ImGui_ImplGlfw_NewFrame();
+  ImGui::NewFrame();
+}
 }  // namespace gfx

@@ -28,10 +28,6 @@ struct GLFWwindow;
 namespace gfx {
 class Device;
 struct CmdEncoder;
-namespace constants {
-inline constexpr u32 remaining_array_layers = ~0U;
-inline constexpr u32 remaining_mip_layers = ~0U;
-}  // namespace constants
 
 enum class DeviceFeature : u8 { DrawIndirectCount };
 
@@ -142,6 +138,7 @@ class Device {
   SamplerHandle get_or_create_sampler(const SamplerCreateInfo& info);
   u32 get_bindless_idx(SamplerHandle sampler);
   u32 get_bindless_idx(ImageHandle img, SubresourceType type, int subresource = -1);
+  // TODO: remove
   VkImageView get_image_view(ImageHandle img, SubresourceType type, int subresource = -1);
   u32 get_bindless_idx(const Holder<ImageHandle>& img, SubresourceType type, int subresource = -1);
 
@@ -161,8 +158,8 @@ class Device {
                          u32 base_array_layer, u32 layer_count);
   ImageView2 create_image_view2(ImageHandle image_handle, SubresourceType type, u32 base_mip_level,
                                 u32 level_count, u32 base_array_layer, u32 layer_count);
-  ImageHandle create_image(const ImageDesc& desc);
-  Holder<ImageHandle> create_image_holder(const ImageDesc& desc);
+  ImageHandle create_image(const ImageDesc& desc, void* initial_data = nullptr);
+  Holder<ImageHandle> create_image_holder(const ImageDesc& desc, void* initial_data = nullptr);
   void destroy(ImageHandle handle);
   void destroy(SamplerHandle handle);
   void destroy(BufferHandle handle);
@@ -173,6 +170,8 @@ class Device {
   Buffer* get_buffer(BufferHandle handle) { return buffer_pool_.get(handle); }
   Buffer* get_buffer(const Holder<BufferHandle>& handle) { return get_buffer(handle.handle); }
   void init_imgui();
+  void render_imgui(CmdEncoder& cmd);
+  void new_imgui_frame();
 
   [[nodiscard]] const Queue& get_queue(QueueType type) const { return queues_[(u32)type]; }
 

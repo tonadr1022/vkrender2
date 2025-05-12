@@ -48,6 +48,12 @@ struct hash<GenerationalHandle<HandleT>> {
 
 namespace gfx {
 
+namespace constants {
+inline constexpr u32 remaining_array_layers = ~0U;
+inline constexpr u32 remaining_mip_layers = ~0U;
+inline constexpr u64 whole_size = ~0UL;
+}  // namespace constants
+
 enum ColorComponentFlagBits : u8 {
   ColorComponentRBit = 0x00000001,
   ColorComponentGBit = 0x00000002,
@@ -614,6 +620,7 @@ union ClearValue {
     u32 stencil;
   } depth_stencil;
 };
+enum class IndexType : u8 { uint8, uint16, uint32 };
 
 enum class LoadOp : u8 { Load, Clear, DontCare };
 enum class StoreOp : u8 { Store, DontCare };

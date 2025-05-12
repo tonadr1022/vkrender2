@@ -8,6 +8,7 @@
 #include "core/Logger.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/Device.hpp"
+#include "vk2/Initializers.hpp"
 #include "vk2/PipelineManager.hpp"
 #include "vk2/VkTypes.hpp"
 
@@ -17,9 +18,6 @@ void CmdEncoder::dispatch(u32 work_groups_x, u32 work_groups_y, u32 work_groups_
   vkCmdDispatch(cmd_, work_groups_x, work_groups_y, work_groups_z);
 }
 
-void CmdEncoder::bind_compute_pipeline(VkPipeline pipeline) {
-  vkCmdBindPipeline(cmd_, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-}
 void CmdEncoder::bind_descriptor_set(VkPipelineBindPoint bind_point, VkPipelineLayout layout,
                                      VkDescriptorSet* set, u32 idx) {
   vkCmdBindDescriptorSets(cmd_, bind_point, layout, idx, 1, set, 0, nullptr);
@@ -189,6 +187,90 @@ void CmdEncoder::begin_rendering(const RenderArea& render_area,
 
 void CmdEncoder::draw(u32 vertex_count, u32 instance_count, u32 first_vertex, u32 first_instance) {
   vkCmdDraw(cmd_, vertex_count, instance_count, first_vertex, first_instance);
+}
+
+namespace {
+
+VkIndexType convert_index_type(IndexType type) {
+  switch (type) {
+    case gfx::IndexType::uint8:
+      return VK_INDEX_TYPE_UINT8;
+    case gfx::IndexType::uint16:
+      return VK_INDEX_TYPE_UINT16;
+    case gfx::IndexType::uint32:
+      return VK_INDEX_TYPE_UINT32;
+  }
+  return VK_INDEX_TYPE_NONE_KHR;
+  ;
+}
+
+}  // namespace
+
+void CmdEncoder::bind_index_buffer(BufferHandle buffer, u64 offset, IndexType type) {
+  vkCmdBindIndexBuffer(cmd_, device_->get_buffer(buffer)->buffer(), offset,
+                       convert_index_type(type));
+}
+
+void CmdEncoder::fill_buffer(BufferHandle buffer, u64 offset, u64 size, u32 data) {
+  vkCmdFillBuffer(cmd_, device_->get_buffer(buffer)->buffer(), offset, size, data);
+}
+void CmdEncoder::draw_indexed_indirect(BufferHandle buffer, u64 offset, u32 draw_count,
+                                       u32 stride) {
+  vkCmdDrawIndexedIndirect(cmd_, device_->get_buffer(buffer)->buffer(), offset, draw_count, stride);
+}
+
+void CmdEncoder::draw_indexed_indirect_count(BufferHandle draw_cmd_buf, u64 draw_cmd_offset,
+                                             BufferHandle draw_count_buf, u64 draw_count_offset,
+                                             u32 draw_count, u32 stride) {
+  vkCmdDrawIndexedIndirectCount(cmd_, device_->get_buffer(draw_count_buf)->buffer(),
+                                draw_count_offset, device_->get_buffer(draw_cmd_buf)->buffer(),
+                                draw_cmd_offset, draw_count, stride);
+}
+
+void CmdEncoder::update_buffer(BufferHandle buffer, u64 offset, u64 size, void* data) {
+  vkCmdUpdateBuffer(cmd_, device_->get_buffer(buffer)->buffer(), offset, size, data);
+}
+
+void CmdEncoder::begin_region(const char* name) {
+#ifndef NDEBUG
+  VkDebugUtilsLabelEXT debug_label_info{.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
+                                        .pLabelName = name};
+  vkCmdBeginDebugUtilsLabelEXT(cmd_, &debug_label_info);
+#endif
+}
+
+void CmdEncoder::end_region() {
+#ifndef NDEBUG
+  vkCmdEndDebugUtilsLabelEXT(cmd_);
+#endif
+}
+void CmdEncoder::transition_image(ImageHandle image, VkImageLayout new_layout,
+                                  VkImageAspectFlags aspect) {
+  auto* img = device_->get_image(image);
+  transition_image(image, img->curr_layout, new_layout, aspect);
+  img->curr_layout = new_layout;
+}
+
+void CmdEncoder::transition_image(ImageHandle image, VkImageLayout old_layout,
+                                  VkImageLayout new_layout, VkImageAspectFlags aspect) {
+  auto* img = device_->get_image(image);
+  assert(img);
+  VkImageMemoryBarrier2 b{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+  b.image = img->image();
+  b.srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+  b.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+  b.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+  b.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+  b.oldLayout = old_layout;
+  b.newLayout = new_layout;
+  img->curr_layout = new_layout;
+  b.subresourceRange = VkImageSubresourceRange{.aspectMask = aspect,
+                                               .baseMipLevel = 0,
+                                               .levelCount = VK_REMAINING_MIP_LEVELS,
+                                               .baseArrayLayer = 0,
+                                               .layerCount = VK_REMAINING_ARRAY_LAYERS};
+  auto dep_info = vk2::init::dependency_info({}, SPAN1(b));
+  vkCmdPipelineBarrier2KHR(cmd_, &dep_info);
 }
 
 }  // namespace gfx

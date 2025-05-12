@@ -6,6 +6,7 @@
 
 #include <algorithm>
 
+#include "CommandEncoder.hpp"
 #include "Common.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/Initializers.hpp"
@@ -156,10 +157,11 @@ StateTracker& StateTracker::flush_transfers(u32 queue_idx) {
   return *this;
 }
 
-StateTracker& StateTracker::reset(VkCommandBuffer cmd) {
+StateTracker& StateTracker::reset(CmdEncoder& cmd) {
   assert(img_barriers_.empty());
   assert(buffer_barriers_.empty());
-  cmd_ = cmd;
+  cmd_ = cmd.cmd();
+  cmd2_ = &cmd;
   tracked_buffers_.clear();
   tracked_imgs_.clear();
   img_barriers_.clear();
@@ -193,50 +195,6 @@ StateTracker& StateTracker::transition_img_to_copy_dst(Image& image, VkImageAspe
 
 StateTracker& StateTracker::transition_buffer_to_transfer_dst(VkBuffer buffer) {
   return buffer_barrier(buffer, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-}
-
-void transition_image(VkCommandBuffer cmd, Image& image, VkImageLayout old_layout,
-                      VkImageLayout new_layout, VkImageAspectFlags aspect) {
-  VkImageMemoryBarrier2 b{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
-  b.image = image.image();
-  b.srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
-  b.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-  b.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
-  b.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-  b.oldLayout = old_layout;
-  b.newLayout = new_layout;
-  image.curr_layout = new_layout;
-  b.subresourceRange = VkImageSubresourceRange{.aspectMask = aspect,
-                                               .baseMipLevel = 0,
-                                               .levelCount = VK_REMAINING_MIP_LEVELS,
-                                               .baseArrayLayer = 0,
-                                               .layerCount = VK_REMAINING_ARRAY_LAYERS};
-  auto dep_info = vk2::init::dependency_info({}, SPAN1(b));
-  vkCmdPipelineBarrier2KHR(cmd, &dep_info);
-}
-
-void transition_image_discard(VkCommandBuffer cmd, Image& image, VkImageLayout layout,
-                              VkPipelineStageFlags2 stage, VkAccessFlags2 access,
-                              const VkImageSubresourceRange& range) {
-  VkImageMemoryBarrier2 b{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
-  b.image = image.image();
-  b.srcAccessMask = 0;
-  b.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-  b.dstAccessMask = access;
-  b.dstStageMask = stage;
-  b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  b.newLayout = layout;
-  b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  b.subresourceRange = range;
-  auto dep_info = vk2::init::dependency_info({}, SPAN1(b));
-  vkCmdPipelineBarrier2KHR(cmd, &dep_info);
-}
-
-void transition_image(VkCommandBuffer cmd, Image& image, VkImageLayout new_layout,
-                      VkImageAspectFlags aspect) {
-  transition_image(cmd, image, image.curr_layout, new_layout, aspect);
-  image.curr_layout = new_layout;
 }
 
 }  // namespace gfx

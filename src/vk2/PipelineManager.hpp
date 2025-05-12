@@ -125,8 +125,6 @@ class PipelineManager {
                    VkPipelineLayout default_layout = nullptr);
   static void shutdown();
   [[nodiscard]] u64 num_pipelines();
-  void bind_graphics(VkCommandBuffer cmd, PipelineHandle handle);
-  void bind_compute(VkCommandBuffer cmd, PipelineHandle handle);
 
   [[nodiscard]] PipelineHandle load(const ComputePipelineCreateInfo &info);
   [[nodiscard]] PipelineHandle load(GraphicsPipelineCreateInfo info);

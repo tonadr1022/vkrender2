@@ -17,7 +17,6 @@
 #include "imgui_impl_vulkan.h"
 #include "util/CVar.hpp"
 #include "vk2/Device.hpp"
-#include "vk2/Initializers.hpp"
 #include "vk2/PipelineManager.hpp"
 #include "vk2/VkTypes.hpp"
 
@@ -269,11 +268,12 @@ void CSM::add_pass(RenderGraph& rg) {
   csm_prepare_pass.add(shadow_data_bufs_[get_device().curr_frame_in_flight()].handle,
                        Access::TransferWrite);
   csm_prepare_pass.set_execute_fn([this](CmdEncoder& cmd) {
-    TracyVkZone(cmd.get_tracy_ctx(), cmd.cmd(), "csm_prepare");
+    GPU_ZONE(cmd, "csm_prepare");
     auto* buf = get_device().get_buffer(
         shadow_data_bufs_[device_->curr_frame_num() % shadow_data_bufs_.size()]);
     if (!buf) return;
-    vkCmdUpdateBuffer(cmd.cmd(), buf->buffer(), 0, sizeof(CSM::ShadowData), &data_);
+    cmd.update_buffer(shadow_data_bufs_[device_->curr_frame_in_flight()].handle, 0,
+                      sizeof(ShadowData), &data_);
   });
 
   auto& csm = rg.add_pass("csm");
@@ -281,9 +281,9 @@ void CSM::add_pass(RenderGraph& rg) {
       csm.add("shadow_map_img", shadow_map_img_att_info_, Access::DepthStencilWrite);
   add_deps_fn_(csm);
   csm.set_execute_fn([this, rg_shadow_map_img, &rg](CmdEncoder& cmd) {
-    TracyVkZone(cmd.get_tracy_ctx(), cmd.cmd(), "csm");
+    GPU_ZONE(cmd, "csm render");
+    cmd.begin_region("csm render");
     shadow_map_img_ = rg.get_texture_handle(rg_shadow_map_img);
-    init::begin_debug_utils_label(cmd.cmd(), "csm render");
     if (curr_shadow_map_img_ != shadow_map_img_) {
       curr_shadow_map_img_ = shadow_map_img_;
       for (u32 i = 0; i < cascade_count_; i++) {
@@ -306,12 +306,12 @@ void CSM::add_pass(RenderGraph& rg) {
       }
 
       {
-        TracyVkZone(cmd.get_tracy_ctx(), cmd.cmd(), "opaque");
+        GPU_ZONE(cmd, "opaque");
         cmd.bind_pipeline(PipelineBindPoint::Graphics, shadow_depth_pipline_);
         draw_fn_(cmd, light_matrices_[i], false, i);
       }
       {
-        TracyVkZone(cmd.get_tracy_ctx(), cmd.cmd(), "opaque_alpha_mask");
+        GPU_ZONE(cmd, "opaque_alpha_mask");
         if (alpha_cutout_enabled_) {
           cmd.bind_pipeline(PipelineBindPoint::Graphics, shadow_depth_alpha_mask_pipeline_);
         }
@@ -319,7 +319,7 @@ void CSM::add_pass(RenderGraph& rg) {
       }
       cmd.end_rendering();
     }
-    init::end_debug_utils_label(cmd.cmd());
+    cmd.end_region();
   });
 }
 

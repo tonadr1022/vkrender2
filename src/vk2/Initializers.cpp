@@ -102,19 +102,5 @@ VkBufferCopy2KHR buffer_copy(VkDeviceSize src_offset, VkDeviceSize dst_offset, V
                           .dstOffset = dst_offset,
                           .size = size};
 }
-void begin_debug_utils_label([[maybe_unused]] VkCommandBuffer cmd,
-                             [[maybe_unused]] const char* name) {
-#ifndef NDEBUG
-  VkDebugUtilsLabelEXT debug_label_info{.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
-                                        .pLabelName = name};
-  vkCmdBeginDebugUtilsLabelEXT(cmd, &debug_label_info);
-#endif
-}
-
-void end_debug_utils_label([[maybe_unused]] VkCommandBuffer cmd) {
-#ifndef NDEBUG
-  vkCmdEndDebugUtilsLabelEXT(cmd);
-#endif
-}
 
 }  // namespace gfx::vk2::init

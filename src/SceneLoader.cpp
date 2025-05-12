@@ -695,7 +695,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
       futures.clear();
       VkRender2::get().immediate_submit([start_copy_idx, end_copy_idx = img_i - 1,
                                          &img_upload_infos, &result, &state, curr_staging_offset,
-                                         &img_staging_buf](VkCommandBuffer cmd) {
+                                         &img_staging_buf](CmdEncoder& cmd) {
         state.reset(cmd);
         for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
           const auto& img_upload = img_upload_infos[i];
@@ -729,7 +729,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
               .regionCount = 1,
               .pRegions = &img_copy,
           };
-          vkCmdCopyBufferToImage2KHR(cmd, &img_copy_info);
+          vkCmdCopyBufferToImage2KHR(cmd.cmd(), &img_copy_info);
         }
         for (u64 i = start_copy_idx; i <= end_copy_idx; i++) {
           state.transition(
