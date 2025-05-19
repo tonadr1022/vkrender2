@@ -17,7 +17,7 @@ class IBL {
  public:
   explicit IBL(Device* device, BufferHandle cube_vertex_buf);
   void load_pipelines(PipelineLoader& loader);
-  void load_env_map(CmdEncoder& cmd, const std::filesystem::path& path);
+  void load_env_map(const std::filesystem::path& path);
   void init_post_pipeline_load();
 
  private:

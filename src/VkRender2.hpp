@@ -18,6 +18,7 @@
 #include "techniques/IBL.hpp"
 #include "util/IndexAllocator.hpp"
 #include "vk2/Buffer.hpp"
+#include "vk2/Device.hpp"
 #include "vk2/PipelineManager.hpp"
 
 struct GLFWwindow;
@@ -26,6 +27,20 @@ struct VkCtx;
 }
 
 namespace gfx {
+
+struct LinearCopyer {
+  explicit LinearCopyer(void* data) : data_(data) {}
+
+  u64 copy(const void* data, u64 size) {
+    memcpy((char*)data_ + offset_, data, size);
+    offset_ += size;
+    return offset_ - size;
+  }
+
+ private:
+  u64 offset_{};
+  void* data_{};
+};
 
 struct LinearStagingBuffer {
   explicit LinearStagingBuffer(Buffer* buffer) : buffer_(buffer) {}
@@ -84,7 +99,7 @@ class VkRender2 final {
   void new_frame();
   void set_imgui_enabled(bool imgui_enabled) { draw_imgui_ = imgui_enabled; }
   [[nodiscard]] bool get_imgui_enabled() const { return draw_imgui_; }
-  ImageHandle load_hdr_img(CmdEncoder& ctx, const std::filesystem::path& path, bool flip = false);
+  ImageHandle load_hdr_img(const std::filesystem::path& path, bool flip = false);
   void generate_mipmaps(CmdEncoder& ctx, ImageHandle handle);
   void draw_line(const vec3& p1, const vec3& p2, const vec4& color);
 
@@ -115,7 +130,6 @@ class VkRender2 final {
   struct PerFrameData {
     // VkCommandPool cmd_pool;
     // VkCommandBuffer main_cmd_buffer;
-    tracy::VkCtx* tracy_vk_ctx{};
     Holder<BufferHandle> scene_uniform_buf;
     Holder<BufferHandle> line_draw_buf;
   };
@@ -191,8 +205,8 @@ class VkRender2 final {
     [[nodiscard]] u32 add_draw_pass();
 
     // TODO: this is a little jank
-    Handle add_draws(StateTracker& state, CmdEncoder& cmd, size_t size, size_t staging_offset,
-                     Buffer& staging, u32 num_double_sided_draws);
+    Handle add_draws(StateTracker& state, Device::CopyAllocator::CopyCmd& cmd, size_t size,
+                     size_t staging_offset, u32 num_double_sided_draws);
     void remove_draws(StateTracker& state, CmdEncoder& cmd, Handle handle);
 
     [[nodiscard]] const std::string& get_name() const { return name_; }

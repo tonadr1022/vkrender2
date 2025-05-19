@@ -207,9 +207,11 @@ class Device {
 
   // smart ptr to handle resizing
   std::vector<std::unique_ptr<CmdEncoder>> cmd_lists_;
-  std::vector<VkImageMemoryBarrier2> init_transitions_;
   TransitionHandler transition_handlers_[frames_in_flight];
 
+  // TODO: fix
+ public:
+  std::vector<VkImageMemoryBarrier2> init_transitions_;
   struct CopyAllocator {
     explicit CopyAllocator(Device* device) : device_(device) {}
     struct CopyCmd {
@@ -218,6 +220,8 @@ class Device {
       VkFence fence{};
       BufferHandle staging_buffer;
       [[nodiscard]] bool is_valid() const { return transfer_cmd_buf != VK_NULL_HANDLE; }
+      void copy_buffer(Device* device, const Buffer& dst, u64 src_offset, u64 dst_offset,
+                       u64 size) const;
     };
     CopyCmd allocate(u64 size);
     void submit(CopyCmd cmd);
@@ -229,6 +233,7 @@ class Device {
     std::vector<CopyCmd> free_copy_cmds_;
   };
 
+ private:
   VkFence frame_fences_[frames_in_flight][(u32)QueueType::Count]{};
 
   VkPhysicalDeviceVulkan12Features supported_features12_{
@@ -237,7 +242,10 @@ class Device {
   void init_impl(const CreateInfo& info);
   void set_name(const char* name, u64 handle, VkObjectType type);
 
+ public:
   CopyAllocator copy_allocator_;
+
+ private:
   std::vector<VkFence> free_fences_;
   VkSurfaceKHR surface_;
   VkDevice device_;

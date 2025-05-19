@@ -74,11 +74,8 @@ class StateTracker {
                                VkAccessFlags2 dst_access);
   void barrier();
 
-  StateTracker& queue_transfer_buffer(StateTracker& dst_tracker, VkPipelineStageFlags2 dst_stage,
-                                      VkAccessFlags2 dst_access, VkBuffer buffer, u32 src_queue,
-                                      u32 dst_queue, u64 offset = 0, u64 size = VK_WHOLE_SIZE);
-
   StateTracker& reset(CmdEncoder& cmd);
+  StateTracker& reset(VkCommandBuffer cmd);
   StateTracker& flush_transfers(u32 queue_idx);
   struct ImageState {
     VkImage image;
@@ -112,7 +109,6 @@ class StateTracker {
   std::array<std::vector<VkBufferMemoryBarrier2>, max_queue_idx> buffer_transfer_barriers_;
 
   VkCommandBuffer cmd_{};
-  CmdEncoder* cmd2_{};
 
   decltype(tracked_imgs_.end()) get_img(VkImage image) {
     for (auto it = tracked_imgs_.begin(); it != tracked_imgs_.end(); it++) {

@@ -38,7 +38,6 @@
 #include "vk2/Initializers.hpp"
 #include "vk2/PipelineManager.hpp"
 #include "vk2/ShaderCompiler.hpp"
-#include "vk2/StagingBufferPool.hpp"
 #include "vk2/Texture.hpp"
 #include "vk2/VkTypes.hpp"
 
@@ -128,7 +127,6 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
 
   device_->init_imgui();
 
-  StagingBufferPool::init();
   imm_cmd_pool_ = device_->create_command_pool(QueueType::Graphics,
                                                VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
   imm_cmd_buf_ = device_->create_command_buffer(imm_cmd_pool_);
@@ -136,19 +134,18 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
                         device_->default_pipeline_layout_);
 
   uint32_t white = glm::packUnorm4x8(glm::vec4(1, 1, 1, 1));
-  Holder<BufferHandle> staging_handle = StagingBufferPool::get().acquire(32);
-  auto* staging = device_->get_buffer(staging_handle);
-
-  memcpy((char*)staging->mapped_data(), (void*)&white, sizeof(u32));
+  auto copy_cmd = device_->copy_allocator_.allocate(32);
+  memcpy((char*)device_->get_buffer(copy_cmd.staging_buffer)->mapped_data(), (void*)&white,
+         sizeof(u32));
   default_data_.white_img = Holder<ImageHandle>{device_->create_image(ImageDesc{
       .format = Format::R8G8B8A8Srgb, .dims = {1, 1, 1}, .bind_flags = BindFlag::ShaderResource})};
 
-  immediate_submit([this, staging](CmdEncoder& cmd) {
-    // TODO: extract
-    state_.transition(*device_->get_image(default_data_.white_img),
-                      VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    state_.flush_barriers();
+  {
+    state_.reset(copy_cmd.transfer_cmd_buf);
+    state_
+        .transition(*device_->get_image(default_data_.white_img), VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                    VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+        .flush_barriers();
     VkBufferImageCopy2 img_copy{.sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
                                 .bufferOffset = 0,
                                 .bufferRowLength = 0,
@@ -160,21 +157,21 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
                                         .layerCount = 1,
                                     },
                                 .imageExtent = VkExtent3D{1, 1, 1}};
-    VkCopyBufferToImageInfo2 copy{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2_KHR,
-                                  .srcBuffer = staging->buffer(),
-                                  .dstImage = device_->get_image(default_data_.white_img)->image(),
-                                  .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                  .regionCount = 1,
-                                  .pRegions = &img_copy};
-    vkCmdCopyBufferToImage2KHR(cmd.cmd(), &copy);
+    VkCopyBufferToImageInfo2 copy{
+        .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2_KHR,
+        .srcBuffer = device_->get_buffer(copy_cmd.staging_buffer)->buffer(),
+        .dstImage = device_->get_image(default_data_.white_img)->image(),
+        .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .regionCount = 1,
+        .pRegions = &img_copy};
+    vkCmdCopyBufferToImage2KHR(copy_cmd.transfer_cmd_buf, &copy);
     state_.transition(device_->get_image(default_data_.white_img)->image(),
                       VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                       VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
                       VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
     state_.flush_barriers();
-  });
-
-  StagingBufferPool::get().free(std::move(staging_handle));
+    device_->copy_allocator_.submit(copy_cmd);
+  }
 
   nearest_sampler_ = device_->get_or_create_sampler({
       .min_filter = FilterMode::Nearest,
@@ -258,20 +255,20 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   // TODO: make a function for this lmao, so cringe
   {
     auto vert_buf_size = sizeof(cube_vertices);
-    auto staging_handle = StagingBufferPool::get().acquire(vert_buf_size);
-    auto* staging = device_->get_buffer(staging_handle);
-    memcpy(staging->mapped_data(), cube_vertices, vert_buf_size);
+    auto copy_cmd = device_->copy_allocator_.allocate(vert_buf_size);
+    memcpy(device_->get_buffer(copy_cmd.staging_buffer)->mapped_data(), cube_vertices,
+           vert_buf_size);
     cube_vertex_buf_ = device_->create_buffer_holder(
         BufferCreateInfo{.size = vert_buf_size, .usage = BufferUsage_Storage});
-    immediate_submit([this, vert_buf_size, staging](CmdEncoder& cmd) {
-      state_
-          .buffer_barrier(static_vertex_buf_.get_buffer()->buffer(),
-                          VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
-          .buffer_barrier(static_index_buf_.get_buffer()->buffer(),
-                          VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
-          .flush_barriers();
-      cmd.copy_buffer(*staging, *device_->get_buffer(cube_vertex_buf_), 0, 0, vert_buf_size);
-    });
+
+    state_.reset(copy_cmd.transfer_cmd_buf)
+        .buffer_barrier(static_vertex_buf_.get_buffer()->buffer(), VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                        VK_ACCESS_2_TRANSFER_WRITE_BIT)
+        .buffer_barrier(static_index_buf_.get_buffer()->buffer(), VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                        VK_ACCESS_2_TRANSFER_WRITE_BIT)
+        .flush_barriers();
+    copy_cmd.copy_buffer(device_, *device_->get_buffer(cube_vertex_buf_), 0, 0, vert_buf_size);
+    device_->copy_allocator_.submit(copy_cmd);
   }
 
   shadow_sampler_ = device_->get_or_create_sampler(
@@ -625,9 +622,7 @@ VkRender2::~VkRender2() {
   ZoneScoped;
   device_->wait_idle();
   device_->destroy_command_pool(imm_cmd_pool_);
-  StagingBufferPool::destroy();
   for (auto& frame : per_frame_data_) {
-    TracyVkDestroy(frame.tracy_vk_ctx);
     frame.scene_uniform_buf = {};
     frame.line_draw_buf = {};
   }
@@ -662,9 +657,9 @@ ModelHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
       auto vertices_gpu_slot = static_vertex_buf_.allocator.allocate(vertices_size);
       auto indices_gpu_slot = static_index_buf_.allocator.allocate(indices_size);
 
-      auto staging_handle =
-          StagingBufferPool::get().acquire(material_data_size + vertices_size + indices_size);
-      auto staging = LinearStagingBuffer{device_->get_buffer(staging_handle)};
+      auto copy_cmd =
+          device_->copy_allocator_.allocate(material_data_size + vertices_size + indices_size);
+      auto staging = LinearCopyer{device_->get_buffer(copy_cmd.staging_buffer)->mapped_data()};
       u64 material_data_staging_offset = staging.copy(res.materials.data(), material_data_size);
       u64 vertices_staging_offset = staging.copy(res.vertices.data(), vertices_size);
       u64 indices_staging_offset = staging.copy(res.indices.data(), indices_size);
@@ -674,8 +669,8 @@ ModelHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
       static_draw_stats_.textures += res.textures.size();
       static_draw_stats_.materials += res.materials.size();
       auto materials_gpu_slot = static_materials_buf_.allocator.allocate(material_data_size);
-
-      immediate_submit([&, this](CmdEncoder& cmd) {
+      {
+        state_.reset(copy_cmd.transfer_cmd_buf);
         state_
             .buffer_barrier(static_vertex_buf_.get_buffer()->buffer(),
                             VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
@@ -684,13 +679,13 @@ ModelHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
             .buffer_barrier(static_materials_buf_.get_buffer()->buffer(),
                             VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
             .flush_barriers();
-        cmd.copy_buffer(*staging.get_buffer(), *device_->get_buffer(static_materials_buf_.buffer),
-                        material_data_staging_offset, materials_gpu_slot.get_offset(),
-                        material_data_size);
-        cmd.copy_buffer(*staging.get_buffer(), *static_vertex_buf_.get_buffer(),
-                        vertices_staging_offset, vertices_gpu_slot.get_offset(), vertices_size);
-        cmd.copy_buffer(*staging.get_buffer(), *static_index_buf_.get_buffer(),
-                        indices_staging_offset, indices_gpu_slot.get_offset(), indices_size);
+        copy_cmd.copy_buffer(device_, *device_->get_buffer(static_materials_buf_.buffer),
+                             material_data_staging_offset, materials_gpu_slot.get_offset(),
+                             material_data_size);
+        copy_cmd.copy_buffer(device_, *static_vertex_buf_.get_buffer(), vertices_staging_offset,
+                             vertices_gpu_slot.get_offset(), vertices_size);
+        copy_cmd.copy_buffer(device_, *static_index_buf_.get_buffer(), indices_staging_offset,
+                             indices_gpu_slot.get_offset(), indices_size);
         state_
             .buffer_barrier(static_vertex_buf_.get_buffer()->buffer(),
                             VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
@@ -700,7 +695,8 @@ ModelHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
             .buffer_barrier(static_materials_buf_.get_buffer()->buffer(),
                             VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT)
             .flush_barriers();
-      });
+        device_->copy_allocator_.submit(copy_cmd);
+      }
       resources_handle = static_models_pool_.alloc(
           std::move(res.scene_graph_data), std::move(res.mesh_draw_infos),
           std::move(materials_gpu_slot), std::move(vertices_gpu_slot), std::move(indices_gpu_slot),
@@ -710,7 +706,6 @@ ModelHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
           path.string(), 0u);
       resources = static_models_pool_.get(resources_handle);
       static_model_name_to_handle_.emplace(resources->name, resources_handle);
-      StagingBufferPool::get().free(std::move(staging_handle));
     }
     static_draw_stats_.total_vertices += resources->num_vertices;
     static_draw_stats_.total_indices += resources->num_indices;
@@ -843,10 +838,9 @@ ModelHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
     for (auto& cmds : pass_cmds) {
       tot_draw_cmds_buf_size += cmds.size() * sizeof(GPUDrawInfo);
     }
-    auto staging_handle = StagingBufferPool::get().acquire(tot_draw_cmds_buf_size + obj_datas_size +
-                                                           instance_datas_size);
-    auto staging = LinearStagingBuffer{device_->get_buffer(staging_handle)};
-
+    auto copy_cmd = device_->copy_allocator_.allocate(tot_draw_cmds_buf_size + obj_datas_size +
+                                                      instance_datas_size);
+    auto staging = LinearCopyer{device_->get_buffer(copy_cmd.staging_buffer)->mapped_data()};
     u64 cmds_staging_offsets[MeshPass_Count] = {};
     for (int i = 0; i < MeshPass_Count; i++) {
       auto& cmds = pass_cmds[i];
@@ -857,24 +851,22 @@ ModelHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
     u64 obj_datas_staging_offset =
         staging.copy(instance_resources->object_datas.data(), obj_datas_size);
     u64 instance_datas_staging_offset = staging.copy(instance_datas.data(), instance_datas_size);
-
-    immediate_submit([&, this](CmdEncoder& cmd) {
+    {
       assert(obj_datas_size && instance_datas_size);
-
+      state_.reset(copy_cmd.transfer_cmd_buf);
       for (int i = 0; i < MeshPass_Count; i++) {
         auto& cmds = pass_cmds[i];
         if (cmds.size()) {
           instance_resources->mesh_pass_draw_handles[i] = static_draw_mgrs_[i].add_draws(
-              state_, cmd, cmds.size() * sizeof(GPUDrawInfo), cmds_staging_offsets[i],
-              *staging.get_buffer(), pass_double_sided_draw_cnts[i]);
+              state_, copy_cmd, cmds.size() * sizeof(GPUDrawInfo), cmds_staging_offsets[i],
+              pass_double_sided_draw_cnts[i]);
         }
       }
-      cmd.copy_buffer(*staging.get_buffer(), *static_object_data_buf_.get_buffer(),
-                      obj_datas_staging_offset, instance_resources->object_data_slot.get_offset(),
-                      obj_datas_size);
-      cmd.copy_buffer(*staging.get_buffer(), *static_instance_data_buf_.get_buffer(),
-                      instance_datas_staging_offset,
-                      instance_resources->instance_data_slot.get_offset(), instance_datas_size);
+      copy_cmd.copy_buffer(device_, *static_object_data_buf_.get_buffer(), obj_datas_staging_offset,
+                           instance_resources->object_data_slot.get_offset(), obj_datas_size);
+      copy_cmd.copy_buffer(
+          device_, *static_instance_data_buf_.get_buffer(), instance_datas_staging_offset,
+          instance_resources->instance_data_slot.get_offset(), instance_datas_size);
       state_
           .buffer_barrier(
               static_object_data_buf_.get_buffer()->buffer(),
@@ -883,8 +875,8 @@ ModelHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
           .buffer_barrier(static_instance_data_buf_.get_buffer()->buffer(),
                           VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT)
           .flush_barriers();
-    });
-    StagingBufferPool::get().free(std::move(staging_handle));
+      device_->copy_allocator_.submit(copy_cmd);
+    }
     return {};
   }
   return {};
@@ -905,8 +897,7 @@ const char* VkRender2::debug_mode_to_string(u32 mode) {
   }
 }
 
-ImageHandle VkRender2::load_hdr_img(CmdEncoder& ctx, const std::filesystem::path& path, bool flip) {
-  VkCommandBuffer cmd = ctx.cmd();
+ImageHandle VkRender2::load_hdr_img(const std::filesystem::path& path, bool flip) {
   auto cpu_img_data = gfx::loader::load_hdr(path, 4, flip);
   if (!cpu_img_data.has_value()) return {};
   auto tex_handle = device_->create_image(ImageDesc{.type = ImageDesc::Type::TwoD,
@@ -915,13 +906,29 @@ ImageHandle VkRender2::load_hdr_img(CmdEncoder& ctx, const std::filesystem::path
                                                     .bind_flags = BindFlag::ShaderResource});
   auto cnt = cpu_img_data->w * cpu_img_data->h;
   u64 cpu_img_size = sizeof(float) * cnt * 4;
-  auto staging_buf_handle = StagingBufferPool::get().acquire(cpu_img_size);
-  auto* staging_buf = device_->get_buffer(staging_buf_handle);
-  auto* mapped = (float*)staging_buf->mapped_data();
+  auto copy_cmd = device_->copy_allocator_.allocate(cpu_img_size);
+  auto* mapped = (float*)device_->get_buffer(copy_cmd.staging_buffer)->mapped_data();
+  assert(mapped);
   const float* src = cpu_img_data->data;
   memcpy(mapped, src, cpu_img_size);
+  VkImageMemoryBarrier2 barrier{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+  auto* img = device_->get_image(tex_handle);
+  barrier.image = img->image();
+  barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+  barrier.srcAccessMask = 0;
+  barrier.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+  barrier.dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+  barrier.oldLayout = img->curr_layout;
+  barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  img->curr_layout = barrier.newLayout;
+  barrier.subresourceRange = VkImageSubresourceRange{.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                                     .baseMipLevel = 0,
+                                                     .levelCount = VK_REMAINING_MIP_LEVELS,
+                                                     .baseArrayLayer = 0,
+                                                     .layerCount = VK_REMAINING_ARRAY_LAYERS};
+  auto dep_info = vk2::init::dependency_info({}, SPAN1(barrier));
+  vkCmdPipelineBarrier2KHR(copy_cmd.transfer_cmd_buf, &dep_info);
 
-  ctx.transition_image(tex_handle, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
   auto dims = device_->get_image(tex_handle)->size();
   VkBufferImageCopy2 img_copy_info{.sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
                                    .bufferOffset = 0,
@@ -935,14 +942,21 @@ ImageHandle VkRender2::load_hdr_img(CmdEncoder& ctx, const std::filesystem::path
                                    .imageExtent = {dims.x, dims.y, 1}};
   VkCopyBufferToImageInfo2 copy_to_img_info{
       .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2_KHR,
-      .srcBuffer = staging_buf->buffer(),
+      .srcBuffer = device_->get_buffer(copy_cmd.staging_buffer)->buffer(),
       .dstImage = device_->get_image(tex_handle)->image(),
       .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
       .regionCount = 1,
       .pRegions = &img_copy_info};
-  vkCmdCopyBufferToImage2KHR(cmd, &copy_to_img_info);
-  ctx.transition_image(tex_handle, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-  StagingBufferPool::get().free(std::move(staging_buf_handle));
+  vkCmdCopyBufferToImage2KHR(copy_cmd.transfer_cmd_buf, &copy_to_img_info);
+  device_->copy_allocator_.submit(copy_cmd);
+
+  std::swap(barrier.srcStageMask, barrier.dstStageMask);
+  barrier.oldLayout = img->curr_layout;
+  img->curr_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  barrier.newLayout = img->curr_layout;
+  barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+  barrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
+  device_->init_transitions_.push_back(barrier);
   return tex_handle;
 }
 
@@ -1015,9 +1029,7 @@ void VkRender2::generate_mipmaps(StateTracker& state, CmdEncoder& cmd, ImageHand
   }
 }
 
-void VkRender2::set_env_map(const std::filesystem::path& path) {
-  immediate_submit([this, &path](CmdEncoder& ctx) { ibl_->load_env_map(ctx, path); });
-}
+void VkRender2::set_env_map(const std::filesystem::path& path) { ibl_->load_env_map(path); }
 
 void VkRender2::immediate_submit(std::function<void(CmdEncoder& ctx)>&& function) {
   CmdEncoder* cmd = device_->begin_command_list(QueueType::Graphics);
@@ -1515,7 +1527,7 @@ void VkRender2::StaticMeshDrawManager::remove_draws(StateTracker&, CmdEncoder& c
 }
 
 VkRender2::StaticMeshDrawManager::Handle VkRender2::StaticMeshDrawManager::add_draws(
-    StateTracker& state, CmdEncoder& cmd, size_t size, size_t staging_offset, Buffer& staging,
+    StateTracker& state, Device::CopyAllocator::CopyCmd& cmd, size_t size, size_t staging_offset,
     u32 num_double_sided_draws) {
   assert(size > 0);
   Alloc a;
@@ -1557,9 +1569,7 @@ VkRender2::StaticMeshDrawManager::Handle VkRender2::StaticMeshDrawManager::add_d
         .usage = BufferUsage_Storage,
     });
 
-    cmd.copy_buffer(*draw_cmds_buf, *device_->get_buffer(new_buf), 0, 0,
-                    curr_tot_draw_cmd_buf_size);
-
+    cmd.copy_buffer(device_, *device_->get_buffer(new_buf), 0, 0, curr_tot_draw_cmd_buf_size);
     state
         .buffer_barrier(device_->get_buffer(new_buf)->buffer(), VK_PIPELINE_STAGE_2_TRANSFER_BIT,
                         VK_ACCESS_2_TRANSFER_WRITE_BIT)
@@ -1576,9 +1586,7 @@ VkRender2::StaticMeshDrawManager::Handle VkRender2::StaticMeshDrawManager::add_d
       .buffer_barrier(draw_cmds_buf->buffer(), VK_PIPELINE_STAGE_2_TRANSFER_BIT,
                       VK_ACCESS_2_TRANSFER_WRITE_BIT)
       .flush_barriers();
-
-  cmd.copy_buffer(staging, *draw_cmds_buf, staging_offset, a.draw_cmd_slot.get_offset(), size);
-
+  cmd.copy_buffer(device_, *draw_cmds_buf, staging_offset, a.draw_cmd_slot.get_offset(), size);
   state
       .buffer_barrier(
           draw_cmds_buf->buffer(),

@@ -128,28 +128,6 @@ VkBufferMemoryBarrier2 buffer_memory_barrier(const BufferBarrier& t) {
           .size = t.size};
 }
 
-StateTracker& StateTracker::queue_transfer_buffer(StateTracker& dst_tracker,
-                                                  VkPipelineStageFlags2 dst_stage,
-                                                  VkAccessFlags2 dst_access, VkBuffer buffer,
-                                                  u32 src_queue, u32 dst_queue, u64 offset,
-                                                  u64 size) {
-  VkBufferMemoryBarrier2 barrier{
-      .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-      .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-      .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-      .srcQueueFamilyIndex = src_queue,
-      .dstQueueFamilyIndex = dst_queue,
-      .buffer = buffer,
-      .offset = offset,
-      .size = size,
-  };
-  buffer_barriers_.push_back(barrier);
-
-  barrier.dstStageMask = dst_stage;
-  barrier.dstAccessMask = dst_access;
-  dst_tracker.buffer_transfer_barriers_[dst_queue].emplace_back(barrier);
-  return *this;
-}
 StateTracker& StateTracker::flush_transfers(u32 queue_idx) {
   auto info = vk2::init::dependency_info(buffer_transfer_barriers_[queue_idx], img_barriers_);
   vkCmdPipelineBarrier2KHR(cmd_, &info);
@@ -157,17 +135,19 @@ StateTracker& StateTracker::flush_transfers(u32 queue_idx) {
   return *this;
 }
 
-StateTracker& StateTracker::reset(CmdEncoder& cmd) {
+StateTracker& StateTracker::reset(VkCommandBuffer cmd) {
   assert(img_barriers_.empty());
   assert(buffer_barriers_.empty());
-  cmd_ = cmd.cmd();
-  cmd2_ = &cmd;
+  cmd_ = cmd;
   tracked_buffers_.clear();
   tracked_imgs_.clear();
   img_barriers_.clear();
   buffer_barriers_.clear();
   return *this;
 }
+
+StateTracker& StateTracker::reset(CmdEncoder& cmd) { return reset(cmd.cmd()); }
+
 void StateTracker::barrier() {
   VkMemoryBarrier2 barrier{
       .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,

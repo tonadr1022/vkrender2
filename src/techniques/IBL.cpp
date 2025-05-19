@@ -31,11 +31,13 @@ const std::array<glm::mat4, 6> VIEW_MATRICES = {
 
 namespace gfx {
 
-void IBL::load_env_map(CmdEncoder& cmd, const std::filesystem::path& path) {
-  env_equirect_tex_ = Holder<ImageHandle>{VkRender2::get().load_hdr_img(cmd, path)};
-  equirect_to_cube(cmd);
-  convolute_cube(cmd);
-  prefilter_env_map(cmd);
+void IBL::load_env_map(const std::filesystem::path& path) {
+  env_equirect_tex_ = Holder<ImageHandle>{VkRender2::get().load_hdr_img(path)};
+  VkRender2::get().immediate_submit([this](CmdEncoder& cmd) {
+    equirect_to_cube(cmd);
+    convolute_cube(cmd);
+    prefilter_env_map(cmd);
+  });
 }
 
 IBL::IBL(Device* device, BufferHandle cube_vertex_buf)

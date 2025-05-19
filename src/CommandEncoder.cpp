@@ -226,8 +226,8 @@ void CmdEncoder::draw_indexed_indirect_count(BufferHandle draw_cmd_buf, u64 draw
                                              BufferHandle draw_count_buf, u64 draw_count_offset,
                                              u32 draw_count, u32 stride) {
   vkCmdDrawIndexedIndirectCount(get_cmd_buf(), device_->get_buffer(draw_count_buf)->buffer(),
-                                draw_count_offset, device_->get_buffer(draw_cmd_buf)->buffer(),
-                                draw_cmd_offset, draw_count, stride);
+                                draw_cmd_offset, device_->get_buffer(draw_cmd_buf)->buffer(),
+                                draw_count_offset, draw_count, stride);
 }
 
 void CmdEncoder::update_buffer(BufferHandle buffer, u64 offset, u64 size, void* data) {

@@ -8,6 +8,7 @@
 #include <vulkan/vulkan_core.h>
 
 #include <cassert>
+#include <thread>
 #include <tracy/Tracy.hpp>
 #include <tracy/TracyVulkan.hpp>
 
@@ -550,16 +551,19 @@ BufferHandle Device::create_buffer(const BufferCreateInfo& cinfo) {
 
 Device::CopyAllocator::CopyCmd Device::CopyAllocator::allocate(u64 size) {
   CopyCmd cmd;
-  for (size_t i = 0; i < free_copy_cmds_.size(); i++) {
-    auto& free_cmd = free_copy_cmds_[i];
-    if (free_cmd.is_valid()) {
-      auto* staging_buf = device_->get_buffer(free_cmd.staging_buffer);
-      assert(staging_buf);
-      if (staging_buf->size() >= size) {
-        cmd = free_copy_cmds_[i];
-        std::swap(free_copy_cmds_[i], *free_copy_cmds_.end());
-        free_copy_cmds_.pop_back();
-        break;
+  {
+    std::scoped_lock lock(free_list_mtx_);
+    for (size_t i = 0; i < free_copy_cmds_.size(); i++) {
+      auto& free_cmd = free_copy_cmds_[i];
+      if (free_cmd.is_valid()) {
+        auto* staging_buf = device_->get_buffer(free_cmd.staging_buffer);
+        assert(staging_buf);
+        if (staging_buf->size() >= size) {
+          cmd = free_copy_cmds_[i];
+          std::swap(free_copy_cmds_[i], *(free_copy_cmds_.end() - 1));
+          free_copy_cmds_.pop_back();
+          break;
+        }
       }
     }
   }
@@ -573,23 +577,43 @@ Device::CopyAllocator::CopyCmd Device::CopyAllocator::allocate(u64 size) {
     VkFenceCreateInfo info{.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, .flags = 0};
     VK_CHECK(vkCreateFence(device_->device_, &info, nullptr, &cmd.fence));
   }
+  VK_CHECK(vkResetCommandPool(device_->device_, cmd.transfer_cmd_pool, 0));
+
+  VkCommandBufferBeginInfo cmd_buf_begin_info{.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+                                              .flags = 0};
+  VK_CHECK(vkBeginCommandBuffer(cmd.transfer_cmd_buf, &cmd_buf_begin_info));
+  VK_CHECK(vkResetFences(device_->device_, 1, &cmd.fence));
 
   return cmd;
 }
 
 void Device::CopyAllocator::submit(CopyCmd cmd) {
   // need to transfer ownership?
+  VK_CHECK(vkEndCommandBuffer(cmd.transfer_cmd_buf));
+  VkCommandBufferSubmitInfo cb_submit{.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+                                      .commandBuffer = cmd.transfer_cmd_buf};
+  VkSubmitInfo2 submit_info{.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+                            .commandBufferInfoCount = 1,
+                            .pCommandBufferInfos = &cb_submit};
+  VK_CHECK(
+      vkQueueSubmit2KHR(device_->get_queue(QueueType::Graphics).queue, 1, &submit_info, cmd.fence));
+  VkResult res{};
+  while ((res = vkWaitForFences(device_->device_, 1, &cmd.fence, true,
+                                gfx::Device::timeout_value)) == VK_TIMEOUT) {
+    LINFO("vkWaitForFences TIMEOUT, CopyAllocator: QueueType::Transfer");
+    std::this_thread::yield();
+  }
 
-  // this queue needs to signal the waiting queue.
-  // all other queues need to wait on this submission
+  std::scoped_lock lock(free_list_mtx_);
   free_copy_cmds_.emplace_back(cmd);
 }
 
 void Device::CopyAllocator::destroy() {
   std::scoped_lock lock(free_list_mtx_);
   for (auto& el : free_copy_cmds_) {
-    vkDestroyFence(get_device().device(), el.fence, nullptr);
-    vkDestroyCommandPool(get_device().device(), el.transfer_cmd_pool, nullptr);
+    vkDestroyFence(device_->device_, el.fence, nullptr);
+    vkDestroyCommandPool(device_->device_, el.transfer_cmd_pool, nullptr);
+    device_->destroy(el.staging_buffer);
   }
   free_copy_cmds_.clear();
 }
@@ -705,10 +729,7 @@ VkImage Device::acquire_next_image(CmdEncoder* cmd) {
   return swapchain_.imgs[swapchain_.curr_swapchain_idx];
 }
 
-void Device::begin_frame() {
-  ZoneScoped;
-  flush_deletions();
-}
+void Device::begin_frame() { ZoneScoped; }
 
 VkFence Device::allocate_fence(bool reset) {
   if (!free_fences_.empty()) {
@@ -742,7 +763,12 @@ Device::~Device() {
     destroy(it.second.first);
   }
 
+  copy_allocator_.destroy();
+
   flush_deletions();
+  assert(buffer_pool_.empty());
+  assert(img_pool_.empty());
+  assert(sampler_pool_.empty());
 
   vkDestroyDescriptorPool(device_, main_pool_, nullptr);
   vkDestroyDescriptorSetLayout(device_, main_set_layout_, nullptr);
@@ -1699,6 +1725,7 @@ void Device::submit_commands() {
     VK_CHECK(vkBeginCommandBuffer(transition_handler.cmd_buf, &cmd_buf_begin_info));
     VkDependencyInfo dep_info = vk2::init::dependency_info({}, init_transitions_);
     vkCmdPipelineBarrier2KHR(transition_handler.cmd_buf, &dep_info);
+    VK_CHECK(vkEndCommandBuffer(transition_handler.cmd_buf));
     Queue& graphics_q = queues_[(u32)QueueType::Graphics];
     graphics_q.submit_cmds.emplace_back(
         vk2::init::command_buffer_submit_info(transition_handler.cmd_buf));
@@ -1833,6 +1860,7 @@ void Device::submit_commands() {
   for (auto& q : queues_) {
     if (!q.queue) q.clear();
   }
+  flush_deletions();
 }
 
 CmdEncoder* Device::begin_command_list(QueueType queue_type) {
@@ -1932,6 +1960,21 @@ void Device::cmd_list_wait(CmdEncoder* cmd_list, CmdEncoder* wait_for) {
   VkSemaphore semaphore = new_semaphore();
   cmd_list->wait_semaphores_.emplace_back(semaphore);
   wait_for->signal_semaphores_.emplace_back(semaphore);
+}
+
+void Device::CopyAllocator::CopyCmd::copy_buffer(Device* device, const Buffer& dst, u64 src_offset,
+                                                 u64 dst_offset, u64 size) const {
+  VkBufferCopy2KHR copy{.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2_KHR,
+                        .srcOffset = src_offset,
+                        .dstOffset = dst_offset,
+                        .size = size};
+
+  VkCopyBufferInfo2KHR copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+                                 .srcBuffer = device->get_buffer(staging_buffer)->buffer(),
+                                 .dstBuffer = dst.buffer(),
+                                 .regionCount = 1,
+                                 .pRegions = &copy};
+  vkCmdCopyBuffer2KHR(transfer_cmd_buf, &copy_info);
 }
 
 }  // namespace gfx

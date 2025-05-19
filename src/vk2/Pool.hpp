@@ -51,6 +51,7 @@ struct Pool {
   }
 
   [[nodiscard]] IndexT size() const { return size_; }
+  [[nodiscard]] bool empty() const { return size() == 0; }
   [[nodiscard]] size_t get_num_created() const { return num_created_; }
   [[nodiscard]] size_t get_num_destroyed() const { return num_destroyed_; }
 
