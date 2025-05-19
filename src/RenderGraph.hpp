@@ -279,7 +279,6 @@ struct RenderGraph {
   };
   std::vector<ResourceState2> resource_states_;
   u64 all_submitted_pass_name_hash_{};
-  VkImage swapchain_img_;
   AttachmentInfo desc_;
   bool log_ = true;
 };

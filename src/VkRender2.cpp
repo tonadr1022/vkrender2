@@ -118,15 +118,13 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
 
   {
     ZoneScopedN("init per frame");
-    auto& device = get_device();
+    // auto& device = get_device();
     per_frame_data_.resize(device_->get_frames_in_flight());
-    for (auto& frame : per_frame_data_) {
-      frame.cmd_pool = device.create_command_pool(QueueType::Graphics);
-      frame.main_cmd_buffer = device.create_command_buffer(frame.cmd_pool);
-      frame.tracy_vk_ctx =
-          TracyVkContext(device.get_physical_device(), device.device(),
-                         device.get_queue(QueueType::Graphics).queue, frame.main_cmd_buffer);
-    }
+    // for (auto& frame : per_frame_data_) {
+    //   // frame.tracy_vk_ctx =
+    //   //     TracyVkContext(device.get_physical_device(), device.device(),
+    //   //                    device.get_queue(QueueType::Graphics).queue, frame.main_cmd_buffer);
+    // }
   }
 
   device_->init_imgui();
@@ -448,18 +446,17 @@ void VkRender2::draw(const SceneDrawInfo& info) {
     }
   }
 
-  VkCommandBuffer cmd_buf = curr_frame().main_cmd_buffer;
-  VK_CHECK(vkResetCommandPool(device_->device(), curr_frame().cmd_pool, 0));
-  auto cmd_begin_info = init::command_buffer_begin_info();
-  VK_CHECK(vkBeginCommandBuffer(cmd_buf, &cmd_begin_info));
+  // VkCommandBuffer cmd_buf = curr_frame().main_cmd_buffer;
+  // VK_CHECK(vkResetCommandPool(device_->device(), curr_frame().cmd_pool, 0));
+  // auto cmd_begin_info = init::command_buffer_begin_info();
+  // VK_CHECK(vkBeginCommandBuffer(cmd_buf, &cmd_begin_info));
 
-  // TODO: device should initialize command buffer
-  CmdEncoder cmd{device_, cmd_buf, device_->default_pipeline_layout_, curr_frame().tracy_vk_ctx};
-  state_.reset(cmd);
-  device_->bind_bindless_descriptors(cmd);
+  CmdEncoder* cmd = device_->begin_command_list(QueueType::Graphics);
+  state_.reset(*cmd);
+  device_->bind_bindless_descriptors(*cmd);
 
   for (auto& instance : to_delete_static_model_instances_) {
-    free(cmd, instance);
+    free(*cmd, instance);
   }
 
   to_delete_static_model_instances_.clear();
@@ -484,27 +481,26 @@ void VkRender2::draw(const SceneDrawInfo& info) {
   }
 
   rg_.setup_attachments();
-  rg_.execute(cmd);
+  rg_.execute(*cmd);
 
-  TracyVkCollect(curr_frame().tracy_vk_ctx, cmd_buf);
-  VK_CHECK(vkEndCommandBuffer(cmd_buf));
+  // TracyVkCollect(curr_frame().tracy_vk_ctx, cmd_buf);
 
   // TODO: refactor queues lmao
-  std::array<VkSemaphoreSubmitInfo, 10> wait_semaphores{};
-  u32 next_wait_sem_idx{0};
-  wait_semaphores[next_wait_sem_idx++] = init::semaphore_submit_info(
-      device_->curr_swapchain_semaphore(),
-      VK_PIPELINE_STAGE_2_TRANSFER_BIT | VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT);
-  auto signal_info = init::semaphore_submit_info(device_->curr_frame().render_semaphore,
-                                                 VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT);
-  auto cmd_buf_submit_info = init::command_buffer_submit_info(cmd_buf);
-  auto submit = init::queue_submit_info(SPAN1(cmd_buf_submit_info),
-                                        std::span(wait_semaphores.data(), next_wait_sem_idx),
-                                        SPAN1(signal_info));
-  device_->queue_submit(QueueType::Graphics, SPAN1(submit));
+  // std::array<VkSemaphoreSubmitInfo, 10> wait_semaphores{};
+  // u32 next_wait_sem_idx{0};
+  // wait_semaphores[next_wait_sem_idx++] = init::semaphore_submit_info(
+  //     device_->curr_swapchain_semaphore(),
+  //     VK_PIPELINE_STAGE_2_TRANSFER_BIT | VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT);
+  // auto signal_info = init::semaphore_submit_info(device_->curr_frame().render_semaphore,
+  //                                                VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT);
+  // auto cmd_buf_submit_info = init::command_buffer_submit_info(cmd_buf);
+  // auto submit = init::queue_submit_info(SPAN1(cmd_buf_submit_info),
+  //                                       std::span(wait_semaphores.data(), next_wait_sem_idx),
+  //                                       SPAN1(signal_info));
+  // device_->queue_submit(QueueType::Graphics, SPAN1(submit));
 
+  device_->submit_commands();
   line_draw_vertices_.clear();
-  device_->submit_to_graphics_queue();
 }
 
 void VkRender2::on_imgui() {
@@ -627,7 +623,6 @@ VkRender2::~VkRender2() {
   device_->destroy_command_pool(imm_cmd_pool_);
   StagingBufferPool::destroy();
   for (auto& frame : per_frame_data_) {
-    device_->destroy_command_pool(frame.cmd_pool);
     TracyVkDestroy(frame.tracy_vk_ctx);
     frame.scene_uniform_buf = {};
     frame.line_draw_buf = {};

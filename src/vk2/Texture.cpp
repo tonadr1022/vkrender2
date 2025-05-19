@@ -74,31 +74,6 @@ VkImageType vkviewtype_to_img_type(VkImageViewType view_type) {
   }
 }
 
-void blit_img(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent3D extent,
-              VkImageAspectFlags aspect) {
-  VkImageBlit2 region{
-      .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2,
-      .srcSubresource = {.aspectMask = aspect, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1},
-      .srcOffsets = {{},
-                     {static_cast<i32>(extent.width), static_cast<i32>(extent.height),
-                      static_cast<i32>(extent.depth)}},
-      .dstSubresource = {.aspectMask = aspect, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1},
-      .dstOffsets = {{},
-                     {static_cast<i32>(extent.width), static_cast<i32>(extent.height),
-                      static_cast<i32>(extent.depth)}}
-
-  };
-  VkBlitImageInfo2 blit_info{.sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2,
-                             .srcImage = src,
-                             .srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                             .dstImage = dst,
-                             .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                             .regionCount = 1,
-                             .pRegions = &region,
-                             .filter = VK_FILTER_NEAREST};
-  vkCmdBlitImage2KHR(cmd, &blit_info);
-};
-
 uint32_t format_storage_size(Format format) {
   switch (vk2::convert_format(format)) {
     case VK_FORMAT_R8_UNORM:

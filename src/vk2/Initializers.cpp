@@ -80,14 +80,6 @@ void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout currentL
   vkCmdPipelineBarrier2(cmd, &dep_info);
 }
 
-VkImageSubresourceRange subresource_range_whole(VkImageAspectFlags aspect) {
-  return {.aspectMask = aspect,
-          .baseMipLevel = 0,
-          .levelCount = VK_REMAINING_MIP_LEVELS,
-          .baseArrayLayer = 0,
-          .layerCount = VK_REMAINING_ARRAY_LAYERS};
-}
-
 VkDependencyInfo dependency_info(std::span<VkBufferMemoryBarrier2> buffer_barriers,
                                  std::span<VkImageMemoryBarrier2> img_barriers) {
   return {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
@@ -95,12 +87,6 @@ VkDependencyInfo dependency_info(std::span<VkBufferMemoryBarrier2> buffer_barrie
           .pBufferMemoryBarriers = buffer_barriers.size() ? buffer_barriers.data() : nullptr,
           .imageMemoryBarrierCount = static_cast<u32>(img_barriers.size()),
           .pImageMemoryBarriers = img_barriers.size() ? img_barriers.data() : nullptr};
-}
-VkBufferCopy2KHR buffer_copy(VkDeviceSize src_offset, VkDeviceSize dst_offset, VkDeviceSize size) {
-  return VkBufferCopy2KHR{.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2_KHR,
-                          .srcOffset = src_offset,
-                          .dstOffset = dst_offset,
-                          .size = size};
 }
 
 }  // namespace gfx::vk2::init

@@ -16,8 +16,6 @@ namespace gfx::vk2::init {
 VkDependencyInfo dependency_info(std::span<VkBufferMemoryBarrier2> buffer_barriers,
                                  std::span<VkImageMemoryBarrier2> img_barriers);
 
-VkBufferCopy2KHR buffer_copy(VkDeviceSize src_offset, VkDeviceSize dst_offset, VkDeviceSize size);
-
 VkCommandBufferBeginInfo command_buffer_begin_info(
     VkCommandBufferUsageFlags flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 VkSubmitInfo2 queue_submit_info();
@@ -34,5 +32,4 @@ VkImageSubresourceRange image_subresource_range(VkImageAspectFlags aspectMask);
 void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout currentLayout,
                       VkImageLayout newLayout);
 
-VkImageSubresourceRange subresource_range_whole(VkImageAspectFlags aspect);
 }  // namespace gfx::vk2::init

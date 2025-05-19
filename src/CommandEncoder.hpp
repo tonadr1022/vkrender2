@@ -1,9 +1,8 @@
 #pragma once
 
-#include <vulkan/vulkan_core.h>
-
 #include "Common.hpp"
 #include "Types.hpp"
+#include "vk2/Swapchain.hpp"
 
 namespace tracy {
 struct VkCtx;
@@ -14,12 +13,12 @@ class Buffer;
 class Device;
 
 struct CmdEncoder {
-  explicit CmdEncoder(Device* device, VkCommandBuffer cmd, VkPipelineLayout default_pipeline_layout,
+  // TODO: constructor can't take in command buffer
+  explicit CmdEncoder(Device* device, VkPipelineLayout default_pipeline_layout,
                       tracy::VkCtx* tracy_ctx = nullptr)
-      : tracy_ctx_(tracy_ctx),
-        device_(device),
-        default_pipeline_layout_(default_pipeline_layout),
-        cmd_(cmd) {}
+      : tracy_ctx_(tracy_ctx), device_(device), default_pipeline_layout_(default_pipeline_layout) {}
+  void reset(u32 frame_in_flight) { frame_in_flight_ = frame_in_flight; }
+
   [[nodiscard]] tracy::VkCtx* get_tracy_ctx() const { return tracy_ctx_; }
   void dispatch(u32 work_groups_x, u32 work_groups_y, u32 work_groups_z);
   void bind_descriptor_set(VkPipelineBindPoint bind_point, VkPipelineLayout layout,
@@ -62,9 +61,31 @@ struct CmdEncoder {
 
   [[nodiscard]] VkCommandBuffer cmd() const { return cmd_; }
 
+  [[nodiscard]] VkCommandBuffer get_cmd_buf() const {
+    return command_bufs_[frame_in_flight_][(u32)queue_];
+  }
+  [[nodiscard]] VkCommandPool get_cmd_pool() const {
+    return command_pools_[frame_in_flight_][(u32)queue_];
+  }
+
+  void begin_swapchain_blit();
+  void blit_img(ImageHandle src, ImageHandle dst, uvec3 extent, VkImageAspectFlags aspect);
+
  private:
+  // TODO: fix
+  friend class Device;
   tracy::VkCtx* tracy_ctx_{};
   Device* device_{};
+  QueueType queue_{};
+  u32 id_{UINT32_MAX};
+  u32 frame_in_flight_{};
+
+  VkCommandPool command_pools_[frames_in_flight][(u32)QueueType::Count] = {};
+  VkCommandBuffer command_bufs_[frames_in_flight][(u32)QueueType::Count] = {};
+  std::vector<vk2::Swapchain> submit_swapchains_;
+  std::vector<VkSemaphore> wait_semaphores_;
+  std::vector<VkSemaphore> signal_semaphores_;
+
   VkPipelineLayout default_pipeline_layout_;
   VkCommandBuffer cmd_;
 };

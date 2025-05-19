@@ -48,31 +48,6 @@ class Sampler {
   friend class Device;
 };
 
-struct CopyAllocator {
-  struct CopyCmd {
-    VkCommandPool transfer_cmd_pool{};
-    VkCommandBuffer transfer_cmd_buf{};
-    VkFence fence{};
-    BufferHandle staging_buffer;
-    [[nodiscard]] bool is_valid() const { return transfer_cmd_buf != VK_NULL_HANDLE; }
-  };
-  CopyCmd allocate(u64 size);
-  void submit(CopyCmd cmd);
-  void destroy();
-
- private:
-  Device* device_{};
-  std::mutex free_list_mtx_;
-  std::vector<CopyCmd> free_copy_cmds_;
-};
-
-enum class QueueType : u8 {
-  Graphics,
-  Compute,
-  Transfer,
-  Count,
-};
-
 class Device {
  public:
   Device(const Device&) = delete;
@@ -81,7 +56,7 @@ class Device {
   Device& operator=(Device&&) = delete;
 
  private:
-  Device() = default;
+  Device();
   ~Device();
 
  public:
@@ -90,17 +65,11 @@ class Device {
     GLFWwindow* window;
     bool vsync{true};
   };
-  struct Queue {
-    VkQueue queue{};
-    u32 family_idx{};
-  };
 
   static void init(const CreateInfo& info);
   static Device& get();
   static void destroy();
   void on_imgui() const;
-  void queue_submit(QueueType type, std::span<VkSubmitInfo2> submits);
-  void queue_submit(QueueType type, std::span<VkSubmitInfo2> submits, VkFence fence);
 
   [[nodiscard]] VkDevice device() const {
     assert(device_);
@@ -112,7 +81,7 @@ class Device {
 
   // VkFormat get_swapchain_format();
 
-  VkImage acquire_next_image();
+  VkImage acquire_next_image(CmdEncoder* cmd);
   // TODO: eradicate this
   [[nodiscard]] VkInstance get_instance() const { return instance_.instance; }
   [[nodiscard]] VkSurfaceKHR get_surface() const { return surface_; }
@@ -164,7 +133,9 @@ class Device {
   void destroy(SamplerHandle handle);
   void destroy(BufferHandle handle);
   void set_name(VkPipeline pipeline, const char* name);
+  void set_name(VkFence fence, const char* name);
   void set_name(ImageHandle handle, const char* name);
+  void set_name(VkSemaphore semaphore, const char* name);
   Image* get_image(ImageHandle handle) { return img_pool_.get(handle); }
   Image* get_image(const Holder<ImageHandle>& handle) { return img_pool_.get(handle.handle); }
   Buffer* get_buffer(BufferHandle handle) { return buffer_pool_.get(handle); }
@@ -173,23 +144,15 @@ class Device {
   void render_imgui(CmdEncoder& cmd);
   void new_imgui_frame();
 
-  [[nodiscard]] const Queue& get_queue(QueueType type) const { return queues_[(u32)type]; }
-
   [[nodiscard]] constexpr u32 get_frames_in_flight() const { return frames_in_flight; }
   [[nodiscard]] AttachmentInfo get_swapchain_info() const;
   [[nodiscard]] VkImage get_swapchain_img(u32 idx) const;
-  void submit_to_graphics_queue();
+  void submit_commands();
   void begin_frame();
   [[nodiscard]] u32 curr_frame_num() const { return curr_frame_num_; }
   [[nodiscard]] u32 curr_frame_in_flight() const {
     return curr_frame_num() % get_frames_in_flight();
   }
-
-  struct PerFrameData {
-    VkSemaphore render_semaphore{};
-    VkFence render_fence{};
-  };
-  PerFrameData& curr_frame() { return per_frame_data_[curr_frame_num_ % per_frame_data_.size()]; }
 
   VkSemaphore curr_swapchain_semaphore() {
     return swapchain_.acquire_semaphores[swapchain_.acquire_semaphore_idx];
@@ -199,15 +162,83 @@ class Device {
   void free_fence(VkFence fence);
   void wait_idle();
   [[nodiscard]] bool is_supported(DeviceFeature feature) const;
+  void cmd_list_wait(CmdEncoder* cmd_list, CmdEncoder* wait_for);
 
  private:
+  static constexpr u32 queue_count = 3;
+
+  VkSemaphore new_semaphore();
+  void free_semaphore(VkSemaphore semaphore);
+  void free_semaphore_unsafe(VkSemaphore semaphore);
+  std::mutex semaphore_pool_mtx_;
+  std::vector<VkSemaphore> free_semaphores_;
+
+ public:
+  struct Queue {
+    VkQueue queue{};
+    u32 family_idx{UINT32_MAX};
+    VkSemaphore frame_semaphores[frames_in_flight][Device::queue_count]{};
+    std::vector<VkSemaphoreSubmitInfo> signal_semaphore_infos;
+    std::vector<VkSemaphore> signal_semaphores;
+    std::vector<VkSemaphoreSubmitInfo> wait_semaphores_infos;
+    std::vector<VkCommandBufferSubmitInfo> submit_cmds;
+
+    std::vector<vk2::Swapchain> swapchain_updates;
+    std::vector<VkSwapchainKHR> submit_swapchains;
+    std::vector<u32> submit_swapchain_img_indices;
+
+    void clear();
+    void submit(Device* device, VkFence fence);
+    void wait(VkSemaphore semaphore);
+    void signal(VkSemaphore semaphore);
+  };
+  [[nodiscard]] const Queue& get_queue(QueueType type) const { return queues_[(u32)type]; }
+  [[nodiscard]] Queue& get_queue(QueueType type) { return queues_[(u32)type]; }
+  u32 cmd_buf_count_{};
+  CmdEncoder* begin_command_list(QueueType queue_type);
+  void begin_swapchain_blit(CmdEncoder* cmd);
+  void blit_to_swapchain(CmdEncoder* cmd, const Image& img, uvec2 dims);
+
+ private:
+  struct TransitionHandler {
+    VkCommandPool cmd_pool{};
+    VkCommandBuffer cmd_buf{};
+    VkSemaphore semaphores[(u32)QueueType::Count]{};
+  };
+
+  // smart ptr to handle resizing
+  std::vector<std::unique_ptr<CmdEncoder>> cmd_lists_;
+  std::vector<VkImageMemoryBarrier2> init_transitions_;
+  TransitionHandler transition_handlers_[frames_in_flight];
+
+  struct CopyAllocator {
+    explicit CopyAllocator(Device* device) : device_(device) {}
+    struct CopyCmd {
+      VkCommandPool transfer_cmd_pool{};
+      VkCommandBuffer transfer_cmd_buf{};
+      VkFence fence{};
+      BufferHandle staging_buffer;
+      [[nodiscard]] bool is_valid() const { return transfer_cmd_buf != VK_NULL_HANDLE; }
+    };
+    CopyCmd allocate(u64 size);
+    void submit(CopyCmd cmd);
+    void destroy();
+
+   private:
+    Device* device_{};
+    std::mutex free_list_mtx_;
+    std::vector<CopyCmd> free_copy_cmds_;
+  };
+
+  VkFence frame_fences_[frames_in_flight][(u32)QueueType::Count]{};
+
   VkPhysicalDeviceVulkan12Features supported_features12_{
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
   Queue queues_[(u32)QueueType::Count];
   void init_impl(const CreateInfo& info);
   void set_name(const char* name, u64 handle, VkObjectType type);
 
-  std::vector<PerFrameData> per_frame_data_;
+  CopyAllocator copy_allocator_;
   std::vector<VkFence> free_fences_;
   VkSurfaceKHR surface_;
   VkDevice device_;
@@ -220,7 +251,6 @@ class Device {
   VkDescriptorPool imgui_descriptor_pool_;
   u32 curr_frame_num_{};
   bool resize_swapchain_req_{};
-  static constexpr u32 frames_in_flight = 2;
 
   void destroy(Image& img);
 
@@ -244,11 +274,8 @@ class Device {
   void allocate_bindless_resource(VkDescriptorType descriptor_type, VkDescriptorImageInfo* img,
                                   VkDescriptorBufferInfo* buffer, u32 idx, u32 binding);
 
-  void delete_texture_view(VkImageView view) {
-    texture_view_delete_q2_.emplace_back(view, curr_frame_num());
-  }
-  void delete_texture(const TextureDeleteInfo& img);
-  void delete_texture_view(const ImageView& info);
+  // TODO: remove these
+  void enqueue_delete_texture_view(VkImageView view);
   void enqueue_delete_swapchain(VkSwapchainKHR swapchain);
   void enqueue_delete_pipeline(VkPipeline pipeline);
   void enqueue_delete_sempahore(VkSemaphore semaphore);
@@ -256,6 +283,8 @@ class Device {
   void flush_deletions();
 
  private:
+  static constexpr u64 timeout_value = 2000000000ull;  // 2 sec
+
   u32 resource_to_binding(ResourceType type);
   void init_bindless();
   template <typename T>
@@ -264,6 +293,11 @@ class Device {
     u32 frame;
   };
 
+  struct TextureDeleteInfo {
+    VkImage img;
+    VmaAllocation allocation;
+  };
+  void delete_texture(const TextureDeleteInfo& img);
   std::deque<DeleteQEntry<TextureDeleteInfo>> texture_delete_q_;
   std::deque<DeleteQEntry<ImageView2>> texture_view_delete_q3_;
   std::deque<DeleteQEntry<VkImageView>> texture_view_delete_q2_;

@@ -53,7 +53,13 @@ inline constexpr u32 remaining_array_layers = ~0U;
 inline constexpr u32 remaining_mip_layers = ~0U;
 inline constexpr u64 whole_size = ~0UL;
 }  // namespace constants
-
+inline constexpr u32 frames_in_flight = 2;
+enum class QueueType : u8 {
+  Graphics,
+  Compute,
+  Transfer,
+  Count,
+};
 enum ColorComponentFlagBits : u8 {
   ColorComponentRBit = 0x00000001,
   ColorComponentGBit = 0x00000002,

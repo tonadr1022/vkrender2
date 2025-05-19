@@ -13,11 +13,13 @@
 #include "CommandEncoder.hpp"
 #include "Common.hpp"
 #include "GLFW/glfw3.h"
+#include "Initializers.hpp"
 #include "PipelineManager.hpp"
 #include "Types.hpp"
 #include "VkBootstrap.h"
 #include "VkCommon.hpp"
 #include "core/Logger.hpp"
+#include "vk2/Buffer.hpp"
 #include "vk2/Resource.hpp"
 #include "vk2/Texture.hpp"
 #include "vk2/VkTypes.hpp"
@@ -292,6 +294,18 @@ void Device::init_impl(const CreateInfo& info) {
 
   for (u64 i = 0; i < vkb_device_.queue_families.size(); i++) {
     if (i == queues_[(u32)QueueType::Graphics].family_idx) continue;
+    if (vkb_device_.queue_families[i].queueFlags & VK_QUEUE_COMPUTE_BIT) {
+      vkGetDeviceQueue(device_, i, 0, &queues_[(u32)QueueType::Compute].queue);
+      queues_[(u32)QueueType::Compute].family_idx = i;
+      break;
+    }
+  }
+
+  for (u64 i = 0; i < vkb_device_.queue_families.size(); i++) {
+    if (i == queues_[(u32)QueueType::Graphics].family_idx ||
+        i == queues_[(u32)QueueType::Compute].family_idx) {
+      continue;
+    }
     if (vkb_device_.queue_families[i].queueFlags & VK_QUEUE_TRANSFER_BIT) {
       vkGetDeviceQueue(device_, i, 0, &queues_[(u32)QueueType::Transfer].queue);
       queues_[(u32)QueueType::Transfer].family_idx = i;
@@ -299,15 +313,6 @@ void Device::init_impl(const CreateInfo& info) {
     }
   }
 
-  // TODO: set debug name functions
-#ifdef DEBUG_VK_OBJECT_NAMES
-  VkDebugUtilsObjectNameInfoEXT name_info = {
-      .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
-      .objectType = VK_OBJECT_TYPE_QUEUE,
-      .objectHandle = reinterpret_cast<uint64_t>(queues_[(u32)QueueType::Graphics].queue),
-      .pObjectName = "GraphicsQueue"};
-  vkSetDebugUtilsObjectNameEXT(device_, &name_info);
-#endif
   {
     int w, h;
     glfwGetWindowSize(window_, &w, &h);
@@ -317,13 +322,62 @@ void Device::init_impl(const CreateInfo& info) {
                                                     .buffer_count = frames_in_flight,
                                                     .vsync = info.vsync});
   }
-  {
-    for (u32 i = 0; i < frames_in_flight; i++) {
-      auto& d = per_frame_data_.emplace_back();
-      d.render_fence = create_fence();
-      d.render_semaphore = create_semaphore();
+
+  // transition handler
+  for (auto& transition_handler : transition_handlers_) {
+    transition_handler.cmd_pool =
+        create_command_pool(QueueType::Graphics, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
+    transition_handler.cmd_buf = create_command_buffer(transition_handler.cmd_pool);
+    for (auto& semaphore : transition_handler.semaphores) {
+      semaphore = create_semaphore(false);
     }
   }
+
+  // frame resources
+  for (u32 frame_i = 0; frame_i < frames_in_flight; frame_i++) {
+    for (u32 queue_type = 0; queue_type < (u32)QueueType::Count; queue_type++) {
+      auto& queue = queues_[queue_type];
+      if (queue.queue == VK_NULL_HANDLE) {
+        continue;
+      }
+
+      // create frame fences
+      VkFence fence = create_fence();
+      frame_fences_[frame_i][queue_type] = fence;
+      switch ((QueueType)queue_type) {
+        default:
+        case QueueType::Compute:
+          set_name(fence, "FrameFence[Compute]");
+        case QueueType::Graphics:
+          set_name(fence, "FrameFence[Graphics]");
+        case QueueType::Transfer:
+          set_name(fence, "FrameFence[Transfer]");
+      }
+
+      // create frame semaphores
+      for (u32 other_queue_type = 0; other_queue_type < (u32)QueueType::Count; other_queue_type++) {
+        if (other_queue_type == queue_type) {
+          continue;
+        }
+        if (queues_[other_queue_type].queue == VK_NULL_HANDLE) {
+          continue;
+        }
+
+        VkSemaphore semaphore = create_semaphore();
+        queue.frame_semaphores[frame_i][other_queue_type] = semaphore;
+        switch ((QueueType)queue_type) {
+          default:
+          case QueueType::Compute:
+            set_name(semaphore, "FrameQueue[Compute]");
+          case QueueType::Graphics:
+            set_name(semaphore, "FrameQueue[Graphics]");
+          case QueueType::Transfer:
+            set_name(semaphore, "FrameQueue[Transfer]");
+        }
+      }
+    }
+  }
+
   assert(device_ && device());
 
   init_bindless();
@@ -493,12 +547,12 @@ BufferHandle Device::create_buffer(const BufferCreateInfo& cinfo) {
   return handle;
 }
 
-CopyAllocator::CopyCmd CopyAllocator::allocate(u64 size) {
+Device::CopyAllocator::CopyCmd Device::CopyAllocator::allocate(u64 size) {
   CopyCmd cmd;
   for (size_t i = 0; i < free_copy_cmds_.size(); i++) {
     auto& free_cmd = free_copy_cmds_[i];
     if (free_cmd.is_valid()) {
-      auto* staging_buf = get_device().get_buffer(free_cmd.staging_buffer);
+      auto* staging_buf = device_->get_buffer(free_cmd.staging_buffer);
       assert(staging_buf);
       if (staging_buf->size() >= size) {
         cmd = free_copy_cmds_[i];
@@ -508,33 +562,35 @@ CopyAllocator::CopyCmd CopyAllocator::allocate(u64 size) {
       }
     }
   }
-  // make new
+
   if (!cmd.is_valid()) {
     cmd.transfer_cmd_pool = device_->create_command_pool(QueueType::Graphics, 0);
+    cmd.transfer_cmd_buf = device_->create_command_buffer(cmd.transfer_cmd_pool);
+    cmd.staging_buffer = device_->create_buffer(BufferCreateInfo{
+        .size = std::max<u64>(size, 1024ul * 64), .flags = BufferCreateFlags_HostVisible});
+
+    VkFenceCreateInfo info{.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, .flags = 0};
+    VK_CHECK(vkCreateFence(device_->device_, &info, nullptr, &cmd.fence));
   }
+
   return cmd;
 }
 
-void CopyAllocator::submit(CopyCmd cmd) {
+void Device::CopyAllocator::submit(CopyCmd cmd) {
   // need to transfer ownership?
+
+  // this queue needs to signal the waiting queue.
+  // all other queues need to wait on this submission
   free_copy_cmds_.emplace_back(cmd);
 }
 
-void CopyAllocator::destroy() {
+void Device::CopyAllocator::destroy() {
   std::scoped_lock lock(free_list_mtx_);
   for (auto& el : free_copy_cmds_) {
     vkDestroyFence(get_device().device(), el.fence, nullptr);
     vkDestroyCommandPool(get_device().device(), el.transfer_cmd_pool, nullptr);
   }
   free_copy_cmds_.clear();
-}
-
-void Device::queue_submit(QueueType type, std::span<VkSubmitInfo2> submits, VkFence fence) {
-  VK_CHECK(vkQueueSubmit2KHR(queues_[(u32)type].queue, submits.size(), submits.data(), fence));
-}
-void Device::queue_submit(QueueType type, std::span<VkSubmitInfo2> submits) {
-  VK_CHECK(vkQueueSubmit2KHR(queues_[(u32)type].queue, submits.size(), submits.data(),
-                             curr_frame().render_fence));
 }
 
 void Device::init_imgui() {
@@ -605,7 +661,7 @@ AttachmentInfo Device::get_swapchain_info() const {
 
 VkImage Device::get_swapchain_img(u32 idx) const { return swapchain_.imgs[idx]; }
 
-VkImage Device::acquire_next_image() {
+VkImage Device::acquire_next_image(CmdEncoder* cmd) {
   ZoneScoped;
   swapchain_.acquire_semaphore_idx =
       (swapchain_.acquire_semaphore_idx + 1) % swapchain_.imgs.size();
@@ -613,7 +669,7 @@ VkImage Device::acquire_next_image() {
   // acquire next image
   do {
     acquire_next_image_result =
-        vkAcquireNextImageKHR(device_, swapchain_.swapchain, 1000000000,
+        vkAcquireNextImageKHR(device_, swapchain_.swapchain, timeout_value,
                               swapchain_.acquire_semaphores[swapchain_.acquire_semaphore_idx],
                               nullptr, &swapchain_.curr_swapchain_idx);
     if (acquire_next_image_result == VK_TIMEOUT) {
@@ -638,36 +694,15 @@ VkImage Device::acquire_next_image() {
       desc.width = x;
       desc.height = y;
       create_swapchain(swapchain_, desc);
-      return acquire_next_image();
+      return acquire_next_image(cmd);
     }
     assert(0);
   }
   return swapchain_.imgs[swapchain_.curr_swapchain_idx];
 }
 
-void Device::submit_to_graphics_queue() {
-  VkResult res;
-  VkPresentInfoKHR info{.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-                        .waitSemaphoreCount = 1,
-                        .pWaitSemaphores = &curr_frame().render_semaphore,
-                        .swapchainCount = 1,
-                        .pSwapchains = &swapchain_.swapchain,
-                        .pImageIndices = &swapchain_.curr_swapchain_idx,
-                        .pResults = &res};
-  VkResult present_result = vkQueuePresentKHR(queues_[(u32)QueueType::Graphics].queue, &info);
-  if (present_result == VK_ERROR_OUT_OF_DATE_KHR || present_result == VK_SUBOPTIMAL_KHR) {
-  } else {
-    VK_CHECK(present_result);
-  }
-
-  curr_frame_num_++;
-}
 void Device::begin_frame() {
   ZoneScoped;
-  // wait for fence
-  u64 timeout = 1000000000;
-  vkWaitForFences(device_, 1, &curr_frame().render_fence, true, timeout);
-  VK_CHECK(vkResetFences(device_, 1, &curr_frame().render_fence));
   flush_deletions();
 }
 
@@ -709,12 +744,22 @@ Device::~Device() {
   vkDestroyDescriptorSetLayout(device_, main_set_layout_, nullptr);
   vkDestroyDescriptorSetLayout(device_, main_set2_layout_, nullptr);
 
-  for (auto& d : per_frame_data_) {
-    vkDestroySemaphore(device_, d.render_semaphore, nullptr);
-    vkDestroyFence(device_, d.render_fence, nullptr);
-  }
   for (auto& f : free_fences_) {
     vkDestroyFence(device_, f, nullptr);
+  }
+
+  for (auto& frame_fence : frame_fences_) {
+    for (VkFence fence : frame_fence) {
+      vkDestroyFence(device_, fence, nullptr);
+    }
+  }
+
+  for (Queue& queue : queues_) {
+    for (auto& frame_semaphore : queue.frame_semaphores) {
+      for (VkSemaphore sem : frame_semaphore) {
+        vkDestroySemaphore(device_, sem, nullptr);
+      }
+    }
   }
 
   ImGui_ImplVulkan_Shutdown();
@@ -740,6 +785,15 @@ bool Device::is_supported(DeviceFeature feature) const {
   return true;
 }
 
+void Device::set_name(VkSemaphore semaphore, const char* name) {
+#ifdef DEBUG_VK_OBJECT_NAMES
+  set_name(name, reinterpret_cast<u64>(semaphore), VK_OBJECT_TYPE_SEMAPHORE);
+#else
+  (void)semaphore;
+  (void)name;
+#endif
+}
+
 void Device::set_name(ImageHandle handle, const char* name) {
 #ifdef DEBUG_VK_OBJECT_NAMES
   if (auto* img = get_image(handle); img) {
@@ -758,6 +812,17 @@ void Device::set_name(const char* name, u64 handle, VkObjectType type) {
       .objectHandle = handle,
       .pObjectName = name};
   vkSetDebugUtilsObjectNameEXT(device_, &name_info);
+}
+
+void Device::set_name(VkFence fence, const char* name) {
+#ifdef DEBUG_VK_OBJECT_NAMES
+  if (fence) {
+    set_name(name, reinterpret_cast<u64>(fence), VK_OBJECT_TYPE_FENCE);
+  }
+#else
+  (void)fence;
+  (void)name;
+#endif
 }
 
 void Device::set_name(VkPipeline pipeline, const char* name) {
@@ -1519,4 +1584,342 @@ void Device::new_imgui_frame() {
   ImGui_ImplGlfw_NewFrame();
   ImGui::NewFrame();
 }
+
+Device::Device() : copy_allocator_(this) {}
+
+void Device::enqueue_delete_texture_view(VkImageView view) {
+  texture_view_delete_q2_.emplace_back(view, curr_frame_num());
+}
+
+void Device::Queue::wait(VkSemaphore semaphore) {
+  if (!queue) {
+    return;
+  }
+  wait_semaphores_infos.emplace_back(VkSemaphoreSubmitInfo{
+      .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+      .semaphore = semaphore,
+      .value = 0,  // no timeline
+      .stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+      .deviceIndex = 0,
+  });
+}
+
+void Device::Queue::signal(VkSemaphore semaphore) {
+  if (!queue) {
+    return;
+  }
+  signal_semaphore_infos.emplace_back(VkSemaphoreSubmitInfo{
+      .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+      .semaphore = semaphore,
+      .value = 0,  // no timeline
+      .stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+      .deviceIndex = 0,
+  });
+}
+
+void Device::Queue::clear() {
+  signal_semaphore_infos.clear();
+  wait_semaphores_infos.clear();
+  signal_semaphores.clear();
+}
+
+void Device::Queue::submit(Device* device, VkFence fence) {
+  if (queue == VK_NULL_HANDLE) {
+    return;
+  }
+
+  {
+    // main submit
+    if (fence != VK_NULL_HANDLE) {
+      // end of frame submit, signal the semaphores so future submits can wait
+      for (u32 queue_i = 0; queue_i < (u32)QueueType::Count; queue_i++) {
+        for (auto& semaphore : frame_semaphores[device->curr_frame_in_flight()]) {
+          if (semaphore == VK_NULL_HANDLE) continue;
+          signal(semaphore);
+        }
+      }
+    }
+
+    // submit
+    VkSubmitInfo2 queue_submit_info{
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+        .waitSemaphoreInfoCount = static_cast<u32>(wait_semaphores_infos.size()),
+        .pWaitSemaphoreInfos = wait_semaphores_infos.data(),
+        .commandBufferInfoCount = static_cast<u32>(submit_cmds.size()),
+        .pCommandBufferInfos = submit_cmds.data(),
+        .signalSemaphoreInfoCount = static_cast<u32>(signal_semaphore_infos.size()),
+        .pSignalSemaphoreInfos = signal_semaphore_infos.data()};
+    VK_CHECK(vkQueueSubmit2KHR(queue, 1, &queue_submit_info, fence));
+
+    wait_semaphores_infos.clear();
+    signal_semaphore_infos.clear();
+    submit_cmds.clear();
+
+    // present swapchain results
+    if (submit_swapchains.size()) {
+      VkPresentInfoKHR info{.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+                            .waitSemaphoreCount = 1,
+                            .pWaitSemaphores = signal_semaphores.data(),
+                            .swapchainCount = static_cast<u32>(submit_swapchains.size()),
+                            .pSwapchains = submit_swapchains.data(),
+                            .pImageIndices = submit_swapchain_img_indices.data()};
+      VkResult present_result = vkQueuePresentKHR(queue, &info);
+      // out of date == recreate swapchain
+      if (present_result == VK_ERROR_OUT_OF_DATE_KHR || present_result == VK_SUBOPTIMAL_KHR) {
+        for (auto& swapchain : swapchain_updates) {
+          create_swapchain(swapchain, swapchain.desc);
+        }
+      } else {
+        VK_CHECK(present_result);
+      }
+
+      swapchain_updates.clear();
+      submit_swapchain_img_indices.clear();
+      signal_semaphores.clear();
+      submit_swapchains.clear();
+    }
+  }
+}
+
+void Device::submit_commands() {
+  // transition resources (images) to graphics queue
+  if (!init_transitions_.empty()) {
+    // place barriers and submit to grpahics queue
+    auto& transition_handler = transition_handlers_[curr_frame_in_flight()];
+    VK_CHECK(vkResetCommandPool(device_, transition_handler.cmd_pool, 0));
+
+    VkCommandBufferBeginInfo cmd_buf_begin_info{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = 0};
+    VK_CHECK(vkBeginCommandBuffer(transition_handler.cmd_buf, &cmd_buf_begin_info));
+    VkDependencyInfo dep_info = vk2::init::dependency_info({}, init_transitions_);
+    vkCmdPipelineBarrier2KHR(transition_handler.cmd_buf, &dep_info);
+    Queue& graphics_q = queues_[(u32)QueueType::Graphics];
+    graphics_q.submit_cmds.emplace_back(
+        vk2::init::command_buffer_submit_info(transition_handler.cmd_buf));
+    // graphics queue transitions should complete before other operations
+    for (u32 queue_type = 1; queue_type < (u32)QueueType::Count; queue_type++) {
+      if (queues_[queue_type].queue == VK_NULL_HANDLE) {
+        continue;
+      }
+      graphics_q.signal(transition_handler.semaphores[queue_type]);
+      queues_[queue_type].wait(transition_handler.semaphores[queue_type]);
+    }
+    graphics_q.submit(this, VK_NULL_HANDLE);
+    init_transitions_.clear();
+  }
+
+  // submit frame cmd lists
+  {
+    u32 last_cmd_idx = cmd_buf_count_;
+    cmd_buf_count_ = 0;
+    for (u32 cmd_i = 0; cmd_i < last_cmd_idx; cmd_i++) {
+      CmdEncoder* cmd_list = cmd_lists_[cmd_i].get();
+      VK_CHECK(vkEndCommandBuffer(cmd_list->get_cmd_buf()));
+      Queue& queue = get_queue(cmd_list->queue_);
+      // if the command list has dependencies, previous must be submitted first
+      bool has_dependency = queue.signal_semaphores.size() || queue.wait_semaphores_infos.size();
+      if (has_dependency) {
+        queue.submit(this, VK_NULL_HANDLE);
+      }
+
+      // submit cmd buf to the queue
+      queue.submit_cmds.emplace_back(
+          vk2::init::command_buffer_submit_info(cmd_list->get_cmd_buf()));
+
+      // swapchain submits
+      queue.swapchain_updates = cmd_list->submit_swapchains_;
+      for (auto& swapchain : cmd_list->submit_swapchains_) {
+        queue.submit_swapchains.push_back(swapchain.swapchain);
+        queue.submit_swapchain_img_indices.push_back(swapchain.curr_swapchain_idx);
+        // queue needs to wait for ready
+        queue.wait_semaphores_infos.emplace_back(vk2::init::semaphore_submit_info(
+            swapchain.acquire_semaphores[swapchain.acquire_semaphore_idx],
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_BLIT_BIT, 0));
+        // signals the release for swapchain
+        queue.signal_semaphore_infos.emplace_back(vk2::init::semaphore_submit_info(
+            swapchain.release_semaphore, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0));
+      }
+
+      // handle dependencies
+      if (has_dependency) {
+        for (VkSemaphore semaphore : cmd_list->wait_semaphores_) {
+          queue.wait(semaphore);
+        }
+        cmd_list->wait_semaphores_.clear();
+
+        {
+          std::scoped_lock lock(semaphore_pool_mtx_);
+          for (VkSemaphore semaphore : cmd_list->signal_semaphores_) {
+            queue.signal(semaphore);
+            free_semaphore_unsafe(semaphore);
+          }
+          cmd_list->signal_semaphores_.clear();
+        }
+
+        queue.submit(this, VK_NULL_HANDLE);
+      }
+    }
+
+    // final submit with fence
+    for (u32 queue_type = 0; queue_type < (u32)QueueType::Count; queue_type++) {
+      queues_[queue_type].submit(this, frame_fences_[curr_frame_in_flight()][queue_type]);
+    }
+  }
+
+  // sync queues at end of frame, no overlap going into next frame
+  for (u32 queue1 = 0; queue1 < (u32)QueueType::Count; queue1++) {
+    if (!queues_[queue1].queue) continue;
+    for (u32 queue2 = 0; queue2 < (u32)QueueType::Count; queue2++) {
+      if (!queues_[queue2].queue || queue1 == queue2) continue;
+      VkSemaphore semaphore = queues_[queue2].frame_semaphores[curr_frame_in_flight()][queue1];
+      if (semaphore) {
+        queues_[queue1].wait(semaphore);
+      }
+    }
+
+    queues_[queue1].submit(this, frame_fences_[curr_frame_in_flight()][queue1]);
+  }
+  curr_frame_num_++;
+
+  // wait for fences and reset
+  VkFence wait_fences[(u32)QueueType::Count]{};
+  VkFence reset_fences[(u32)QueueType::Count]{};
+  u32 wait_fence_cnt{}, reset_fence_cnt{};
+
+  for (VkFence fence : frame_fences_[curr_frame_in_flight()]) {
+    if (!fence) continue;
+    reset_fences[reset_fence_cnt++] = fence;
+    if (vkGetFenceStatus(device_, fence) != VK_SUCCESS) {
+      wait_fences[wait_fence_cnt++] = fence;
+    }
+  }
+  if (wait_fence_cnt > 0) {
+    while (true) {
+      VkResult res = vkWaitForFences(device_, wait_fence_cnt, wait_fences, VK_TRUE, timeout_value);
+      if (res == VK_TIMEOUT) {
+        LERROR(
+            "vkWaitForFences resulted in VK_TIMEOUT. Statuses:\nGraphics fence: {}\nCompute fence: "
+            "{}\nTransfer fence: {}",
+            string_VkResult(vkGetFenceStatus(
+                device_, frame_fences_[curr_frame_in_flight()][(u32)QueueType::Graphics])),
+            string_VkResult(vkGetFenceStatus(
+                device_, frame_fences_[curr_frame_in_flight()][(u32)QueueType::Compute])),
+            string_VkResult(vkGetFenceStatus(
+                device_, frame_fences_[curr_frame_in_flight()][(u32)QueueType::Transfer])));
+      } else if (res != VK_SUCCESS) {
+        LCRITICAL("vkWaitForFences failed, exiting");
+        exit(1);
+      } else {
+        break;
+      }
+    }
+  }
+
+  if (reset_fence_cnt > 0) {
+    VK_CHECK(vkResetFences(device_, reset_fence_cnt, reset_fences));
+  }
+
+  for (auto& q : queues_) {
+    if (q.queue) q.clear();
+  }
+}
+
+CmdEncoder* Device::begin_command_list(QueueType queue_type) {
+  u32 curr_cmd_idx = cmd_buf_count_++;
+  if (curr_cmd_idx >= cmd_lists_.size()) {
+    cmd_lists_.emplace_back(std::make_unique<CmdEncoder>(this, default_pipeline_layout_));
+  }
+
+  CmdEncoder* cmd = cmd_lists_[curr_cmd_idx].get();
+  cmd->queue_ = queue_type;
+  cmd->id_ = curr_cmd_idx;
+  cmd->reset(curr_frame_in_flight());
+  if (cmd->get_cmd_buf() == VK_NULL_HANDLE) {
+    for (u32 frame_i = 0; frame_i < frames_in_flight; frame_i++) {
+      cmd->command_pools_[frame_i][(u32)queue_type] = create_command_pool(queue_type);
+      cmd->command_bufs_[frame_i][(u32)queue_type] =
+          create_command_buffer(cmd->command_pools_[frame_i][(u32)queue_type]);
+    }
+  }
+
+  VK_CHECK(vkResetCommandPool(device_, cmd->get_cmd_pool(), 0));
+  auto cmd_begin_info =
+      vk2::init::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+  VK_CHECK(vkBeginCommandBuffer(cmd->get_cmd_buf(), &cmd_begin_info));
+  return cmd;
+}
+
+void Device::begin_swapchain_blit(CmdEncoder* cmd) {
+  ZoneScopedN("blit to swapchain");
+  {
+    // make swapchain img writeable in blit stage
+    VkImageMemoryBarrier2 img_barriers[] = {
+        VkImageMemoryBarrier2{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask =
+                VK_PIPELINE_STAGE_2_TRANSFER_BIT | VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .srcAccessMask = 0,
+            .dstStageMask = VK_PIPELINE_STAGE_2_BLIT_BIT,
+            .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .image = swapchain_.imgs[swapchain_.curr_swapchain_idx],
+            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+        },
+    };
+    VkDependencyInfo info{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                          .imageMemoryBarrierCount = COUNTOF(img_barriers),
+                          .pImageMemoryBarriers = img_barriers};
+    vkCmdPipelineBarrier2KHR(cmd->cmd(), &info);
+  }
+}
+
+void Device::blit_to_swapchain(CmdEncoder* cmd, const Image& img, uvec2 dims) {
+  VkImageBlit2 region{.sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2,
+                      .srcSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                         .mipLevel = 0,
+                                         .baseArrayLayer = 0,
+                                         .layerCount = 1},
+                      .srcOffsets = {{}, {static_cast<i32>(dims.x), static_cast<i32>(dims.y), 1}},
+                      .dstSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                         .mipLevel = 0,
+                                         .baseArrayLayer = 0,
+                                         .layerCount = 1},
+                      .dstOffsets = {{}, {static_cast<i32>(dims.x), static_cast<i32>(dims.y), 1}}
+
+  };
+  VkBlitImageInfo2 blit_info{.sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2,
+                             .srcImage = img.image(),
+                             .srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                             .dstImage = swapchain_.imgs[swapchain_.curr_swapchain_idx],
+                             .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                             .regionCount = 1,
+                             .pRegions = &region,
+                             .filter = VK_FILTER_NEAREST};
+  vkCmdBlitImage2KHR(cmd->cmd(), &blit_info);
+}
+
+VkSemaphore Device::new_semaphore() {
+  std::scoped_lock lock(semaphore_pool_mtx_);
+  if (free_semaphores_.empty()) {
+    return create_semaphore(false);
+  }
+  VkSemaphore sem = free_semaphores_.back();
+  free_semaphores_.pop_back();
+  return sem;
+}
+
+void Device::free_semaphore(VkSemaphore semaphore) {
+  std::scoped_lock lock(semaphore_pool_mtx_);
+  free_semaphore_unsafe(semaphore);
+}
+void Device::free_semaphore_unsafe(VkSemaphore semaphore) { free_semaphores_.push_back(semaphore); }
+
+void Device::cmd_list_wait(CmdEncoder* cmd_list, CmdEncoder* wait_for) {
+  assert(cmd_list != wait_for && wait_for->id_ < cmd_list->id_);
+  VkSemaphore semaphore = new_semaphore();
+  cmd_list->wait_semaphores_.emplace_back(semaphore);
+  cmd_list->signal_semaphores_.emplace_back(semaphore);
+}
+
 }  // namespace gfx

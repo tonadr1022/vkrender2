@@ -67,6 +67,7 @@ void Swapchain::init(const UpdateSwapchainInfo& info, VkSwapchainKHR old) {
       acquire_semaphores.emplace_back(get_device().create_semaphore(false));
     }
   }
+  release_semaphore = get_device().create_semaphore(false);
 }
 
 Swapchain::Status Swapchain::update(const UpdateSwapchainInfo& info) {
@@ -102,6 +103,7 @@ void Swapchain::destroy(VkDevice device) {
       semaphore = nullptr;
     }
   }
+  vkDestroySemaphore(device, release_semaphore, nullptr);
   vkDestroySwapchainKHR(device, swapchain, nullptr);
   swapchain = nullptr;
 }
@@ -209,7 +211,7 @@ void create_swapchain(Swapchain& swapchain, const SwapchainDesc& desc) {
   for (u32 i = 0; i < swapchain.img_views.size(); i++) {
     auto& img_view = swapchain.img_views[i];
     if (img_view) {
-      get_device().delete_texture_view(img_view);
+      get_device().enqueue_delete_texture_view(img_view);
       img_view = nullptr;
     }
 

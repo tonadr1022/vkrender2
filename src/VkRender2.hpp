@@ -113,8 +113,8 @@ class VkRender2 final {
   std::filesystem::path resource_dir_;
 
   struct PerFrameData {
-    VkCommandPool cmd_pool;
-    VkCommandBuffer main_cmd_buffer;
+    // VkCommandPool cmd_pool;
+    // VkCommandBuffer main_cmd_buffer;
     tracy::VkCtx* tracy_vk_ctx{};
     Holder<BufferHandle> scene_uniform_buf;
     Holder<BufferHandle> line_draw_buf;

@@ -8,15 +8,6 @@
 
 namespace gfx {
 
-enum class ImageUsage : u8 {
-  // general computation, i.e. StorageImage
-  General,
-  // asset textures read from shader
-  ReadOnly,
-  // attachment textures like gbuffer
-  AttachmentReadOnly
-};
-
 struct ImageDesc {
   enum class Type : u8 { OneD, TwoD, ThreeD };
   Type type{Type::TwoD};
@@ -58,12 +49,6 @@ class Image {
 
 void blit_img(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent3D extent,
               VkImageAspectFlags aspect);
-
-// TODO: device handle deletions
-struct TextureDeleteInfo {
-  VkImage img;
-  VmaAllocation allocation;
-};
 
 uint32_t get_mip_levels(VkExtent2D size);
 uint32_t get_mip_levels(uvec2 size);

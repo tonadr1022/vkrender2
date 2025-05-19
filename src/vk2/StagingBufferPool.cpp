@@ -2,7 +2,6 @@
 
 #include <tracy/Tracy.hpp>
 
-#include "core/Logger.hpp"
 #include "vk2/Device.hpp"
 
 namespace gfx {

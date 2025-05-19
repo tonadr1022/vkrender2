@@ -194,7 +194,8 @@ VoidResult RenderGraph::validate() { return VoidResult{}; }
 
 VoidResult RenderGraph::bake() {
   ZoneScoped;
-  swapchain_img_ = get_device().acquire_next_image();
+  get_device().acquire_next_image();
+  // swapchain_img_ = get_device().acquire_next_image();
   desc_ = get_device().get_swapchain_info();
   if (auto ok = validate(); !ok) {
     return ok;
@@ -441,7 +442,7 @@ VoidResult RenderGraph::bake() {
 
 void RenderGraph::execute(CmdEncoder& cmd) {
   ZoneScoped;
-  if (swapchain_img_ == nullptr || desc_.dims.x == 0 || desc_.dims.y == 0) {
+  if (desc_.dims.x == 0 || desc_.dims.y == 0) {
     LERROR("invalid swapchain info");
     return;
   }
@@ -509,43 +510,21 @@ void RenderGraph::execute(CmdEncoder& cmd) {
 
   // blit to swapchain
   {
-    ZoneScopedN("blit to swapchain");
-    {
-      // make swapchain img writeable in blit stage
-      VkImageMemoryBarrier2 img_barriers[] = {
-          VkImageMemoryBarrier2{
-              .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-              .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT |
-                              VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-              .srcAccessMask = 0,
-              .dstStageMask = VK_PIPELINE_STAGE_2_BLIT_BIT,
-              .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-              .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-              .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-              .image = swapchain_img_,
-              .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
-          },
-      };
-      VkDependencyInfo info{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                            .imageMemoryBarrierCount = COUNTOF(img_barriers),
-                            .pImageMemoryBarriers = img_barriers};
-      vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
-    }
-
+    get_device().begin_swapchain_blit(&cmd);
     // only write each image to the swapchain once
-    util::fixed_vector<u32, 20> swapchain_write_indices;
+    util::fixed_vector<u32, 20> swapchain_writer_pass_indices;
     for (u32 pass_i : swapchain_writer_passes_) {
       auto& pass = passes_[pass_i];
       if (const auto* output = pass.get_swapchain_write_usage(); output != nullptr) {
         auto* resource = get_resource(output->handle);
         auto* tex = get_texture(output->handle);
 
-        if (std::ranges::find(swapchain_write_indices, output->handle.idx) !=
-            swapchain_write_indices.end()) {
+        if (std::ranges::find(swapchain_writer_pass_indices, output->handle.idx) !=
+            swapchain_writer_pass_indices.end()) {
           continue;
         }
 
-        swapchain_write_indices.push_back(output->handle.idx);
+        swapchain_writer_pass_indices.push_back(output->handle.idx);
 
         assert(resource && tex);
         if (!resource || !tex) {
@@ -572,9 +551,9 @@ void RenderGraph::execute(CmdEncoder& cmd) {
                               .pImageMemoryBarriers = img_barriers};
         vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
 
-        VkExtent3D dims{glm::min(tex->get_desc().dims.x, desc_.dims.x),
-                        glm::min(tex->get_desc().dims.y, desc_.dims.y), 1};
-        blit_img(cmd.cmd(), tex->image(), swapchain_img_, dims, VK_IMAGE_ASPECT_COLOR_BIT);
+        get_device().blit_to_swapchain(&cmd, *tex,
+                                       {glm::min(tex->get_desc().dims.x, desc_.dims.x),
+                                        glm::min(tex->get_desc().dims.y, desc_.dims.y)});
 
         // write after read barrier
         state.layout = img_barriers[0].newLayout;
@@ -585,6 +564,7 @@ void RenderGraph::execute(CmdEncoder& cmd) {
         state.pipeline_barrier_src_stages = VK_PIPELINE_STAGE_2_BLIT_BIT;
       }
     }
+    // TODO: move this into device?
     {
       VkImageMemoryBarrier2 img_barriers[] = {
           VkImageMemoryBarrier2{

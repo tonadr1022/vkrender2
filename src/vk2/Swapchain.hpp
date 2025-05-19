@@ -32,6 +32,7 @@ struct Swapchain {
   std::vector<VkImage> imgs;
   std::vector<VkImageView> img_views;
   std::vector<VkSemaphore> acquire_semaphores;
+  VkSemaphore release_semaphore;
   u32 acquire_semaphore_idx{};
   u32 curr_swapchain_idx{};
   VkSwapchainKHR swapchain{};
@@ -46,6 +47,7 @@ struct Swapchain {
  private:
   void init(const UpdateSwapchainInfo& info, VkSwapchainKHR old);
 };
+// cannot fail
 void create_swapchain(Swapchain& swapchain, const SwapchainDesc& desc);
 
 }  // namespace gfx::vk2
