@@ -268,7 +268,6 @@ void CSM::add_pass(RenderGraph& rg) {
   csm_prepare_pass.add(shadow_data_bufs_[get_device().curr_frame_in_flight()].handle,
                        Access::TransferWrite);
   csm_prepare_pass.set_execute_fn([this](CmdEncoder& cmd) {
-    GPU_ZONE(cmd, "csm_prepare");
     auto* buf = get_device().get_buffer(
         shadow_data_bufs_[device_->curr_frame_num() % shadow_data_bufs_.size()]);
     if (!buf) return;
@@ -281,7 +280,6 @@ void CSM::add_pass(RenderGraph& rg) {
       csm.add("shadow_map_img", shadow_map_img_att_info_, Access::DepthStencilWrite);
   add_deps_fn_(csm);
   csm.set_execute_fn([this, rg_shadow_map_img, &rg](CmdEncoder& cmd) {
-    GPU_ZONE(cmd, "csm render");
     cmd.begin_region("csm render");
     shadow_map_img_ = rg.get_texture_handle(rg_shadow_map_img);
     if (curr_shadow_map_img_ != shadow_map_img_) {
@@ -306,12 +304,10 @@ void CSM::add_pass(RenderGraph& rg) {
       }
 
       {
-        GPU_ZONE(cmd, "opaque");
         cmd.bind_pipeline(PipelineBindPoint::Graphics, shadow_depth_pipline_);
         draw_fn_(cmd, light_matrices_[i], false, i);
       }
       {
-        GPU_ZONE(cmd, "opaque_alpha_mask");
         if (alpha_cutout_enabled_) {
           cmd.bind_pipeline(PipelineBindPoint::Graphics, shadow_depth_alpha_mask_pipeline_);
         }

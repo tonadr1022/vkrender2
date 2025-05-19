@@ -178,7 +178,7 @@ struct RenderGraph {
   void set_backbuffer_img(const std::string& name) { backbuffer_img_ = name; }
   const std::string& get_backbuffer_img_name() const { return backbuffer_img_; }
   void reset();
-  VoidResult bake();
+  VoidResult bake(CmdEncoder* cmd);
   VoidResult output_graphvis(const std::filesystem::path& path);
   void setup_attachments();
   void execute(CmdEncoder& cmd);
@@ -195,6 +195,7 @@ struct RenderGraph {
   // TODO: integrate swapchain more closely?
   friend struct RenderGraphPass;
 
+  VkImage swapchain_img_{};
   std::string name_;
   std::vector<RenderGraphPass> passes_;
   std::string backbuffer_img_;

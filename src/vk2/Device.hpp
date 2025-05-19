@@ -4,6 +4,7 @@
 #include <vulkan/vulkan_core.h>
 
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <span>
 
@@ -165,8 +166,6 @@ class Device {
   void cmd_list_wait(CmdEncoder* cmd_list, CmdEncoder* wait_for);
 
  private:
-  static constexpr u32 queue_count = 3;
-
   VkSemaphore new_semaphore();
   void free_semaphore(VkSemaphore semaphore);
   void free_semaphore_unsafe(VkSemaphore semaphore);
@@ -177,7 +176,7 @@ class Device {
   struct Queue {
     VkQueue queue{};
     u32 family_idx{UINT32_MAX};
-    VkSemaphore frame_semaphores[frames_in_flight][Device::queue_count]{};
+    VkSemaphore frame_semaphores[frames_in_flight][(u32)QueueType::Count]{};
     std::vector<VkSemaphoreSubmitInfo> signal_semaphore_infos;
     std::vector<VkSemaphore> signal_semaphores;
     std::vector<VkSemaphoreSubmitInfo> wait_semaphores_infos;

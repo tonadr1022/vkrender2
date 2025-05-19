@@ -353,6 +353,7 @@ class VkRender2 final {
 
   std::vector<Buffer> free_staging_buffers_;
 
+  std::vector<CmdEncoder*> frame_imm_submits_;
   std::vector<std::optional<LoadedSceneData>> loaded_scenes_;
   u32 debug_mode_{DEBUG_MODE_NONE};
   const char* debug_mode_to_string(u32 mode);

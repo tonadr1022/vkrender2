@@ -14,26 +14,26 @@
 
 namespace gfx {
 
-void CmdEncoder::dispatch(u32 work_groups_x, u32 work_groups_y, u32 work_groups_z) {
-  vkCmdDispatch(cmd_, work_groups_x, work_groups_y, work_groups_z);
+void CmdEncoder::dispatch(u32 work_groups_x, u32 work_groups_y, u32 work_groups_z) const {
+  vkCmdDispatch(get_cmd_buf(), work_groups_x, work_groups_y, work_groups_z);
 }
 
 void CmdEncoder::bind_descriptor_set(VkPipelineBindPoint bind_point, VkPipelineLayout layout,
-                                     VkDescriptorSet* set, u32 idx) {
-  vkCmdBindDescriptorSets(cmd_, bind_point, layout, idx, 1, set, 0, nullptr);
+                                     VkDescriptorSet* set, u32 idx) const {
+  vkCmdBindDescriptorSets(get_cmd_buf(), bind_point, layout, idx, 1, set, 0, nullptr);
 }
 
-void CmdEncoder::push_constants(VkPipelineLayout layout, u32 size, void* data) {
-  vkCmdPushConstants(cmd_, layout, VK_SHADER_STAGE_ALL, 0, size, data);
+void CmdEncoder::push_constants(VkPipelineLayout layout, u32 size, void* data) const {
+  vkCmdPushConstants(get_cmd_buf(), layout, VK_SHADER_STAGE_ALL, 0, size, data);
 }
 
-void CmdEncoder::push_constants(u32 size, void* data) {
+void CmdEncoder::push_constants(u32 size, void* data) const {
   assert(size <= 128);
   push_constants(default_pipeline_layout_, size, data);
 }
 
 void CmdEncoder::barrier(VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access,
-                         VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access) {
+                         VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access) const {
   VkMemoryBarrier2 b{.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
                      .srcStageMask = src_stage,
                      .srcAccessMask = src_access,
@@ -41,10 +41,10 @@ void CmdEncoder::barrier(VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_acc
                      .dstAccessMask = dst_access};
   VkDependencyInfo info{
       .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &b};
-  vkCmdPipelineBarrier2KHR(cmd_, &info);
+  vkCmdPipelineBarrier2KHR(get_cmd_buf(), &info);
 }
 
-void CmdEncoder::set_viewport_and_scissor(vec2 extent, vec2 offset) {
+void CmdEncoder::set_viewport_and_scissor(vec2 extent, vec2 offset) const {
   VkViewport viewport{.x = offset.x,
                       .y = offset.y,
                       .width = static_cast<float>(extent.x),
@@ -52,13 +52,14 @@ void CmdEncoder::set_viewport_and_scissor(vec2 extent, vec2 offset) {
                       .minDepth = 0.f,
                       .maxDepth = 1.f};
 
-  vkCmdSetViewport(cmd_, 0, 1, &viewport);
+  vkCmdSetViewport(get_cmd_buf(), 0, 1, &viewport);
   VkRect2D scissor{.offset = VkOffset2D{.x = 0, .y = 0},
                    .extent = VkExtent2D{.width = static_cast<uint32_t>(extent.x),
                                         .height = static_cast<uint32_t>(extent.y)}};
-  vkCmdSetScissor(cmd_, 0, 1, &scissor);
+  vkCmdSetScissor(get_cmd_buf(), 0, 1, &scissor);
 }
-void CmdEncoder::set_viewport_and_scissor(u32 width, u32 height) {
+
+void CmdEncoder::set_viewport_and_scissor(u32 width, u32 height) const {
   VkViewport viewport{.x = 0,
                       .y = 0,
                       .width = static_cast<float>(width),
@@ -66,14 +67,14 @@ void CmdEncoder::set_viewport_and_scissor(u32 width, u32 height) {
                       .minDepth = 0.f,
                       .maxDepth = 1.f};
 
-  vkCmdSetViewport(cmd_, 0, 1, &viewport);
+  vkCmdSetViewport(get_cmd_buf(), 0, 1, &viewport);
   VkRect2D scissor{.offset = VkOffset2D{.x = 0, .y = 0},
                    .extent = VkExtent2D{.width = width, .height = height}};
-  vkCmdSetScissor(cmd_, 0, 1, &scissor);
+  vkCmdSetScissor(get_cmd_buf(), 0, 1, &scissor);
 }
 
-void CmdEncoder::set_cull_mode(CullMode mode) {
-  vkCmdSetCullModeEXT(cmd_, vk2::convert_cull_mode(mode));
+void CmdEncoder::set_cull_mode(CullMode mode) const {
+  vkCmdSetCullModeEXT(get_cmd_buf(), vk2::convert_cull_mode(mode));
 }
 
 void CmdEncoder::copy_buffer(const Buffer& src, const Buffer& dst, u64 src_offset, u64 dst_offset,
@@ -88,14 +89,14 @@ void CmdEncoder::copy_buffer(const Buffer& src, const Buffer& dst, u64 src_offse
                                  .dstBuffer = dst.buffer(),
                                  .regionCount = 1,
                                  .pRegions = &copy};
-  vkCmdCopyBuffer2KHR(cmd_, &copy_info);
+  vkCmdCopyBuffer2KHR(get_cmd_buf(), &copy_info);
 }
 
-void CmdEncoder::set_depth_bias(float constant_factor, float bias, float slope_factor) {
-  vkCmdSetDepthBias(cmd_, constant_factor, bias, slope_factor);
+void CmdEncoder::set_depth_bias(float constant_factor, float bias, float slope_factor) const {
+  vkCmdSetDepthBias(get_cmd_buf(), constant_factor, bias, slope_factor);
 }
 
-void CmdEncoder::bind_pipeline(PipelineBindPoint bind_point, PipelineHandle pipeline) {
+void CmdEncoder::bind_pipeline(PipelineBindPoint bind_point, PipelineHandle pipeline) const {
   VkPipelineBindPoint bp{};
   switch (bind_point) {
     case PipelineBindPoint::Graphics:
@@ -105,10 +106,10 @@ void CmdEncoder::bind_pipeline(PipelineBindPoint bind_point, PipelineHandle pipe
       bp = VK_PIPELINE_BIND_POINT_COMPUTE;
       break;
   }
-  vkCmdBindPipeline(cmd_, bp, PipelineManager::get().get(pipeline)->pipeline);
+  vkCmdBindPipeline(get_cmd_buf(), bp, PipelineManager::get().get(pipeline)->pipeline);
 }
 
-void CmdEncoder::end_rendering() { vkCmdEndRenderingKHR(cmd_); }
+void CmdEncoder::end_rendering() const { vkCmdEndRenderingKHR(get_cmd_buf()); }
 
 namespace {
 
@@ -182,11 +183,12 @@ void CmdEncoder::begin_rendering(const RenderArea& render_area,
       .pDepthAttachment = depth_att.imageLayout != VK_IMAGE_LAYOUT_UNDEFINED ? &depth_att : nullptr,
       .pStencilAttachment =
           stencil_att.imageLayout != VK_IMAGE_LAYOUT_UNDEFINED ? &stencil_att : nullptr};
-  vkCmdBeginRenderingKHR(cmd_, &rendering_info);
+  vkCmdBeginRenderingKHR(get_cmd_buf(), &rendering_info);
 }
 
-void CmdEncoder::draw(u32 vertex_count, u32 instance_count, u32 first_vertex, u32 first_instance) {
-  vkCmdDraw(cmd_, vertex_count, instance_count, first_vertex, first_instance);
+void CmdEncoder::draw(u32 vertex_count, u32 instance_count, u32 first_vertex,
+                      u32 first_instance) const {
+  vkCmdDraw(get_cmd_buf(), vertex_count, instance_count, first_vertex, first_instance);
 }
 
 namespace {
@@ -207,41 +209,42 @@ VkIndexType convert_index_type(IndexType type) {
 }  // namespace
 
 void CmdEncoder::bind_index_buffer(BufferHandle buffer, u64 offset, IndexType type) {
-  vkCmdBindIndexBuffer(cmd_, device_->get_buffer(buffer)->buffer(), offset,
+  vkCmdBindIndexBuffer(get_cmd_buf(), device_->get_buffer(buffer)->buffer(), offset,
                        convert_index_type(type));
 }
 
 void CmdEncoder::fill_buffer(BufferHandle buffer, u64 offset, u64 size, u32 data) {
-  vkCmdFillBuffer(cmd_, device_->get_buffer(buffer)->buffer(), offset, size, data);
+  vkCmdFillBuffer(get_cmd_buf(), device_->get_buffer(buffer)->buffer(), offset, size, data);
 }
 void CmdEncoder::draw_indexed_indirect(BufferHandle buffer, u64 offset, u32 draw_count,
                                        u32 stride) {
-  vkCmdDrawIndexedIndirect(cmd_, device_->get_buffer(buffer)->buffer(), offset, draw_count, stride);
+  vkCmdDrawIndexedIndirect(get_cmd_buf(), device_->get_buffer(buffer)->buffer(), offset, draw_count,
+                           stride);
 }
 
 void CmdEncoder::draw_indexed_indirect_count(BufferHandle draw_cmd_buf, u64 draw_cmd_offset,
                                              BufferHandle draw_count_buf, u64 draw_count_offset,
                                              u32 draw_count, u32 stride) {
-  vkCmdDrawIndexedIndirectCount(cmd_, device_->get_buffer(draw_count_buf)->buffer(),
+  vkCmdDrawIndexedIndirectCount(get_cmd_buf(), device_->get_buffer(draw_count_buf)->buffer(),
                                 draw_count_offset, device_->get_buffer(draw_cmd_buf)->buffer(),
                                 draw_cmd_offset, draw_count, stride);
 }
 
 void CmdEncoder::update_buffer(BufferHandle buffer, u64 offset, u64 size, void* data) {
-  vkCmdUpdateBuffer(cmd_, device_->get_buffer(buffer)->buffer(), offset, size, data);
+  vkCmdUpdateBuffer(get_cmd_buf(), device_->get_buffer(buffer)->buffer(), offset, size, data);
 }
 
-void CmdEncoder::begin_region(const char* name) {
+void CmdEncoder::begin_region(const char* name) const {
 #ifndef NDEBUG
   VkDebugUtilsLabelEXT debug_label_info{.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
                                         .pLabelName = name};
-  vkCmdBeginDebugUtilsLabelEXT(cmd_, &debug_label_info);
+  vkCmdBeginDebugUtilsLabelEXT(get_cmd_buf(), &debug_label_info);
 #endif
 }
 
-void CmdEncoder::end_region() {
+void CmdEncoder::end_region() const {
 #ifndef NDEBUG
-  vkCmdEndDebugUtilsLabelEXT(cmd_);
+  vkCmdEndDebugUtilsLabelEXT(get_cmd_buf());
 #endif
 }
 void CmdEncoder::transition_image(ImageHandle image, VkImageLayout new_layout,
@@ -273,7 +276,7 @@ void CmdEncoder::blit_img(ImageHandle src, ImageHandle dst, uvec3 extent,
                              .regionCount = 1,
                              .pRegions = &region,
                              .filter = VK_FILTER_NEAREST};
-  vkCmdBlitImage2KHR(cmd_, &blit_info);
+  vkCmdBlitImage2KHR(get_cmd_buf(), &blit_info);
 };
 
 void CmdEncoder::transition_image(ImageHandle image, VkImageLayout old_layout,
@@ -295,7 +298,13 @@ void CmdEncoder::transition_image(ImageHandle image, VkImageLayout old_layout,
                                                .baseArrayLayer = 0,
                                                .layerCount = VK_REMAINING_ARRAY_LAYERS};
   auto dep_info = vk2::init::dependency_info({}, SPAN1(b));
-  vkCmdPipelineBarrier2KHR(cmd_, &dep_info);
+  vkCmdPipelineBarrier2KHR(get_cmd_buf(), &dep_info);
 }
 
+void CmdEncoder::reset(u32 frame_in_flight) {
+  frame_in_flight_ = frame_in_flight;
+  submit_swapchains_.clear();
+  wait_semaphores_.clear();
+  signal_semaphores_.clear();
+}
 }  // namespace gfx

@@ -27,7 +27,6 @@ struct SwapchainDesc {
 };
 struct Swapchain {
   enum class Status : u8 { Ready, Resized, NotReady };
-  // at most 4 images, quintuple buffering maybe in 2050
   SwapchainDesc desc;
   std::vector<VkImage> imgs;
   std::vector<VkImageView> img_views;
@@ -42,10 +41,10 @@ struct Swapchain {
   uvec2 dims;
   Status update(const UpdateSwapchainInfo& info);
   void destroy(VkDevice device);
-  void init(const UpdateSwapchainInfo& info);
+  // void init(const UpdateSwapchainInfo& info);
 
  private:
-  void init(const UpdateSwapchainInfo& info, VkSwapchainKHR old);
+  // void init(const UpdateSwapchainInfo& info, VkSwapchainKHR old);
 };
 // cannot fail
 void create_swapchain(Swapchain& swapchain, const SwapchainDesc& desc);

@@ -192,10 +192,9 @@ RenderGraphPass& RenderGraph::add_pass(const std::string& name, RenderGraphPass:
 
 VoidResult RenderGraph::validate() { return VoidResult{}; }
 
-VoidResult RenderGraph::bake() {
+VoidResult RenderGraph::bake(CmdEncoder* cmd) {
   ZoneScoped;
-  get_device().acquire_next_image();
-  // swapchain_img_ = get_device().acquire_next_image();
+  swapchain_img_ = get_device().acquire_next_image(cmd);
   desc_ = get_device().get_swapchain_info();
   if (auto ok = validate(); !ok) {
     return ok;

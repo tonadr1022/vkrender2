@@ -9,6 +9,7 @@
 
 #include <cassert>
 #include <tracy/Tracy.hpp>
+#include <tracy/TracyVulkan.hpp>
 
 #include "CommandEncoder.hpp"
 #include "Common.hpp"
@@ -342,7 +343,7 @@ void Device::init_impl(const CreateInfo& info) {
       }
 
       // create frame fences
-      VkFence fence = create_fence();
+      VkFence fence = create_fence(0);
       frame_fences_[frame_i][queue_type] = fence;
       switch ((QueueType)queue_type) {
         default:
@@ -683,7 +684,6 @@ VkImage Device::acquire_next_image(CmdEncoder* cmd) {
         acquire_next_image_result == VK_ERROR_OUT_OF_DATE_KHR) {
       // recreate new semaphore
       // need to make new semaphore since wsi doesn't unsignal it
-
       for (auto& sem : swapchain_.acquire_semaphores) {
         enqueue_delete_sempahore(sem);
       }
@@ -698,6 +698,10 @@ VkImage Device::acquire_next_image(CmdEncoder* cmd) {
     }
     assert(0);
   }
+  assert(swapchain_.release_semaphore);
+  cmd->submit_swapchains_.push_back(swapchain_);
+  // TODO: barrier
+
   return swapchain_.imgs[swapchain_.curr_swapchain_idx];
 }
 
@@ -1608,6 +1612,7 @@ void Device::Queue::signal(VkSemaphore semaphore) {
   if (!queue) {
     return;
   }
+  assert(semaphore != VK_NULL_HANDLE);
   signal_semaphore_infos.emplace_back(VkSemaphoreSubmitInfo{
       .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
       .semaphore = semaphore,
@@ -1619,8 +1624,12 @@ void Device::Queue::signal(VkSemaphore semaphore) {
 
 void Device::Queue::clear() {
   signal_semaphore_infos.clear();
-  wait_semaphores_infos.clear();
   signal_semaphores.clear();
+  wait_semaphores_infos.clear();
+  submit_cmds.clear();
+  swapchain_updates.clear();
+  submit_swapchains.clear();
+  submit_swapchain_img_indices.clear();
 }
 
 void Device::Queue::submit(Device* device, VkFence fence) {
@@ -1633,10 +1642,8 @@ void Device::Queue::submit(Device* device, VkFence fence) {
     if (fence != VK_NULL_HANDLE) {
       // end of frame submit, signal the semaphores so future submits can wait
       for (u32 queue_i = 0; queue_i < (u32)QueueType::Count; queue_i++) {
-        for (auto& semaphore : frame_semaphores[device->curr_frame_in_flight()]) {
-          if (semaphore == VK_NULL_HANDLE) continue;
-          signal(semaphore);
-        }
+        VkSemaphore semaphore = frame_semaphores[device->curr_frame_in_flight()][queue_i];
+        if (semaphore) signal(semaphore);
       }
     }
 
@@ -1687,7 +1694,6 @@ void Device::submit_commands() {
     // place barriers and submit to grpahics queue
     auto& transition_handler = transition_handlers_[curr_frame_in_flight()];
     VK_CHECK(vkResetCommandPool(device_, transition_handler.cmd_pool, 0));
-
     VkCommandBufferBeginInfo cmd_buf_begin_info{
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = 0};
     VK_CHECK(vkBeginCommandBuffer(transition_handler.cmd_buf, &cmd_buf_begin_info));
@@ -1717,7 +1723,8 @@ void Device::submit_commands() {
       VK_CHECK(vkEndCommandBuffer(cmd_list->get_cmd_buf()));
       Queue& queue = get_queue(cmd_list->queue_);
       // if the command list has dependencies, previous must be submitted first
-      bool has_dependency = queue.signal_semaphores.size() || queue.wait_semaphores_infos.size();
+      bool has_dependency =
+          cmd_list->signal_semaphores_.size() || cmd_list->wait_semaphores_.size();
       if (has_dependency) {
         queue.submit(this, VK_NULL_HANDLE);
       }
@@ -1736,6 +1743,8 @@ void Device::submit_commands() {
             swapchain.acquire_semaphores[swapchain.acquire_semaphore_idx],
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_BLIT_BIT, 0));
         // signals the release for swapchain
+        assert(swapchain.release_semaphore != VK_NULL_HANDLE);
+        queue.signal_semaphores.emplace_back(swapchain.release_semaphore);
         queue.signal_semaphore_infos.emplace_back(vk2::init::semaphore_submit_info(
             swapchain.release_semaphore, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0));
       }
@@ -1776,51 +1785,53 @@ void Device::submit_commands() {
         queues_[queue1].wait(semaphore);
       }
     }
-
-    queues_[queue1].submit(this, frame_fences_[curr_frame_in_flight()][queue1]);
   }
+
   curr_frame_num_++;
+  if (curr_frame_num_ >= frames_in_flight) {
+    // wait for fences and reset
+    VkFence wait_fences[(u32)QueueType::Count]{};
+    VkFence reset_fences[(u32)QueueType::Count]{};
+    u32 wait_fence_cnt{}, reset_fence_cnt{};
 
-  // wait for fences and reset
-  VkFence wait_fences[(u32)QueueType::Count]{};
-  VkFence reset_fences[(u32)QueueType::Count]{};
-  u32 wait_fence_cnt{}, reset_fence_cnt{};
-
-  for (VkFence fence : frame_fences_[curr_frame_in_flight()]) {
-    if (!fence) continue;
-    reset_fences[reset_fence_cnt++] = fence;
-    if (vkGetFenceStatus(device_, fence) != VK_SUCCESS) {
-      wait_fences[wait_fence_cnt++] = fence;
-    }
-  }
-  if (wait_fence_cnt > 0) {
-    while (true) {
-      VkResult res = vkWaitForFences(device_, wait_fence_cnt, wait_fences, VK_TRUE, timeout_value);
-      if (res == VK_TIMEOUT) {
-        LERROR(
-            "vkWaitForFences resulted in VK_TIMEOUT. Statuses:\nGraphics fence: {}\nCompute fence: "
-            "{}\nTransfer fence: {}",
-            string_VkResult(vkGetFenceStatus(
-                device_, frame_fences_[curr_frame_in_flight()][(u32)QueueType::Graphics])),
-            string_VkResult(vkGetFenceStatus(
-                device_, frame_fences_[curr_frame_in_flight()][(u32)QueueType::Compute])),
-            string_VkResult(vkGetFenceStatus(
-                device_, frame_fences_[curr_frame_in_flight()][(u32)QueueType::Transfer])));
-      } else if (res != VK_SUCCESS) {
-        LCRITICAL("vkWaitForFences failed, exiting");
-        exit(1);
-      } else {
-        break;
+    for (VkFence fence : frame_fences_[curr_frame_in_flight()]) {
+      if (!fence) continue;
+      reset_fences[reset_fence_cnt++] = fence;
+      if (vkGetFenceStatus(device_, fence) != VK_SUCCESS) {
+        wait_fences[wait_fence_cnt++] = fence;
       }
     }
-  }
+    if (wait_fence_cnt > 0) {
+      while (true) {
+        VkResult res =
+            vkWaitForFences(device_, wait_fence_cnt, wait_fences, VK_TRUE, timeout_value);
+        if (res == VK_TIMEOUT) {
+          LERROR(
+              "vkWaitForFences resulted in VK_TIMEOUT. Statuses:\nGraphics fence: {}\nCompute "
+              "fence: "
+              "{}\nTransfer fence: {}",
+              string_VkResult(vkGetFenceStatus(
+                  device_, frame_fences_[curr_frame_in_flight()][(u32)QueueType::Graphics])),
+              string_VkResult(vkGetFenceStatus(
+                  device_, frame_fences_[curr_frame_in_flight()][(u32)QueueType::Compute])),
+              string_VkResult(vkGetFenceStatus(
+                  device_, frame_fences_[curr_frame_in_flight()][(u32)QueueType::Transfer])));
+        } else if (res != VK_SUCCESS) {
+          LCRITICAL("vkWaitForFences failed, exiting");
+          exit(1);
+        } else {
+          break;
+        }
+      }
+    }
 
-  if (reset_fence_cnt > 0) {
-    VK_CHECK(vkResetFences(device_, reset_fence_cnt, reset_fences));
+    if (reset_fence_cnt > 0) {
+      VK_CHECK(vkResetFences(device_, reset_fence_cnt, reset_fences));
+    }
   }
 
   for (auto& q : queues_) {
-    if (q.queue) q.clear();
+    if (!q.queue) q.clear();
   }
 }
 
@@ -1846,6 +1857,7 @@ CmdEncoder* Device::begin_command_list(QueueType queue_type) {
   auto cmd_begin_info =
       vk2::init::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
   VK_CHECK(vkBeginCommandBuffer(cmd->get_cmd_buf(), &cmd_begin_info));
+
   return cmd;
 }
 
@@ -1919,7 +1931,7 @@ void Device::cmd_list_wait(CmdEncoder* cmd_list, CmdEncoder* wait_for) {
   assert(cmd_list != wait_for && wait_for->id_ < cmd_list->id_);
   VkSemaphore semaphore = new_semaphore();
   cmd_list->wait_semaphores_.emplace_back(semaphore);
-  cmd_list->signal_semaphores_.emplace_back(semaphore);
+  wait_for->signal_semaphores_.emplace_back(semaphore);
 }
 
 }  // namespace gfx

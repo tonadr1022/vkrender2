@@ -40,7 +40,6 @@
 #include "vk2/ShaderCompiler.hpp"
 #include "vk2/StagingBufferPool.hpp"
 #include "vk2/Texture.hpp"
-#include "vk2/VkCommon.hpp"
 #include "vk2/VkTypes.hpp"
 
 namespace gfx {
@@ -474,7 +473,7 @@ void VkRender2::draw(const SceneDrawInfo& info) {
     cull_vp_matrices_.emplace_back(csm_->get_light_matrices()[cascade_level]);
   }
   add_rendering_passes(rg_);
-  auto res = rg_.bake();
+  auto res = rg_.bake(cmd);
   if (!res) {
     LERROR("bake error {}", res.error());
     exit(1);
@@ -498,6 +497,11 @@ void VkRender2::draw(const SceneDrawInfo& info) {
   //                                       std::span(wait_semaphores.data(), next_wait_sem_idx),
   //                                       SPAN1(signal_info));
   // device_->queue_submit(QueueType::Graphics, SPAN1(submit));
+
+  for (auto& wait_for : frame_imm_submits_) {
+    device_->cmd_list_wait(cmd, wait_for);
+  }
+  frame_imm_submits_.clear();
 
   device_->submit_commands();
   line_draw_vertices_.clear();
@@ -1016,19 +1020,10 @@ void VkRender2::set_env_map(const std::filesystem::path& path) {
 }
 
 void VkRender2::immediate_submit(std::function<void(CmdEncoder& ctx)>&& function) {
-  VkFence imm_fence = device_->allocate_fence(true);
-  VK_CHECK(vkResetCommandBuffer(imm_cmd_buf_, 0));
-  auto info = vk2::init::command_buffer_begin_info();
-  VK_CHECK(vkBeginCommandBuffer(imm_cmd_buf_, &info));
-  CmdEncoder cmd{device_, imm_cmd_buf_, device_->default_pipeline_layout_};
-  state_.reset(cmd);
-  function(cmd);
-  VK_CHECK(vkEndCommandBuffer(imm_cmd_buf_));
-  VkCommandBufferSubmitInfo cmd_info = init::command_buffer_submit_info(imm_cmd_buf_);
-  VkSubmitInfo2 submit = init::queue_submit_info(SPAN1(cmd_info), {}, {});
-  device_->queue_submit(QueueType::Graphics, SPAN1(submit), imm_fence);
-  VK_CHECK(vkWaitForFences(device_->device(), 1, &imm_fence, true, 99999999999));
-  device_->free_fence(imm_fence);
+  CmdEncoder* cmd = device_->begin_command_list(QueueType::Graphics);
+  frame_imm_submits_.emplace_back(cmd);
+  state_.reset(*cmd);
+  function(*cmd);
 }
 
 void VkRender2::generate_mipmaps(CmdEncoder& ctx, ImageHandle handle) {
@@ -1103,7 +1098,6 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
     }
 
     clear_buff.set_execute_fn([this](CmdEncoder& cmd) {
-      GPU_ZONE(cmd, "clear_draw_cnt_buf");
       for (auto& mgr : static_draw_mgrs_) {
         if (!mgr.should_draw()) continue;
         for (const auto& draw_pass : mgr.get_draw_passes()) {
@@ -1133,7 +1127,6 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
       }
     }
     cull.set_execute_fn([this](CmdEncoder& cmd) {
-      GPU_ZONE(cmd, "cull");
       cmd.bind_pipeline(PipelineBindPoint::Compute, cull_objs_pipeline_);
       for (const auto& mgr : static_draw_mgrs_) {
         if (mgr.should_draw()) {
@@ -1235,7 +1228,6 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
     auto depth_out_handle =
         forward.add("depth", {.format = depth_img_format_}, Access::DepthStencilWrite);
     forward.set_execute_fn([&rg, rg_final_out_handle, this, depth_out_handle](CmdEncoder& cmd) {
-      GPU_ZONE(cmd, "forward");
       auto tex_handle = rg.get_texture_handle(rg_final_out_handle);
       auto dims = device_->get_image(tex_handle)->size();
       cmd.begin_rendering({.extent = dims},
@@ -1293,7 +1285,6 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
           gbuffer.add("depth", {.format = depth_img_format_}, Access::DepthStencilWrite);
       gbuffer.set_execute_fn(
           [&rg, rg_gbuffer_a, rg_gbuffer_b, rg_gbuffer_c, this, rg_depth_handle](CmdEncoder& cmd) {
-            GPU_ZONE(cmd, "gbuffer");
             auto gbuffer_a = rg.get_texture_handle(rg_gbuffer_a);
             auto gbuffer_b = rg.get_texture_handle(rg_gbuffer_b);
             auto gbuffer_c = rg.get_texture_handle(rg_gbuffer_c);
@@ -1350,7 +1341,6 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
           shade.add("draw_out", {.format = draw_img_format_}, Access::ComputeWrite);
       shade.set_execute_fn([&rg, rg_gbuffer_b, rg_gbuffer_c, rg_gbuffer_a, final_out_handle, this,
                             depth_handle](CmdEncoder& cmd) {
-        GPU_ZONE(cmd, "shade");
         auto gbuffer_a = rg.get_texture_handle(rg_gbuffer_a);
         auto gbuffer_b = rg.get_texture_handle(rg_gbuffer_b);
         auto gbuffer_c = rg.get_texture_handle(rg_gbuffer_c);
@@ -1388,7 +1378,6 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
           skybox.add("depth", {.format = depth_img_format_}, Access::DepthStencilRead);
 
       skybox.set_execute_fn([this, &rg, draw_tex, depth_handle](CmdEncoder& cmd) {
-        GPU_ZONE(cmd, "skybox");
         auto tex = rg.get_texture_handle(draw_tex);
 
         auto dims = device_->get_image(tex)->size();
@@ -1411,7 +1400,6 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
         pp.add("final_out", AttachmentInfo{.format = device_->get_swapchain_info().format},
                Access::ComputeWrite);
     pp.set_execute_fn([this, &rg, draw_out_handle, final_out_handle](CmdEncoder& cmd) {
-      GPU_ZONE(cmd, "post_process");
       if (postprocess_pass_enabled.get()) {
         u32 postprocess_flags = 0;
         if (debug_mode_ != DEBUG_MODE_NONE) {
@@ -1462,7 +1450,6 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
     auto rg_depth_handle = imgui_p.add_image_access("depth", Access::DepthStencilRead);
     imgui_p.set_execute_fn(
         [this, rg_color_handle, &rg, csm_debug_img_handle, rg_depth_handle](CmdEncoder& cmd) {
-          GPU_ZONE(cmd, "imgui");
           if (csm_enabled.get() && csm_->get_debug_render_enabled()) {
             assert(csm_debug_img_handle.is_valid());
             csm_->imgui_pass(cmd, linear_sampler_, rg.get_texture_handle(csm_debug_img_handle));
