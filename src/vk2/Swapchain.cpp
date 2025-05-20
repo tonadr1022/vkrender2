@@ -7,6 +7,7 @@
 #include <tracy/Tracy.hpp>
 #include <vector>
 
+#include "core/Logger.hpp"
 #include "vk2/Device.hpp"
 #include "vk2/VkCommon.hpp"
 
@@ -232,7 +233,8 @@ void create_swapchain(Swapchain& swapchain, const SwapchainDesc& desc) {
       }
     }
     if (!swapchain.release_semaphore) {
-      swapchain.release_semaphore = get_device().create_semaphore(false);
+      swapchain.release_semaphore =
+          get_device().create_semaphore(false, "swapchain release semaphore");
     }
   }
 }

@@ -78,13 +78,11 @@ struct CmdEncoder {
   QueueType queue_{};
   u32 id_{UINT32_MAX};
   u32 frame_in_flight_{};
-
   VkCommandPool command_pools_[frames_in_flight][(u32)QueueType::Count] = {};
   VkCommandBuffer command_bufs_[frames_in_flight][(u32)QueueType::Count] = {};
   std::vector<vk2::Swapchain> submit_swapchains_;
   std::vector<VkSemaphore> wait_semaphores_;
   std::vector<VkSemaphore> signal_semaphores_;
-
   VkPipelineLayout default_pipeline_layout_;
 };
 

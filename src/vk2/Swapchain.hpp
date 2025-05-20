@@ -31,7 +31,7 @@ struct Swapchain {
   std::vector<VkImage> imgs;
   std::vector<VkImageView> img_views;
   std::vector<VkSemaphore> acquire_semaphores;
-  VkSemaphore release_semaphore;
+  VkSemaphore release_semaphore{};
   u32 acquire_semaphore_idx{};
   u32 curr_swapchain_idx{};
   VkSwapchainKHR swapchain{};

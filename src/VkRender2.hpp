@@ -152,9 +152,6 @@ class VkRender2 final {
   };
   SceneUniforms scene_uniform_cpu_data_;
 
-  VkCommandPool imm_cmd_pool_;
-  VkCommandBuffer imm_cmd_buf_;
-
   FreeListBuffer static_vertex_buf_;
   FreeListBuffer static_index_buf_;
   FreeListBuffer static_instance_data_buf_;

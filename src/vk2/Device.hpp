@@ -90,11 +90,13 @@ class Device {
   // TODO: no resetting individual command buffers
   [[nodiscard]] VkCommandPool create_command_pool(
       QueueType type,
-      VkCommandPoolCreateFlags flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT) const;
+      VkCommandPoolCreateFlags flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+      const char* name = "cmd pool") const;
   void create_command_buffers(VkCommandPool pool, std::span<VkCommandBuffer> buffers) const;
   [[nodiscard]] VkCommandBuffer create_command_buffer(VkCommandPool pool) const;
   [[nodiscard]] VkFence create_fence(VkFenceCreateFlags flags = VK_FENCE_CREATE_SIGNALED_BIT) const;
-  [[nodiscard]] VkSemaphore create_semaphore(bool timeline = false) const;
+  [[nodiscard]] VkSemaphore create_semaphore(bool timeline = false,
+                                             const char* name = "semaphore") const;
   void destroy_fence(VkFence fence) const;
   void destroy_semaphore(VkSemaphore semaphore) const;
   void destroy_command_pool(VkCommandPool pool) const;
@@ -136,7 +138,8 @@ class Device {
   void set_name(VkPipeline pipeline, const char* name);
   void set_name(VkFence fence, const char* name);
   void set_name(ImageHandle handle, const char* name);
-  void set_name(VkSemaphore semaphore, const char* name);
+  void set_name(VkSemaphore semaphore, const char* name) const;
+  void set_name(VkCommandPool pool, const char* name) const;
   Image* get_image(ImageHandle handle) { return img_pool_.get(handle); }
   Image* get_image(const Holder<ImageHandle>& handle) { return img_pool_.get(handle.handle); }
   Buffer* get_buffer(BufferHandle handle) { return buffer_pool_.get(handle); }
@@ -240,7 +243,7 @@ class Device {
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
   Queue queues_[(u32)QueueType::Count];
   void init_impl(const CreateInfo& info);
-  void set_name(const char* name, u64 handle, VkObjectType type);
+  void set_name(const char* name, u64 handle, VkObjectType type) const;
 
  public:
   CopyAllocator copy_allocator_;
@@ -249,6 +252,7 @@ class Device {
   std::vector<VkFence> free_fences_;
   VkSurfaceKHR surface_;
   VkDevice device_;
+
   vk2::Swapchain swapchain_;
   GLFWwindow* window_;
   vkb::Instance instance_;
@@ -327,6 +331,7 @@ class Device {
   IndexAllocator storage_buffer_allocator_{max_resource_descriptors};
   IndexAllocator sampled_image_allocator_{max_resource_descriptors};
   IndexAllocator sampler_allocator_{max_sampler_descriptors};
+
   VkDescriptorPool main_pool_{};
   VkDescriptorSet main_set_{};
   VkDescriptorSetLayout main_set_layout_{};

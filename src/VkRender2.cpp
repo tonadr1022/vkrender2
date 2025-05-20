@@ -127,9 +127,6 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
 
   device_->init_imgui();
 
-  imm_cmd_pool_ = device_->create_command_pool(QueueType::Graphics,
-                                               VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
-  imm_cmd_buf_ = device_->create_command_buffer(imm_cmd_pool_);
   PipelineManager::init(device_->device(), resource_dir_ / "shaders", true,
                         device_->default_pipeline_layout_);
 
@@ -621,7 +618,6 @@ void VkRender2::on_imgui() {
 VkRender2::~VkRender2() {
   ZoneScoped;
   device_->wait_idle();
-  device_->destroy_command_pool(imm_cmd_pool_);
   for (auto& frame : per_frame_data_) {
     frame.scene_uniform_buf = {};
     frame.line_draw_buf = {};

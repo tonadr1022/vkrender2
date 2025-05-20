@@ -327,11 +327,11 @@ void Device::init_impl(const CreateInfo& info) {
 
   // transition handler
   for (auto& transition_handler : transition_handlers_) {
-    transition_handler.cmd_pool =
-        create_command_pool(QueueType::Graphics, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
+    transition_handler.cmd_pool = create_command_pool(
+        QueueType::Graphics, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT, "transition handler pool");
     transition_handler.cmd_buf = create_command_buffer(transition_handler.cmd_pool);
     for (auto& semaphore : transition_handler.semaphores) {
-      semaphore = create_semaphore(false);
+      semaphore = create_semaphore(false, "transition handler");
     }
   }
 
@@ -365,7 +365,7 @@ void Device::init_impl(const CreateInfo& info) {
           continue;
         }
 
-        VkSemaphore semaphore = create_semaphore();
+        VkSemaphore semaphore = create_semaphore(false, "frame semaphore");
         queue.frame_semaphores[frame_i][other_queue_type] = semaphore;
         switch ((QueueType)queue_type) {
           default:
@@ -397,12 +397,14 @@ void Device::init_impl(const CreateInfo& info) {
 
 Device& get_device() { return Device::get(); }
 
-VkCommandPool Device::create_command_pool(QueueType type, VkCommandPoolCreateFlags flags) const {
+VkCommandPool Device::create_command_pool(QueueType type, VkCommandPoolCreateFlags flags,
+                                          const char* name) const {
   VkCommandPoolCreateInfo info{.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
                                .flags = flags,
                                .queueFamilyIndex = queues_[(u32)type].family_idx};
   VkCommandPool pool;
   VK_CHECK(vkCreateCommandPool(device_, &info, nullptr, &pool));
+  set_name(pool, name);
   return pool;
 }
 
@@ -431,7 +433,7 @@ VkFence Device::create_fence(VkFenceCreateFlags flags) const {
   return fence;
 }
 
-VkSemaphore Device::create_semaphore(bool timeline) const {
+VkSemaphore Device::create_semaphore(bool timeline, const char* name) const {
   VkSemaphoreTypeCreateInfo cinfo{};
   cinfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO;
   cinfo.pNext = nullptr;
@@ -443,6 +445,7 @@ VkSemaphore Device::create_semaphore(bool timeline) const {
   };
   VkSemaphore semaphore;
   VK_CHECK(vkCreateSemaphore(device_, &info, nullptr, &semaphore));
+  set_name(semaphore, name);
   return semaphore;
 }
 
@@ -569,7 +572,8 @@ Device::CopyAllocator::CopyCmd Device::CopyAllocator::allocate(u64 size) {
   }
 
   if (!cmd.is_valid()) {
-    cmd.transfer_cmd_pool = device_->create_command_pool(QueueType::Graphics, 0);
+    cmd.transfer_cmd_pool =
+        device_->create_command_pool(QueueType::Graphics, 0, "transfer cmd pool");
     cmd.transfer_cmd_buf = device_->create_command_buffer(cmd.transfer_cmd_pool);
     cmd.staging_buffer = device_->create_buffer(BufferCreateInfo{
         .size = std::max<u64>(size, 1024ul * 64), .flags = BufferCreateFlags_HostVisible});
@@ -763,6 +767,32 @@ Device::~Device() {
     destroy(it.second.first);
   }
 
+  for (auto& t : transition_handlers_) {
+    vkDestroyCommandPool(device_, t.cmd_pool, nullptr);
+    for (auto& sem : t.semaphores) {
+      vkDestroySemaphore(device_, sem, nullptr);
+    }
+  }
+
+  for (auto& sem : free_semaphores_) {
+    vkDestroySemaphore(device_, sem, nullptr);
+  }
+  for (auto& c : cmd_lists_) {
+    if (c) {
+      for (auto& sem : c->signal_semaphores_) {
+        vkDestroySemaphore(device_, sem, nullptr);
+      }
+      for (auto& sem : c->wait_semaphores_) {
+        vkDestroySemaphore(device_, sem, nullptr);
+      }
+      for (auto& pools : c->command_pools_) {
+        for (auto& pool : pools) {
+          vkDestroyCommandPool(device_, pool, nullptr);
+        }
+      }
+    }
+  }
+
   copy_allocator_.destroy();
 
   flush_deletions();
@@ -815,7 +845,7 @@ bool Device::is_supported(DeviceFeature feature) const {
   return true;
 }
 
-void Device::set_name(VkSemaphore semaphore, const char* name) {
+void Device::set_name(VkSemaphore semaphore, const char* name) const {
 #ifdef DEBUG_VK_OBJECT_NAMES
   set_name(name, reinterpret_cast<u64>(semaphore), VK_OBJECT_TYPE_SEMAPHORE);
 #else
@@ -835,7 +865,7 @@ void Device::set_name(ImageHandle handle, const char* name) {
 #endif
 }
 
-void Device::set_name(const char* name, u64 handle, VkObjectType type) {
+void Device::set_name(const char* name, u64 handle, VkObjectType type) const {
   VkDebugUtilsObjectNameInfoEXT name_info = {
       .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
       .objectType = type,
@@ -1875,7 +1905,8 @@ CmdEncoder* Device::begin_command_list(QueueType queue_type) {
   cmd->reset(curr_frame_in_flight());
   if (cmd->get_cmd_buf() == VK_NULL_HANDLE) {
     for (u32 frame_i = 0; frame_i < frames_in_flight; frame_i++) {
-      cmd->command_pools_[frame_i][(u32)queue_type] = create_command_pool(queue_type);
+      cmd->command_pools_[frame_i][(u32)queue_type] = create_command_pool(
+          queue_type, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, "begincmdlist pool");
       cmd->command_bufs_[frame_i][(u32)queue_type] =
           create_command_buffer(cmd->command_pools_[frame_i][(u32)queue_type]);
     }
@@ -1942,7 +1973,7 @@ void Device::blit_to_swapchain(CmdEncoder* cmd, const Image& img, uvec2 dims) {
 VkSemaphore Device::new_semaphore() {
   std::scoped_lock lock(semaphore_pool_mtx_);
   if (free_semaphores_.empty()) {
-    return create_semaphore(false);
+    return create_semaphore(false, "semaphore pool");
   }
   VkSemaphore sem = free_semaphores_.back();
   free_semaphores_.pop_back();
@@ -1975,6 +2006,15 @@ void Device::CopyAllocator::CopyCmd::copy_buffer(Device* device, const Buffer& d
                                  .regionCount = 1,
                                  .pRegions = &copy};
   vkCmdCopyBuffer2KHR(transfer_cmd_buf, &copy_info);
+}
+
+void Device::set_name(VkCommandPool pool, const char* name) const {
+#ifdef DEBUG_VK_OBJECT_NAMES
+  set_name(name, reinterpret_cast<u64>(pool), VK_OBJECT_TYPE_COMMAND_POOL);
+#else
+  (void)pool;
+  (void)name;
+#endif
 }
 
 }  // namespace gfx
