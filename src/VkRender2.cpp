@@ -131,7 +131,7 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
                         device_->default_pipeline_layout_);
 
   uint32_t white = glm::packUnorm4x8(glm::vec4(1, 1, 1, 1));
-  auto copy_cmd = device_->copy_allocator_.allocate(32);
+  auto copy_cmd = device_->graphics_copy_allocator_.allocate(32);
   memcpy((char*)device_->get_buffer(copy_cmd.staging_buffer)->mapped_data(), (void*)&white,
          sizeof(u32));
   default_data_.white_img = Holder<ImageHandle>{device_->create_image(ImageDesc{
@@ -167,7 +167,7 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
                       VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
                       VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
     state_.flush_barriers();
-    device_->copy_allocator_.submit(copy_cmd);
+    device_->graphics_copy_allocator_.submit(copy_cmd);
   }
 
   nearest_sampler_ = device_->get_or_create_sampler({
@@ -252,7 +252,7 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   // TODO: make a function for this lmao, so cringe
   {
     auto vert_buf_size = sizeof(cube_vertices);
-    auto copy_cmd = device_->copy_allocator_.allocate(vert_buf_size);
+    auto copy_cmd = device_->graphics_copy_allocator_.allocate(vert_buf_size);
     memcpy(device_->get_buffer(copy_cmd.staging_buffer)->mapped_data(), cube_vertices,
            vert_buf_size);
     cube_vertex_buf_ = device_->create_buffer_holder(
@@ -265,7 +265,7 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
                         VK_ACCESS_2_TRANSFER_WRITE_BIT)
         .flush_barriers();
     copy_cmd.copy_buffer(device_, *device_->get_buffer(cube_vertex_buf_), 0, 0, vert_buf_size);
-    device_->copy_allocator_.submit(copy_cmd);
+    device_->graphics_copy_allocator_.submit(copy_cmd);
   }
 
   shadow_sampler_ = device_->get_or_create_sampler(
@@ -653,8 +653,8 @@ ModelHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
       auto vertices_gpu_slot = static_vertex_buf_.allocator.allocate(vertices_size);
       auto indices_gpu_slot = static_index_buf_.allocator.allocate(indices_size);
 
-      auto copy_cmd =
-          device_->copy_allocator_.allocate(material_data_size + vertices_size + indices_size);
+      auto copy_cmd = device_->graphics_copy_allocator_.allocate(material_data_size +
+                                                                 vertices_size + indices_size);
       auto staging = LinearCopyer{device_->get_buffer(copy_cmd.staging_buffer)->mapped_data()};
       u64 material_data_staging_offset = staging.copy(res.materials.data(), material_data_size);
       u64 vertices_staging_offset = staging.copy(res.vertices.data(), vertices_size);
@@ -691,7 +691,7 @@ ModelHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
             .buffer_barrier(static_materials_buf_.get_buffer()->buffer(),
                             VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT)
             .flush_barriers();
-        device_->copy_allocator_.submit(copy_cmd);
+        device_->graphics_copy_allocator_.submit(copy_cmd);
       }
       resources_handle = static_models_pool_.alloc(
           std::move(res.scene_graph_data), std::move(res.mesh_draw_infos),
@@ -834,8 +834,8 @@ ModelHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
     for (auto& cmds : pass_cmds) {
       tot_draw_cmds_buf_size += cmds.size() * sizeof(GPUDrawInfo);
     }
-    auto copy_cmd = device_->copy_allocator_.allocate(tot_draw_cmds_buf_size + obj_datas_size +
-                                                      instance_datas_size);
+    auto copy_cmd = device_->graphics_copy_allocator_.allocate(
+        tot_draw_cmds_buf_size + obj_datas_size + instance_datas_size);
     auto staging = LinearCopyer{device_->get_buffer(copy_cmd.staging_buffer)->mapped_data()};
     u64 cmds_staging_offsets[MeshPass_Count] = {};
     for (int i = 0; i < MeshPass_Count; i++) {
@@ -871,7 +871,7 @@ ModelHandle VkRender2::load_model(const std::filesystem::path& path, bool dynami
           .buffer_barrier(static_instance_data_buf_.get_buffer()->buffer(),
                           VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT)
           .flush_barriers();
-      device_->copy_allocator_.submit(copy_cmd);
+      device_->graphics_copy_allocator_.submit(copy_cmd);
     }
     return {};
   }
@@ -902,7 +902,7 @@ ImageHandle VkRender2::load_hdr_img(const std::filesystem::path& path, bool flip
                                                     .bind_flags = BindFlag::ShaderResource});
   auto cnt = cpu_img_data->w * cpu_img_data->h;
   u64 cpu_img_size = sizeof(float) * cnt * 4;
-  auto copy_cmd = device_->copy_allocator_.allocate(cpu_img_size);
+  auto copy_cmd = device_->graphics_copy_allocator_.allocate(cpu_img_size);
   auto* mapped = (float*)device_->get_buffer(copy_cmd.staging_buffer)->mapped_data();
   assert(mapped);
   const float* src = cpu_img_data->data;
@@ -944,7 +944,7 @@ ImageHandle VkRender2::load_hdr_img(const std::filesystem::path& path, bool flip
       .regionCount = 1,
       .pRegions = &img_copy_info};
   vkCmdCopyBufferToImage2KHR(copy_cmd.transfer_cmd_buf, &copy_to_img_info);
-  device_->copy_allocator_.submit(copy_cmd);
+  device_->graphics_copy_allocator_.submit(copy_cmd);
 
   std::swap(barrier.srcStageMask, barrier.dstStageMask);
   barrier.oldLayout = img->curr_layout;
@@ -1532,6 +1532,7 @@ VkRender2::StaticMeshDrawManager::Handle VkRender2::StaticMeshDrawManager::add_d
   u32 num_single_sided_draws = (size / sizeof(GPUDrawInfo)) - num_double_sided_draws;
   auto* draw_cmds_buf = draw_cmds_buf_.get_buffer();
   assert(draw_cmds_buf);
+  assert(draw_cmds_buf->buffer());
   if (!draw_cmds_buf) {
     return {};
   }

@@ -216,7 +216,7 @@ class Device {
  public:
   std::vector<VkImageMemoryBarrier2> init_transitions_;
   struct CopyAllocator {
-    explicit CopyAllocator(Device* device) : device_(device) {}
+    explicit CopyAllocator(Device* device, QueueType type) : device_(device), type_(type) {}
     struct CopyCmd {
       VkCommandPool transfer_cmd_pool{};
       VkCommandBuffer transfer_cmd_buf{};
@@ -232,6 +232,7 @@ class Device {
 
    private:
     Device* device_{};
+    QueueType type_{QueueType::Count};
     std::mutex free_list_mtx_;
     std::vector<CopyCmd> free_copy_cmds_;
   };
@@ -246,7 +247,8 @@ class Device {
   void set_name(const char* name, u64 handle, VkObjectType type) const;
 
  public:
-  CopyAllocator copy_allocator_;
+  CopyAllocator graphics_copy_allocator_;
+  CopyAllocator transfer_copy_allocator_;
 
  private:
   std::vector<VkFence> free_fences_;

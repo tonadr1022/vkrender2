@@ -74,30 +74,6 @@ void calc_aabb(AABB& aabb, const void* vertices, size_t len, size_t stride, size
   }
 }
 
-// void calculate_mesh_bounds(MeshBounds& bounds, const void* vertices, size_t len, size_t stride,
-//                            size_t offset) {
-//   AABB aabb;
-//   calc_aabb(aabb, vertices, len, stride, offset);
-//   bounds.extents = (aabb.max - aabb.min) / 2.f;
-//   bounds.origin = (aabb.max + aabb.min) / 2.f;
-//   float max_dist_sqaured = 0.0f;
-//   for (size_t i = 0; i < len; i++) {
-//     const glm::vec3& pos = *reinterpret_cast<const glm::vec3*>(static_cast<const char*>(vertices)
-//     +
-//                                                                (i * stride) + offset);
-//     glm::vec3 offset = pos - bounds.origin;
-//     float distance_squared = glm::dot(offset, offset);
-//     max_dist_sqaured = std::max(max_dist_sqaured, distance_squared);
-//   }
-//
-//   bounds.radius = std::sqrt(max_dist_sqaured);
-// }
-//
-// void calculate_mesh_bounds(MeshBounds& bounds, glm::vec3 min, glm::vec3 max) {
-//   bounds.extents = (max - min) / 2.f;
-//   bounds.origin = (max + min) / 2.f;
-//   bounds.radius = glm::length(max - bounds.origin);
-// }
 void load_tangents(const std::string& path, std::vector<Vertex>& vertices) {
   ZoneScoped;
   std::ifstream file(path, std::ios::binary);
@@ -679,7 +655,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
     u64 img_i{};
     u64 curr_staging_offset = 0;
     u64 start_copy_idx{};
-    auto copy_cmd = get_device().copy_allocator_.allocate(batch_upload_size);
+    auto copy_cmd = get_device().transfer_copy_allocator_.allocate(batch_upload_size);
     StateTracker state;
     auto flush_uploads = [&]() {
       for (u64 i = 0; i < img_i; i++) {
@@ -735,7 +711,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
               VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
         }
         state.flush_barriers();
-        get_device().copy_allocator_.submit(copy_cmd);
+        get_device().transfer_copy_allocator_.submit(copy_cmd);
       }
 
       curr_staging_offset += max_batch_upload_size;

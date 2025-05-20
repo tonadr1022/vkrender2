@@ -397,6 +397,7 @@ class VkRender2 final {
   bool draw_imgui_{true};
   bool deferred_enabled_{true};
   bool draw_debug_aabbs_{false};
+  std::vector<std::optional<LoadedSceneData>> load_scene_reqs_;
 };
 
 }  // namespace gfx

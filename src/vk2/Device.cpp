@@ -179,9 +179,6 @@ void Device::init_impl(const CreateInfo& info) {
       {VK_KHR_FORMAT_FEATURE_FLAGS_2_EXTENSION_NAME, VK_KHR_COPY_COMMANDS_2_EXTENSION_NAME,
        VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME}};
-
-  // features12.drawIndirectCount = true;
-
   auto pr = phys_builder.set_minimum_version(1, 2)
                 .set_required_features_12(supported_features12_)
                 .set_required_features_11(features11)
@@ -572,8 +569,7 @@ Device::CopyAllocator::CopyCmd Device::CopyAllocator::allocate(u64 size) {
   }
 
   if (!cmd.is_valid()) {
-    cmd.transfer_cmd_pool =
-        device_->create_command_pool(QueueType::Graphics, 0, "transfer cmd pool");
+    cmd.transfer_cmd_pool = device_->create_command_pool(type_, 0, "transfer cmd pool");
     cmd.transfer_cmd_buf = device_->create_command_buffer(cmd.transfer_cmd_pool);
     cmd.staging_buffer = device_->create_buffer(BufferCreateInfo{
         .size = std::max<u64>(size, 1024ul * 64), .flags = BufferCreateFlags_HostVisible});
@@ -599,8 +595,7 @@ void Device::CopyAllocator::submit(CopyCmd cmd) {
   VkSubmitInfo2 submit_info{.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
                             .commandBufferInfoCount = 1,
                             .pCommandBufferInfos = &cb_submit};
-  VK_CHECK(
-      vkQueueSubmit2KHR(device_->get_queue(QueueType::Graphics).queue, 1, &submit_info, cmd.fence));
+  VK_CHECK(vkQueueSubmit2KHR(device_->get_queue(type_).queue, 1, &submit_info, cmd.fence));
   VkResult res{};
   while ((res = vkWaitForFences(device_->device_, 1, &cmd.fence, true,
                                 gfx::Device::timeout_value)) == VK_TIMEOUT) {
@@ -793,7 +788,8 @@ Device::~Device() {
     }
   }
 
-  copy_allocator_.destroy();
+  graphics_copy_allocator_.destroy();
+  transfer_copy_allocator_.destroy();
 
   flush_deletions();
   assert(buffer_pool_.empty());
@@ -1032,6 +1028,7 @@ ImageHandle Device::create_image(const ImageDesc& desc, void* initial_data) {
   cinfo.tiling = VK_IMAGE_TILING_OPTIMAL;
   cinfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
   cinfo.samples = VK_SAMPLE_COUNT_1_BIT;
+  cinfo.sharingMode = VK_SHARING_MODE_CONCURRENT;
   if (desc.sample_count == 2) {
     cinfo.samples = VK_SAMPLE_COUNT_2_BIT;
   } else if (desc.sample_count == 4) {
@@ -1645,7 +1642,9 @@ void Device::new_imgui_frame() {
   ImGui::NewFrame();
 }
 
-Device::Device() : copy_allocator_(this) {}
+Device::Device()
+    : graphics_copy_allocator_(this, QueueType::Graphics),
+      transfer_copy_allocator_(this, QueueType::Transfer) {}
 
 void Device::enqueue_delete_texture_view(VkImageView view) {
   texture_view_delete_q2_.emplace_back(view, curr_frame_num());
