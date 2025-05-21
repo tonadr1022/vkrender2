@@ -397,7 +397,21 @@ class VkRender2 final {
   bool draw_imgui_{true};
   bool deferred_enabled_{true};
   bool draw_debug_aabbs_{false};
-  std::vector<std::optional<LoadedSceneData>> load_scene_reqs_;
+
+  struct LoadSceneReq {
+    std::filesystem::path path;
+    LoadedSceneData result;
+    mat4 transform;
+  };
+  std::vector<LoadSceneReq> load_scene_reqs_;
+  std::mutex scene_load_mtx_;
+
+  struct LoadInstanceReq {
+    StaticModelGPUResourcesHandle resource_handle;
+    mat4 transform;
+  };
+  std::vector<LoadInstanceReq> load_instance_reqs_;
+  void handle_load_scene_requests();
 };
 
 }  // namespace gfx

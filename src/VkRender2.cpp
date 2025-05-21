@@ -444,6 +444,8 @@ void VkRender2::draw(const SceneDrawInfo& info) {
   // auto cmd_begin_info = init::command_buffer_begin_info();
   // VK_CHECK(vkBeginCommandBuffer(cmd_buf, &cmd_begin_info));
 
+  handle_load_scene_requests();
+
   CmdEncoder* cmd = device_->begin_command_list(QueueType::Graphics);
   state_.reset(*cmd);
   device_->bind_bindless_descriptors(*cmd);
@@ -617,6 +619,8 @@ void VkRender2::on_imgui() {
 
 VkRender2::~VkRender2() {
   ZoneScoped;
+  threads::pool.wait();
+  handle_load_scene_requests();
   device_->wait_idle();
   for (auto& frame : per_frame_data_) {
     frame.scene_uniform_buf = {};
@@ -624,256 +628,23 @@ VkRender2::~VkRender2() {
   }
 }
 
-ModelHandle VkRender2::load_model(const std::filesystem::path& path, bool dynamic,
-                                  const mat4& transform) {
+ModelHandle VkRender2::load_model(const std::filesystem::path& path, bool, const mat4& transform) {
   ZoneScoped;
   if (!std::filesystem::exists(path)) {
     LERROR("load_static_model: path doesn't exist: {}", path.string());
     return {};
   }
 
-  if (!dynamic) {
-    ZoneScopedN("load_scene");
-    auto handle_it = static_model_name_to_handle_.find(path);
-    StaticModelGPUResourcesHandle resources_handle{};
-    StaticModelGPUResources* resources{};
-    if (handle_it != static_model_name_to_handle_.end()) {
-      resources_handle = handle_it->second;
-      resources = static_models_pool_.get(resources_handle);
-    } else {
+  auto handle_it = static_model_name_to_handle_.find(path);
+  if (handle_it != static_model_name_to_handle_.end()) {
+    load_instance_reqs_.emplace_back(handle_it->second, transform);
+  } else {
+    threads::pool.submit_task([this, path, transform]() {
       auto ret = gfx::load_gltf(path, default_mat_data_);
-      if (!ret.has_value()) {
-        return {};
+      if (ret.has_value()) {
+        load_scene_reqs_.emplace_back(path, std::move(ret.value()), transform);
       }
-      auto res = std::move(ret.value());
-
-      u64 material_data_size = res.materials.size() * sizeof(gfx::Material);
-      u64 vertices_size = res.vertices.size() * sizeof(gfx::Vertex);
-      u64 indices_size = res.indices.size() * sizeof(u32);
-      auto vertices_gpu_slot = static_vertex_buf_.allocator.allocate(vertices_size);
-      auto indices_gpu_slot = static_index_buf_.allocator.allocate(indices_size);
-
-      auto copy_cmd = device_->graphics_copy_allocator_.allocate(material_data_size +
-                                                                 vertices_size + indices_size);
-      auto staging = LinearCopyer{device_->get_buffer(copy_cmd.staging_buffer)->mapped_data()};
-      u64 material_data_staging_offset = staging.copy(res.materials.data(), material_data_size);
-      u64 vertices_staging_offset = staging.copy(res.vertices.data(), vertices_size);
-      u64 indices_staging_offset = staging.copy(res.indices.data(), indices_size);
-
-      static_draw_stats_.vertices += res.vertices.size();
-      static_draw_stats_.indices += res.indices.size();
-      static_draw_stats_.textures += res.textures.size();
-      static_draw_stats_.materials += res.materials.size();
-      auto materials_gpu_slot = static_materials_buf_.allocator.allocate(material_data_size);
-      {
-        state_.reset(copy_cmd.transfer_cmd_buf);
-        state_
-            .buffer_barrier(static_vertex_buf_.get_buffer()->buffer(),
-                            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
-            .buffer_barrier(static_index_buf_.get_buffer()->buffer(),
-                            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
-            .buffer_barrier(static_materials_buf_.get_buffer()->buffer(),
-                            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
-            .flush_barriers();
-        copy_cmd.copy_buffer(device_, *device_->get_buffer(static_materials_buf_.buffer),
-                             material_data_staging_offset, materials_gpu_slot.get_offset(),
-                             material_data_size);
-        copy_cmd.copy_buffer(device_, *static_vertex_buf_.get_buffer(), vertices_staging_offset,
-                             vertices_gpu_slot.get_offset(), vertices_size);
-        copy_cmd.copy_buffer(device_, *static_index_buf_.get_buffer(), indices_staging_offset,
-                             indices_gpu_slot.get_offset(), indices_size);
-        state_
-            .buffer_barrier(static_vertex_buf_.get_buffer()->buffer(),
-                            VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
-                            VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT)
-            .buffer_barrier(static_index_buf_.get_buffer()->buffer(),
-                            VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT, VK_ACCESS_2_INDEX_READ_BIT)
-            .buffer_barrier(static_materials_buf_.get_buffer()->buffer(),
-                            VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT)
-            .flush_barriers();
-        device_->graphics_copy_allocator_.submit(copy_cmd);
-      }
-      resources_handle = static_models_pool_.alloc(
-          std::move(res.scene_graph_data), std::move(res.mesh_draw_infos),
-          std::move(materials_gpu_slot), std::move(vertices_gpu_slot), std::move(indices_gpu_slot),
-          std::move(res.textures), std::move(res.materials),
-          vertices_gpu_slot.get_offset() / sizeof(gfx::Vertex),
-          indices_gpu_slot.get_offset() / sizeof(u32), res.vertices.size(), res.indices.size(),
-          path.string(), 0u);
-      resources = static_models_pool_.get(resources_handle);
-      static_model_name_to_handle_.emplace(resources->name, resources_handle);
-    }
-    static_draw_stats_.total_vertices += resources->num_vertices;
-    static_draw_stats_.total_indices += resources->num_indices;
-
-    u32 pass_double_sided_draw_cnts[MeshPass_Count] = {};
-    u32 pass_obj_counts[MeshPass_Count] = {};
-
-    for (auto& node : resources->scene_graph_data.node_datas) {
-      for (auto& mesh_indices : node.meshes) {
-        bool double_sided = resources->materials[mesh_indices.material_id].is_double_sided();
-        if (mesh_indices.pass_flags & PassFlags_Opaque) {
-          if (double_sided) {
-            pass_double_sided_draw_cnts[MeshPass_Opaque]++;
-          }
-          pass_obj_counts[MeshPass_Opaque]++;
-        } else if (mesh_indices.pass_flags & PassFlags_OpaqueAlpha) {
-          if (double_sided) {
-            pass_double_sided_draw_cnts[MeshPass_OpaqueAlphaMask]++;
-          }
-          pass_obj_counts[MeshPass_OpaqueAlphaMask]++;
-        } else if (mesh_indices.pass_flags & PassFlags_Transparent) {
-          if (double_sided) {
-            pass_double_sided_draw_cnts[MeshPass_Transparent]++;
-          }
-          pass_obj_counts[MeshPass_Transparent]++;
-        }
-      }
-    }
-    resources->ref_count++;
-
-    u32 num_objs_tot{};
-    for (auto pass_obj_count : pass_obj_counts) {
-      num_objs_tot += pass_obj_count;
-    }
-
-    auto model_instance_resources_handle = static_model_instance_pool_.alloc();
-    loaded_model_instance_resources_.emplace_back(model_instance_resources_handle);
-    auto* instance_resources = static_model_instance_pool_.get(model_instance_resources_handle);
-    instance_resources->model_resources_handle = resources_handle;
-    instance_resources->name = resources->name.c_str();
-
-    std::vector<GPUInstanceData> instance_datas;
-    instance_resources->object_datas.reserve(num_objs_tot);
-    instance_datas.reserve(num_objs_tot);
-
-    vec3 scene_min = vec3{std::numeric_limits<float>::max()};
-    vec3 scene_max = vec3{std::numeric_limits<float>::lowest()};
-    // TODO: no allocate
-    std::array<std::vector<GPUDrawInfo>, MeshPass_Count> pass_cmds;
-    // for (auto& c : pass_cmds) {
-    //
-    // }
-    // opaque_cmds.reserve(num_opaque_objs);
-    // alpha_mask_cmds.reserve(num_opaque_alpha_mask_objs);
-    // transparent_cmds.reserve(num_transparent_objs);
-    instance_resources->instance_data_slot =
-        static_instance_data_buf_.allocator.allocate(num_objs_tot * sizeof(GPUInstanceData));
-    instance_resources->object_data_slot =
-        static_object_data_buf_.allocator.allocate(num_objs_tot * sizeof(ObjectData));
-
-    u32 base_instance_id =
-        instance_resources->instance_data_slot.get_offset() / sizeof(GPUInstanceData);
-    u32 base_object_data_id =
-        instance_resources->object_data_slot.get_offset() / sizeof(ObjectData);
-    auto base_material_id = resources->materials_slot.get_offset() / sizeof(Material);
-
-    bool is_non_identity_root_node_transform = transform != mat4{1};
-    for (auto& node : resources->scene_graph_data.node_datas) {
-      for (auto& node_mesh_data : node.meshes) {
-        auto& mesh = resources->mesh_draw_infos[node_mesh_data.mesh_idx];
-        mat4 model = is_non_identity_root_node_transform ? transform * node.world_transform
-                                                         : node.world_transform;
-        // https://stackoverflow.com/questions/6053522/how-to-recalculate-axis-aligned-bounding-box-after-translate-rotate/58630206#58630206
-        auto transform_aabb = [](const glm::mat4& model, const AABB& aabb) -> AABB {
-          AABB result;
-          result.min = glm::vec3(model[3]);  // translation part
-          result.max = result.min;
-          for (int i = 0; i < 3; ++i) {    // for each row (x, y, z in result)
-            for (int j = 0; j < 3; ++j) {  // for each column (x, y, z in input aabb)
-              float a = model[i][j] * aabb.min[j];
-              float b = model[i][j] * aabb.max[j];
-              result.min[i] += glm::min(a, b);
-              result.max[i] += glm::max(a, b);
-            }
-          }
-          return result;
-        };
-        AABB world_space_aabb = transform_aabb(model, mesh.aabb);
-        scene_min = glm::min(scene_min, world_space_aabb.min);
-        scene_max = glm::max(scene_max, world_space_aabb.max);
-        u32 instance_id = base_instance_id + instance_datas.size();
-        instance_datas.emplace_back(node_mesh_data.material_id + base_material_id,
-                                    base_object_data_id + instance_resources->object_datas.size());
-        instance_resources->object_datas.emplace_back(gfx::ObjectData{
-            .model = model,
-            .aabb_min = vec4(mesh.aabb.min, 0.),
-            .aabb_max = vec4(mesh.aabb.max, 0.),
-
-        });
-
-        u32 draw_flags{};
-        if (resources->materials[node_mesh_data.material_id].is_double_sided()) {
-          draw_flags |= GPUDrawInfoFlags_DoubleSided;
-        }
-
-        GPUDrawInfo draw{
-            .index_cnt = mesh.index_count,
-            .first_index = static_cast<u32>(resources->first_index + mesh.first_index),
-            .vertex_offset = static_cast<u32>(resources->first_vertex + mesh.first_vertex),
-            .instance_id = instance_id,
-            .flags = draw_flags};
-
-        if (node_mesh_data.pass_flags & PassFlags_Opaque) {
-          pass_cmds[MeshPass_Opaque].emplace_back(draw);
-        } else if (node_mesh_data.pass_flags & PassFlags_OpaqueAlpha) {
-          pass_cmds[MeshPass_OpaqueAlphaMask].emplace_back(draw);
-        } else if (node_mesh_data.pass_flags & PassFlags_Transparent) {
-          pass_cmds[MeshPass_Transparent].emplace_back(draw);
-        }
-      }
-    }
-
-    u64 obj_datas_size = instance_resources->object_datas.size() * sizeof(gfx::ObjectData);
-    u64 instance_datas_size = instance_datas.size() * sizeof(GPUInstanceData);
-
-    scene_aabb_.min = glm::min(scene_aabb_.min, scene_min);
-    scene_aabb_.max = glm::max(scene_aabb_.max, scene_max);
-
-    u32 tot_draw_cmds_buf_size = 0;
-    for (auto& cmds : pass_cmds) {
-      tot_draw_cmds_buf_size += cmds.size() * sizeof(GPUDrawInfo);
-    }
-    auto copy_cmd = device_->graphics_copy_allocator_.allocate(
-        tot_draw_cmds_buf_size + obj_datas_size + instance_datas_size);
-    auto staging = LinearCopyer{device_->get_buffer(copy_cmd.staging_buffer)->mapped_data()};
-    u64 cmds_staging_offsets[MeshPass_Count] = {};
-    for (int i = 0; i < MeshPass_Count; i++) {
-      auto& cmds = pass_cmds[i];
-      if (cmds.size()) {
-        cmds_staging_offsets[i] = staging.copy(cmds.data(), cmds.size() * sizeof(GPUDrawInfo));
-      }
-    }
-    u64 obj_datas_staging_offset =
-        staging.copy(instance_resources->object_datas.data(), obj_datas_size);
-    u64 instance_datas_staging_offset = staging.copy(instance_datas.data(), instance_datas_size);
-    {
-      assert(obj_datas_size && instance_datas_size);
-      state_.reset(copy_cmd.transfer_cmd_buf);
-      for (int i = 0; i < MeshPass_Count; i++) {
-        auto& cmds = pass_cmds[i];
-        if (cmds.size()) {
-          instance_resources->mesh_pass_draw_handles[i] = static_draw_mgrs_[i].add_draws(
-              state_, copy_cmd, cmds.size() * sizeof(GPUDrawInfo), cmds_staging_offsets[i],
-              pass_double_sided_draw_cnts[i]);
-        }
-      }
-      copy_cmd.copy_buffer(device_, *static_object_data_buf_.get_buffer(), obj_datas_staging_offset,
-                           instance_resources->object_data_slot.get_offset(), obj_datas_size);
-      copy_cmd.copy_buffer(
-          device_, *static_instance_data_buf_.get_buffer(), instance_datas_staging_offset,
-          instance_resources->instance_data_slot.get_offset(), instance_datas_size);
-      state_
-          .buffer_barrier(
-              static_object_data_buf_.get_buffer()->buffer(),
-              VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
-              VK_ACCESS_2_SHADER_READ_BIT)
-          .buffer_barrier(static_instance_data_buf_.get_buffer()->buffer(),
-                          VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT)
-          .flush_barriers();
-      device_->graphics_copy_allocator_.submit(copy_cmd);
-    }
-    return {};
+    });
   }
   return {};
 }
@@ -1805,5 +1576,248 @@ u64 VkRender2::curr_frame_in_flight_num() const {
 VkRender2::PerFrameData& VkRender2::curr_frame() {
   return per_frame_data_[device_->curr_frame_num() % device_->get_frames_in_flight()];
 }
+
 Buffer* FreeListBuffer::get_buffer() const { return get_device().get_buffer(buffer); }
+
+void VkRender2::handle_load_scene_requests() {
+  for (auto& load_scene_req : load_scene_reqs_) {
+    auto& res = load_scene_req.result;
+
+    u64 material_data_size = res.materials.size() * sizeof(gfx::Material);
+    u64 vertices_size = res.vertices.size() * sizeof(gfx::Vertex);
+    u64 indices_size = res.indices.size() * sizeof(u32);
+    auto vertices_gpu_slot = static_vertex_buf_.allocator.allocate(vertices_size);
+    auto indices_gpu_slot = static_index_buf_.allocator.allocate(indices_size);
+
+    auto copy_cmd = device_->graphics_copy_allocator_.allocate(material_data_size + vertices_size +
+                                                               indices_size);
+    auto staging = LinearCopyer{device_->get_buffer(copy_cmd.staging_buffer)->mapped_data()};
+    u64 material_data_staging_offset = staging.copy(res.materials.data(), material_data_size);
+    u64 vertices_staging_offset = staging.copy(res.vertices.data(), vertices_size);
+    u64 indices_staging_offset = staging.copy(res.indices.data(), indices_size);
+
+    static_draw_stats_.vertices += res.vertices.size();
+    static_draw_stats_.indices += res.indices.size();
+    static_draw_stats_.textures += res.textures.size();
+    static_draw_stats_.materials += res.materials.size();
+    auto materials_gpu_slot = static_materials_buf_.allocator.allocate(material_data_size);
+    {
+      state_.reset(copy_cmd.transfer_cmd_buf);
+      state_
+          .buffer_barrier(static_vertex_buf_.get_buffer()->buffer(),
+                          VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
+          .buffer_barrier(static_index_buf_.get_buffer()->buffer(),
+                          VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
+          .buffer_barrier(static_materials_buf_.get_buffer()->buffer(),
+                          VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
+          .flush_barriers();
+      copy_cmd.copy_buffer(device_, *device_->get_buffer(static_materials_buf_.buffer),
+                           material_data_staging_offset, materials_gpu_slot.get_offset(),
+                           material_data_size);
+      copy_cmd.copy_buffer(device_, *static_vertex_buf_.get_buffer(), vertices_staging_offset,
+                           vertices_gpu_slot.get_offset(), vertices_size);
+      copy_cmd.copy_buffer(device_, *static_index_buf_.get_buffer(), indices_staging_offset,
+                           indices_gpu_slot.get_offset(), indices_size);
+      state_
+          .buffer_barrier(static_vertex_buf_.get_buffer()->buffer(),
+                          VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
+                          VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT)
+          .buffer_barrier(static_index_buf_.get_buffer()->buffer(),
+                          VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT, VK_ACCESS_2_INDEX_READ_BIT)
+          .buffer_barrier(static_materials_buf_.get_buffer()->buffer(),
+                          VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT)
+          .flush_barriers();
+      device_->graphics_copy_allocator_.submit(copy_cmd);
+    }
+    auto resources_handle = static_models_pool_.alloc(
+        std::move(res.scene_graph_data), std::move(res.mesh_draw_infos),
+        std::move(materials_gpu_slot), std::move(vertices_gpu_slot), std::move(indices_gpu_slot),
+        std::move(res.textures), std::move(res.materials),
+        vertices_gpu_slot.get_offset() / sizeof(gfx::Vertex),
+        indices_gpu_slot.get_offset() / sizeof(u32), res.vertices.size(), res.indices.size(),
+        load_scene_req.path.string(), 0u);
+    auto* resources = static_models_pool_.get(resources_handle);
+    static_model_name_to_handle_.emplace(resources->name, resources_handle);
+    load_instance_reqs_.emplace_back(resources_handle, load_scene_req.transform);
+  }
+  load_scene_reqs_.clear();
+
+  for (auto& load_instance_req : load_instance_reqs_) {
+    auto* resources = static_models_pool_.get(load_instance_req.resource_handle);
+    auto& resources_handle = load_instance_req.resource_handle;
+    auto& transform = load_instance_req.transform;
+    static_draw_stats_.total_vertices += resources->num_vertices;
+    static_draw_stats_.total_indices += resources->num_indices;
+
+    u32 pass_double_sided_draw_cnts[MeshPass_Count] = {};
+    u32 pass_obj_counts[MeshPass_Count] = {};
+
+    for (auto& node : resources->scene_graph_data.node_datas) {
+      for (auto& mesh_indices : node.meshes) {
+        bool double_sided = resources->materials[mesh_indices.material_id].is_double_sided();
+        if (mesh_indices.pass_flags & PassFlags_Opaque) {
+          if (double_sided) {
+            pass_double_sided_draw_cnts[MeshPass_Opaque]++;
+          }
+          pass_obj_counts[MeshPass_Opaque]++;
+        } else if (mesh_indices.pass_flags & PassFlags_OpaqueAlpha) {
+          if (double_sided) {
+            pass_double_sided_draw_cnts[MeshPass_OpaqueAlphaMask]++;
+          }
+          pass_obj_counts[MeshPass_OpaqueAlphaMask]++;
+        } else if (mesh_indices.pass_flags & PassFlags_Transparent) {
+          if (double_sided) {
+            pass_double_sided_draw_cnts[MeshPass_Transparent]++;
+          }
+          pass_obj_counts[MeshPass_Transparent]++;
+        }
+      }
+    }
+    resources->ref_count++;
+
+    u32 num_objs_tot{};
+    for (auto pass_obj_count : pass_obj_counts) {
+      num_objs_tot += pass_obj_count;
+    }
+
+    auto model_instance_resources_handle = static_model_instance_pool_.alloc();
+    loaded_model_instance_resources_.emplace_back(model_instance_resources_handle);
+    auto* instance_resources = static_model_instance_pool_.get(model_instance_resources_handle);
+    instance_resources->model_resources_handle = resources_handle;
+    instance_resources->name = resources->name.c_str();
+
+    std::vector<GPUInstanceData> instance_datas;
+    instance_resources->object_datas.reserve(num_objs_tot);
+    instance_datas.reserve(num_objs_tot);
+
+    vec3 scene_min = vec3{std::numeric_limits<float>::max()};
+    vec3 scene_max = vec3{std::numeric_limits<float>::lowest()};
+    // TODO: no allocate
+    std::array<std::vector<GPUDrawInfo>, MeshPass_Count> pass_cmds;
+    // for (auto& c : pass_cmds) {
+    //
+    // }
+    // opaque_cmds.reserve(num_opaque_objs);
+    // alpha_mask_cmds.reserve(num_opaque_alpha_mask_objs);
+    // transparent_cmds.reserve(num_transparent_objs);
+    instance_resources->instance_data_slot =
+        static_instance_data_buf_.allocator.allocate(num_objs_tot * sizeof(GPUInstanceData));
+    instance_resources->object_data_slot =
+        static_object_data_buf_.allocator.allocate(num_objs_tot * sizeof(ObjectData));
+
+    u32 base_instance_id =
+        instance_resources->instance_data_slot.get_offset() / sizeof(GPUInstanceData);
+    u32 base_object_data_id =
+        instance_resources->object_data_slot.get_offset() / sizeof(ObjectData);
+    auto base_material_id = resources->materials_slot.get_offset() / sizeof(Material);
+
+    bool is_non_identity_root_node_transform = transform != mat4{1};
+    for (auto& node : resources->scene_graph_data.node_datas) {
+      for (auto& node_mesh_data : node.meshes) {
+        auto& mesh = resources->mesh_draw_infos[node_mesh_data.mesh_idx];
+        mat4 model = is_non_identity_root_node_transform ? transform * node.world_transform
+                                                         : node.world_transform;
+        // https://stackoverflow.com/questions/6053522/how-to-recalculate-axis-aligned-bounding-box-after-translate-rotate/58630206#58630206
+        auto transform_aabb = [](const glm::mat4& model, const AABB& aabb) -> AABB {
+          AABB result;
+          result.min = glm::vec3(model[3]);  // translation part
+          result.max = result.min;
+          for (int i = 0; i < 3; ++i) {    // for each row (x, y, z in result)
+            for (int j = 0; j < 3; ++j) {  // for each column (x, y, z in input aabb)
+              float a = model[i][j] * aabb.min[j];
+              float b = model[i][j] * aabb.max[j];
+              result.min[i] += glm::min(a, b);
+              result.max[i] += glm::max(a, b);
+            }
+          }
+          return result;
+        };
+        AABB world_space_aabb = transform_aabb(model, mesh.aabb);
+        scene_min = glm::min(scene_min, world_space_aabb.min);
+        scene_max = glm::max(scene_max, world_space_aabb.max);
+        u32 instance_id = base_instance_id + instance_datas.size();
+        instance_datas.emplace_back(node_mesh_data.material_id + base_material_id,
+                                    base_object_data_id + instance_resources->object_datas.size());
+        instance_resources->object_datas.emplace_back(gfx::ObjectData{
+            .model = model,
+            .aabb_min = vec4(mesh.aabb.min, 0.),
+            .aabb_max = vec4(mesh.aabb.max, 0.),
+
+        });
+
+        u32 draw_flags{};
+        if (resources->materials[node_mesh_data.material_id].is_double_sided()) {
+          draw_flags |= GPUDrawInfoFlags_DoubleSided;
+        }
+
+        GPUDrawInfo draw{
+            .index_cnt = mesh.index_count,
+            .first_index = static_cast<u32>(resources->first_index + mesh.first_index),
+            .vertex_offset = static_cast<u32>(resources->first_vertex + mesh.first_vertex),
+            .instance_id = instance_id,
+            .flags = draw_flags};
+
+        if (node_mesh_data.pass_flags & PassFlags_Opaque) {
+          pass_cmds[MeshPass_Opaque].emplace_back(draw);
+        } else if (node_mesh_data.pass_flags & PassFlags_OpaqueAlpha) {
+          pass_cmds[MeshPass_OpaqueAlphaMask].emplace_back(draw);
+        } else if (node_mesh_data.pass_flags & PassFlags_Transparent) {
+          pass_cmds[MeshPass_Transparent].emplace_back(draw);
+        }
+      }
+    }
+
+    u64 obj_datas_size = instance_resources->object_datas.size() * sizeof(gfx::ObjectData);
+    u64 instance_datas_size = instance_datas.size() * sizeof(GPUInstanceData);
+
+    scene_aabb_.min = glm::min(scene_aabb_.min, scene_min);
+    scene_aabb_.max = glm::max(scene_aabb_.max, scene_max);
+
+    u32 tot_draw_cmds_buf_size = 0;
+    for (auto& cmds : pass_cmds) {
+      tot_draw_cmds_buf_size += cmds.size() * sizeof(GPUDrawInfo);
+    }
+    auto copy_cmd = device_->graphics_copy_allocator_.allocate(
+        tot_draw_cmds_buf_size + obj_datas_size + instance_datas_size);
+    auto staging = LinearCopyer{device_->get_buffer(copy_cmd.staging_buffer)->mapped_data()};
+    u64 cmds_staging_offsets[MeshPass_Count] = {};
+    for (int i = 0; i < MeshPass_Count; i++) {
+      auto& cmds = pass_cmds[i];
+      if (cmds.size()) {
+        cmds_staging_offsets[i] = staging.copy(cmds.data(), cmds.size() * sizeof(GPUDrawInfo));
+      }
+    }
+    u64 obj_datas_staging_offset =
+        staging.copy(instance_resources->object_datas.data(), obj_datas_size);
+    u64 instance_datas_staging_offset = staging.copy(instance_datas.data(), instance_datas_size);
+    {
+      assert(obj_datas_size && instance_datas_size);
+      state_.reset(copy_cmd.transfer_cmd_buf);
+      for (int i = 0; i < MeshPass_Count; i++) {
+        auto& cmds = pass_cmds[i];
+        if (cmds.size()) {
+          instance_resources->mesh_pass_draw_handles[i] = static_draw_mgrs_[i].add_draws(
+              state_, copy_cmd, cmds.size() * sizeof(GPUDrawInfo), cmds_staging_offsets[i],
+              pass_double_sided_draw_cnts[i]);
+        }
+      }
+      copy_cmd.copy_buffer(device_, *static_object_data_buf_.get_buffer(), obj_datas_staging_offset,
+                           instance_resources->object_data_slot.get_offset(), obj_datas_size);
+      copy_cmd.copy_buffer(
+          device_, *static_instance_data_buf_.get_buffer(), instance_datas_staging_offset,
+          instance_resources->instance_data_slot.get_offset(), instance_datas_size);
+      state_
+          .buffer_barrier(
+              static_object_data_buf_.get_buffer()->buffer(),
+              VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+              VK_ACCESS_2_SHADER_READ_BIT)
+          .buffer_barrier(static_instance_data_buf_.get_buffer()->buffer(),
+                          VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT)
+          .flush_barriers();
+      device_->graphics_copy_allocator_.submit(copy_cmd);
+    }
+  }
+  load_instance_reqs_.clear();
+}
+
 }  // namespace gfx

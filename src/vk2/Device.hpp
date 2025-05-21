@@ -11,6 +11,7 @@
 #include "Common.hpp"
 #include "Types.hpp"
 #include "VkBootstrap.h"
+#include "core/FixedVector.hpp"
 #include "vk2/Buffer.hpp"
 #include "vk2/Pool.hpp"
 #include "vk2/Swapchain.hpp"
@@ -188,12 +189,15 @@ class Device {
     std::vector<vk2::Swapchain> swapchain_updates;
     std::vector<VkSwapchainKHR> submit_swapchains;
     std::vector<u32> submit_swapchain_img_indices;
+    std::mutex mtx_;
 
     void clear();
     void submit(Device* device, VkFence fence);
     void wait(VkSemaphore semaphore);
     void signal(VkSemaphore semaphore);
+    void submit(u32 submit_count, const VkSubmitInfo2* submits, VkFence fence);
   };
+
   [[nodiscard]] const Queue& get_queue(QueueType type) const { return queues_[(u32)type]; }
   [[nodiscard]] Queue& get_queue(QueueType type) { return queues_[(u32)type]; }
   u32 cmd_buf_count_{};
@@ -243,6 +247,7 @@ class Device {
   VkPhysicalDeviceVulkan12Features supported_features12_{
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
   Queue queues_[(u32)QueueType::Count];
+  util::fixed_vector<u32, (u32)QueueType::Count> queue_family_indices_;
   void init_impl(const CreateInfo& info);
   void set_name(const char* name, u64 handle, VkObjectType type) const;
 

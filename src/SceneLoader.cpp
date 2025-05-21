@@ -711,6 +711,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
               VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
         }
         state.flush_barriers();
+        // TODO: thread safe
         get_device().transfer_copy_allocator_.submit(copy_cmd);
       }
 

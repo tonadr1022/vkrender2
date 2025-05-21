@@ -273,29 +273,18 @@ void Device::init_impl(const CreateInfo& info) {
   for (u64 i = 0; i < vkb_device_.queue_families.size(); i++) {
     if (vkb_device_.queue_families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
       vkGetDeviceQueue(device_, i, 0, &queues_[(u32)QueueType::Graphics].queue);
+      queue_family_indices_.emplace_back(i);
       queues_[(u32)QueueType::Graphics].family_idx = i;
       break;
     }
   }
-
-  // uint32_t extension_count = 0;
-  // vkEnumerateDeviceExtensionProperties(vk2::get_device().phys_device(), nullptr,
-  // &extension_count,
-  //                                      nullptr);
-  // std::vector<VkExtensionProperties> extensions(extension_count);
-  // vkEnumerateDeviceExtensionProperties(vk2::get_device().phys_device(), nullptr,
-  // &extension_count,
-  //                                      extensions.data());
-  //
-  // for (const auto& ext : extensions) {
-  //   LINFO("{} {}", ext.extensionName, ext.specVersion);
-  // }
 
   for (u64 i = 0; i < vkb_device_.queue_families.size(); i++) {
     if (i == queues_[(u32)QueueType::Graphics].family_idx) continue;
     if (vkb_device_.queue_families[i].queueFlags & VK_QUEUE_COMPUTE_BIT) {
       vkGetDeviceQueue(device_, i, 0, &queues_[(u32)QueueType::Compute].queue);
       queues_[(u32)QueueType::Compute].family_idx = i;
+      queue_family_indices_.emplace_back(i);
       break;
     }
   }
@@ -308,6 +297,7 @@ void Device::init_impl(const CreateInfo& info) {
     if (vkb_device_.queue_families[i].queueFlags & VK_QUEUE_TRANSFER_BIT) {
       vkGetDeviceQueue(device_, i, 0, &queues_[(u32)QueueType::Transfer].queue);
       queues_[(u32)QueueType::Transfer].family_idx = i;
+      queue_family_indices_.emplace_back(i);
       break;
     }
   }
@@ -595,7 +585,7 @@ void Device::CopyAllocator::submit(CopyCmd cmd) {
   VkSubmitInfo2 submit_info{.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
                             .commandBufferInfoCount = 1,
                             .pCommandBufferInfos = &cb_submit};
-  VK_CHECK(vkQueueSubmit2KHR(device_->get_queue(type_).queue, 1, &submit_info, cmd.fence));
+  device_->get_queue(type_).submit(1, &submit_info, cmd.fence);
   VkResult res{};
   while ((res = vkWaitForFences(device_->device_, 1, &cmd.fence, true,
                                 gfx::Device::timeout_value)) == VK_TIMEOUT) {
@@ -1028,7 +1018,11 @@ ImageHandle Device::create_image(const ImageDesc& desc, void* initial_data) {
   cinfo.tiling = VK_IMAGE_TILING_OPTIMAL;
   cinfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
   cinfo.samples = VK_SAMPLE_COUNT_1_BIT;
-  cinfo.sharingMode = VK_SHARING_MODE_CONCURRENT;
+  if (queue_family_indices_.size() > 1) {
+    cinfo.sharingMode = VK_SHARING_MODE_CONCURRENT;
+    cinfo.queueFamilyIndexCount = queue_family_indices_.size();
+    cinfo.pQueueFamilyIndices = queue_family_indices_.data();
+  }
   if (desc.sample_count == 2) {
     cinfo.samples = VK_SAMPLE_COUNT_2_BIT;
   } else if (desc.sample_count == 4) {
@@ -1711,7 +1705,8 @@ void Device::Queue::submit(Device* device, VkFence fence) {
         .pCommandBufferInfos = submit_cmds.data(),
         .signalSemaphoreInfoCount = static_cast<u32>(signal_semaphore_infos.size()),
         .pSignalSemaphoreInfos = signal_semaphore_infos.data()};
-    VK_CHECK(vkQueueSubmit2KHR(queue, 1, &queue_submit_info, fence));
+
+    submit(1, &queue_submit_info, fence);
 
     wait_semaphores_infos.clear();
     signal_semaphore_infos.clear();
@@ -2014,6 +2009,11 @@ void Device::set_name(VkCommandPool pool, const char* name) const {
   (void)pool;
   (void)name;
 #endif
+}
+
+void Device::Queue::submit(u32 submit_count, const VkSubmitInfo2* submits, VkFence fence) {
+  std::scoped_lock lock(mtx_);
+  VK_CHECK(vkQueueSubmit2KHR(queue, submit_count, submits, fence));
 }
 
 }  // namespace gfx

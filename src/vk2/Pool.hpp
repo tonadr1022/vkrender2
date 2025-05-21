@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <mutex>
+#include <shared_mutex>
 #include <utility>
 #include <vector>
 
@@ -35,6 +37,7 @@ struct Pool {
 
   template <typename... Args>
   HandleT alloc(Args&&... args) {
+    std::unique_lock lock(mtx_);
     HandleT handle;
     if (!free_list_.empty()) {
       handle.idx_ = free_list_.back();
@@ -56,6 +59,7 @@ struct Pool {
   [[nodiscard]] size_t get_num_destroyed() const { return num_destroyed_; }
 
   void destroy(HandleT handle) {
+    std::unique_lock lock(mtx_);
     if (handle.idx_ >= entries_.size()) {
       return;
     }
@@ -70,6 +74,7 @@ struct Pool {
   }
 
   ObjectT* get(HandleT handle) {
+    std::shared_lock lock(mtx_);
     if (!handle.gen_) return nullptr;
     if (handle.idx_ >= entries_.size()) {
       return nullptr;
@@ -82,6 +87,7 @@ struct Pool {
   std::vector<Entry>& get_entries() { return entries_; }
 
  private:
+  std::shared_mutex mtx_;
   std::vector<IndexT> free_list_;
   std::vector<Entry> entries_;
   IndexT size_{};
