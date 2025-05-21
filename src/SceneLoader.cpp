@@ -11,7 +11,6 @@
 #include <cstring>
 
 #include "Types.hpp"
-#include "vk2/VkTypes.hpp"
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wredundant-move"
@@ -342,103 +341,110 @@ void load_scene_graph_data(LoadedSceneBaseData& result, fastgltf::Asset& gltf,
     }
   }
   update_node_transforms(scene_graph_data.node_datas, scene_graph_data.root_node_indices);
-  for (u32 i = 0; i < scene_graph_data.node_datas.size(); i++) {
-    // result.node_datas[i].meshes
-    // result.node_mesh_bounds[i]
-  }
 }
 
 struct CpuImageData {
-  u32 w, h, channels;
-  bool is_ktx{};
-  Format format;
-  std::unique_ptr<unsigned char[], decltype([](unsigned char* p) { stbi_image_free(p); })>
-      non_ktx_data;
-  std::unique_ptr<ktxTexture2, decltype([](ktxTexture2* p) { ktxTexture_Destroy(ktxTexture(p)); })>
-      ktx_data;
+  enum class Type : u8 { None, KTX2, JPEG, PNG, DDS };
+  u32 w, h, d, components;
+  Format format{};
+  Type type{};
+  void* data{};  // points to type specific data (stb image, ktx_tex ptr, etc)
 };
+
+CpuImageData::Type convert_cpu_img_type(fastgltf::MimeType type) {
+  switch (type) {
+    case fastgltf::MimeType::KTX2:
+      return CpuImageData::Type::KTX2;
+    case fastgltf::MimeType::DDS:
+      return CpuImageData::Type::DDS;
+    case fastgltf::MimeType::JPEG:
+      return CpuImageData::Type::JPEG;
+    case fastgltf::MimeType::PNG:
+      return CpuImageData::Type::PNG;
+    default:
+      return CpuImageData::Type::None;
+  }
+}
+
+void load_image(CpuImageData& result, CpuImageData::Type type, const void* data, u64 size,
+                bool srgb) {
+  result.type = type;
+  switch (type) {
+    case CpuImageData::Type::KTX2: {
+      ktxTexture2* ktx_tex{};
+      if (auto result =
+              ktxTexture2_CreateFromMemory(reinterpret_cast<const ktx_uint8_t*>(data), size,
+                                           KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktx_tex);
+          result != KTX_SUCCESS) {
+        assert(0);
+      }
+      assert(ktx_tex->pData && ktx_tex->dataSize);
+
+      u32 components = ktxTexture2_GetNumComponents(ktx_tex);
+      result.components = components;
+      result.w = ktx_tex->baseWidth;
+      result.h = ktx_tex->baseHeight;
+      result.d = ktx_tex->baseDepth;
+      result.data = ktx_tex;
+      if (ktxTexture2_NeedsTranscoding(ktx_tex)) {
+        ktx_transcode_fmt_e ktx_transcode_format{};
+        if (components == 4 || components == 3) {
+          ktx_transcode_format = KTX_TTF_BC7_RGBA;
+          result.format = srgb ? Format::Bc7SrgbBlock : Format::Bc7UnormBlock;
+        } else if (components == 2) {
+          ktx_transcode_format = KTX_TTF_BC5_RG;
+          result.format = Format::Bc5UnormBlock;
+        } else if (components == 1) {
+          ktx_transcode_format = KTX_TTF_BC4_R;
+          result.format = Format::Bc4UnormBlock;
+        }
+        // determine target format
+        if (auto result =
+                ktxTexture2_TranscodeBasis(ktx_tex, ktx_transcode_format, KTX_TF_HIGH_QUALITY);
+            result != KTX_SUCCESS) {
+          assert(false);
+        }
+      } else {
+        assert(0);
+      }
+      break;
+    }
+    case CpuImageData::Type::JPEG:
+    case CpuImageData::Type::PNG: {
+      int w, h, channels;
+      auto* pixels = stbi_load_from_memory(reinterpret_cast<const unsigned char*>(data),
+                                           static_cast<int>(size), &w, &h, &channels, 4);
+      result.w = w;
+      result.h = h;
+      result.components = channels;
+      result.data = pixels;
+      if (result.components == 4 || result.components == 3) {
+        result.format = srgb ? Format::R8G8B8A8Srgb : Format::R8G8B8A8Unorm;
+      } else if (result.components == 2) {
+        result.format = srgb ? Format::R8G8Srgb : Format::R8G8Unorm;
+      } else if (result.components == 1) {
+        result.format = srgb ? Format::R8Srgb : Format::R8Unorm;
+      }
+      break;
+    }
+    default:
+      assert(0);
+  }
+}
 
 void load_cpu_img_data(const fastgltf::Asset& asset, const fastgltf::Image& image,
                        const std::filesystem::path& directory, CpuImageData& result,
                        PBRImageUsage usage) {
   ZoneScoped;
-  auto get_vk_format = [&](bool is_ktx) -> Format {
-    switch (usage) {
-      default:
-      case PBRImageUsage::BaseColor:
-      case PBRImageUsage::Emissive:
-        return is_ktx ? Format::Bc7SrgbBlock : Format::R8G8B8A8Srgb;
-      case PBRImageUsage::MetallicRoughness:
-      case PBRImageUsage::Occlusion:
-      case PBRImageUsage::Normal:
-      case PBRImageUsage::OccRoughnessMetallic:
-        return is_ktx ? Format::Bc7UnormBlock : Format::R8G8B8A8Unorm;
-    }
-  };
-  auto load_non_ktx = [&](const void* data, u64 size) {
-    int w, h, channels;
-    auto* pixels = stbi_load_from_memory(reinterpret_cast<const unsigned char*>(data),
-                                         static_cast<int>(size), &w, &h, &channels, 4);
-    result.w = w;
-    result.h = h;
-    result.channels = channels;
-    result.non_ktx_data.reset(pixels);
-    result.format = get_vk_format(false);
-  };
-  auto load_ktx = [&](const void* data, u64 size) {
-    ktxTexture2* ktx_tex{};
-    if (auto result =
-            ktxTexture2_CreateFromMemory(reinterpret_cast<const ktx_uint8_t*>(data), size,
-                                         KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktx_tex);
-        result != KTX_SUCCESS) {
-      assert(0);
-    }
-    assert(ktx_tex->pData && ktx_tex->dataSize);
-    result.ktx_data.reset(ktx_tex);
-    result.w = ktx_tex->baseWidth;
-    result.h = ktx_tex->baseHeight;
-    result.channels = ktxTexture2_GetNumComponents(ktx_tex);
-    result.format = get_vk_format(true);
-    if (ktxTexture2_NeedsTranscoding(ktx_tex)) {
-      ZoneScopedN("Transcode KTX 2 Texture");
-      ktx_transcode_fmt_e ktx_transcode_format{};
-      switch (usage) {
-        case PBRImageUsage::BaseColor:
-        case PBRImageUsage::Emissive:
-        case PBRImageUsage::MetallicRoughness:
-        case PBRImageUsage::Occlusion:
-        case PBRImageUsage::Normal:
-        case PBRImageUsage::OccRoughnessMetallic:
-          ktx_transcode_format = KTX_TTF_BC7_RGBA;
-          break;
-      }
-      if (auto result =
-              ktxTexture2_TranscodeBasis(ktx_tex, ktx_transcode_format, KTX_TF_HIGH_QUALITY);
-          result != KTX_SUCCESS) {
-        assert(false);
-      }
-      result.format = vk2::convert_format(static_cast<VkFormat>(ktx_tex->vkFormat));
-    } else {
-      result.format = vk2::convert_format(static_cast<VkFormat>(ktx_tex->vkFormat));
-    }
-  };
-
+  bool is_srgb_usage = usage == PBRImageUsage::BaseColor || usage == PBRImageUsage::Emissive;
   std::visit(fastgltf::visitor{
                  [&](const fastgltf::sources::Array& arr) {
-                   result.is_ktx = arr.mimeType == fastgltf::MimeType::KTX2;
-                   if (result.is_ktx) {
-                     load_ktx(arr.bytes.data(), arr.bytes.size() * sizeof(std::byte));
-                   } else {
-                     load_non_ktx(arr.bytes.data(), arr.bytes.size_bytes());
-                   }
+                   load_image(result, convert_cpu_img_type(arr.mimeType), arr.bytes.data(),
+                              arr.bytes.size_bytes(), is_srgb_usage);
                  },
                  [&](const fastgltf::sources::Vector& vector) {
-                   result.is_ktx = vector.mimeType == fastgltf::MimeType::KTX2;
-                   if (result.is_ktx) {
-                     load_ktx(vector.bytes.data(), vector.bytes.size() * sizeof(std::byte));
-                   } else {
-                     load_non_ktx(vector.bytes.data(), vector.bytes.size() * sizeof(std::byte));
-                   }
+                   load_image(result, convert_cpu_img_type(vector.mimeType), vector.bytes.data(),
+                              vector.bytes.size() * sizeof(std::byte), is_srgb_usage);
                  },
                  [&](const fastgltf::sources::URI& file_path) {
                    assert(file_path.fileByteOffset == 0);
@@ -447,37 +453,31 @@ void load_cpu_img_data(const fastgltf::Asset& asset, const fastgltf::Image& imag
                    if (!std::filesystem::exists(full_path)) {
                      LERROR("glTF Image load fail: path does not exist {}", full_path.string());
                    }
-                   result.is_ktx = full_path.extension().string() == ".ktx2";
                    auto bytes = read_file(full_path);
-                   if (result.is_ktx) {
-                     load_ktx(bytes.data(), bytes.size());
-                   } else {
-                     load_non_ktx(bytes.data(), bytes.size());
-                   }
+                   const auto& ext = full_path.extension().string();
+                   CpuImageData::Type type = ext == ".ktx2"   ? CpuImageData::Type::KTX2
+                                             : ext == ".png"  ? CpuImageData::Type::PNG
+                                             : ext == ".jpeg" ? CpuImageData::Type::JPEG
+                                             : ext == ".jpg"  ? CpuImageData::Type::JPEG
+                                             : ext == ".png"  ? CpuImageData::Type::PNG
+                                             : ext == ".dds"  ? CpuImageData::Type::DDS
+                                                              : CpuImageData::Type::None;
+                   load_image(result, type, bytes.data(), bytes.size(), is_srgb_usage);
                  },
                  [&](const fastgltf::sources::BufferView& view) {
-                   result.is_ktx = view.mimeType == fastgltf::MimeType::KTX2;
                    const auto& buffer_view = asset.bufferViews[view.bufferViewIndex];
                    const auto& buffer = asset.buffers[buffer_view.bufferIndex];
                    std::visit(fastgltf::visitor{
                                   [](auto&) {},
                                   [&](const fastgltf::sources::Array& arr) {
-                                    if (result.is_ktx) {
-                                      load_ktx(arr.bytes.data() + buffer_view.byteOffset,
-                                               buffer_view.byteLength);
-                                    } else {
-                                      load_non_ktx(arr.bytes.data() + buffer_view.byteOffset,
-                                                   buffer_view.byteLength);
-                                    }
+                                    load_image(result, convert_cpu_img_type(view.mimeType),
+                                               arr.bytes.data() + buffer_view.byteOffset,
+                                               buffer_view.byteLength, is_srgb_usage);
                                   },
                                   [&](const fastgltf::sources::Vector& vector) {
-                                    if (result.is_ktx) {
-                                      load_ktx(vector.bytes.data() + buffer_view.byteOffset,
-                                               buffer_view.byteLength);
-                                    } else {
-                                      load_non_ktx(vector.bytes.data() + buffer_view.byteOffset,
-                                                   buffer_view.byteLength);
-                                    }
+                                    load_image(result, convert_cpu_img_type(view.mimeType),
+                                               vector.bytes.data() + buffer_view.byteOffset,
+                                               buffer_view.byteLength, is_srgb_usage);
                                   },
                               },
                               buffer.data);
@@ -571,6 +571,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
     for (u64 i = 0; i < images.size(); i++) {
       futures[i] = threads::pool.submit_task([i, &gltf, &parent_path, &images, &img_usages]() {
         load_cpu_img_data(gltf, gltf.images[i], parent_path, images[i], img_usages[i]);
+        // upload to gpu
       });
     }
     for (auto& f : futures) {
@@ -592,10 +593,9 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
   result->textures.reserve(images.size());
   size_t staging_offset{};
   for (auto& img : images) {
-    if (img.is_ktx) {
-      assert(img.ktx_data && "need ktx data if the img is ktx");
-      assert(!img.non_ktx_data);
-      auto* ktx = img.ktx_data.get();
+    // TODO: diff types, dds
+    if (img.type == CpuImageData::Type::KTX2) {
+      auto* ktx = (ktxTexture2*)img.data;
       assert(ktx->numLevels > 0);
       u64 tot = 0;
       for (u32 level = 0; level < ktx->numLevels; level++) {
@@ -622,19 +622,17 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
                                               .bind_flags = BindFlag::ShaderResource}));
       assert(tot == ktx->dataSize);
       (void)tot;
+
     } else {
       // TODO: mip gen?
       size_t size = img_to_buffer_size(img.format, {img.w, img.h, 1});
-      assert(img.non_ktx_data);
-      assert(!img.ktx_data);
       img_upload_infos.emplace_back(
           ImgUploadInfo{.extent = {img.w, img.w, 1},
                         .size = size,
-                        .data = img.non_ktx_data.get(),
+                        .data = img.data,
                         .staging_offset = staging_offset,
                         .level = 0,
                         .img_idx = static_cast<u32>(result->textures.size())});
-
       result->textures.emplace_back(
           get_device().create_image(ImageDesc{.type = ImageDesc::Type::TwoD,
                                               .format = img.format,
@@ -751,8 +749,17 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
     ZoneScopedN("free imgs");
     for (auto& image : images) {
       futures.push_back(threads::pool.submit_task([&image]() {
-        image.ktx_data.reset();
-        image.non_ktx_data.reset();
+        switch (image.type) {
+          case CpuImageData::Type::KTX2:
+            ktxTexture_Destroy(ktxTexture(image.data));
+            break;
+          case CpuImageData::Type::JPEG:
+          case CpuImageData::Type::PNG:
+            stbi_image_free(image.data);
+            break;
+          default:
+            assert(0);
+        }
       }));
     }
     for (u64 i = 0; i < images.size(); i++) {

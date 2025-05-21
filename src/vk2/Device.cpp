@@ -1048,8 +1048,16 @@ ImageHandle Device::create_image(const ImageDesc& desc, void* initial_data) {
     return {};
   }
 
-  if (initial_data != nullptr) {
-  }
+  // if (initial_data != nullptr) {
+  //   // for each mip level, copy the buffer data to  each row
+  //   u32 width = desc.dims.x, height = desc.dims.y, depth = desc.dims.z;
+  //   for (u32 layer = 0; layer < desc.array_layers; layer++) {
+  //     for (u32 mip = 0; mip < desc.mip_levels;mip++) {
+  //
+  //     }
+  //
+  //   }
+  // }
 
   if (desc.usage == Usage::Default) {
     // depth stencil also needs a subresource

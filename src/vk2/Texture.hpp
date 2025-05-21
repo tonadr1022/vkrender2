@@ -21,6 +21,12 @@ struct ImageDesc {
   Usage usage{Usage::Default};
 };
 
+struct SubresourceData {
+  void* data_ptr{};
+  u32 row_pitch{};    // bytes between rows of image (2D/3D)
+  u32 depth_pitch{};  // bytes between depth slices (3D)
+};
+
 struct ImageView2 {
   VkImageView view;
   BindlessResourceInfo resource_info;

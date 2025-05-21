@@ -132,7 +132,7 @@ void App::run() {
 
   // VkRender2::get().load_model(local_models_dir / "sponza.glb", false);
 
-  // VkRender2::get().load_model(resource_dir / "models/Cube/glTF/Cube.gltf", false);
+  VkRender2::get().load_model(resource_dir / "models/Cube/glTF/Cube.gltf", false);
   std::filesystem::path env_tex = local_models_dir / "newport_loft.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/quarry_04_puresky_4k.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/golden_gate_hills_4k.hdr";
