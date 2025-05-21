@@ -239,6 +239,8 @@ void CmdEncoder::begin_region(const char* name) const {
   VkDebugUtilsLabelEXT debug_label_info{.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
                                         .pLabelName = name};
   vkCmdBeginDebugUtilsLabelEXT(get_cmd_buf(), &debug_label_info);
+#else
+  (void)name;
 #endif
 }
 

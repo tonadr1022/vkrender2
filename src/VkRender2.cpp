@@ -1301,24 +1301,19 @@ VkRender2::StaticMeshDrawManager::Handle VkRender2::StaticMeshDrawManager::add_d
   a.num_double_sided_draws = num_double_sided_draws;
   a.draw_cmd_slot = draw_cmds_buf_.allocator.allocate(size);
   u32 num_single_sided_draws = (size / sizeof(GPUDrawInfo)) - num_double_sided_draws;
-  auto* draw_cmds_buf = draw_cmds_buf_.get_buffer();
-  assert(draw_cmds_buf);
-  assert(draw_cmds_buf->buffer());
-  if (!draw_cmds_buf) {
-    return {};
-  }
   num_draw_cmds_[0] += num_single_sided_draws;
   num_draw_cmds_[1] += a.num_double_sided_draws;
 
   // resize draw cmd bufs
-  size_t curr_tot_draw_cmd_buf_size = draw_cmds_buf->size();
+  size_t curr_tot_draw_cmd_buf_size = device_->get_buffer(draw_cmds_buf_.buffer)->size();
   auto new_size = glm::max<size_t>(curr_tot_draw_cmd_buf_size * 2,
                                    a.draw_cmd_slot.get_offset() + a.draw_cmd_slot.get_size());
   for (auto& draw_pass : draw_passes_) {
     // resize output draw cmd buffers
     for (int double_sided = 0; double_sided < 2; double_sided++) {
       for (auto& handle : draw_pass.out_draw_cmds_bufs[double_sided]) {
-        u32 required_size = sizeof(u32) + num_draw_cmds_[double_sided];
+        u32 required_size =
+            sizeof(u32) + (num_draw_cmds_[double_sided] * sizeof(VkDrawIndexedIndirectCommand));
         auto* buf = device_->get_buffer(handle);
         if (required_size > buf->size()) {
           handle = device_->create_buffer_holder(BufferCreateInfo{
@@ -1343,13 +1338,13 @@ VkRender2::StaticMeshDrawManager::Handle VkRender2::StaticMeshDrawManager::add_d
                         VK_ACCESS_2_TRANSFER_WRITE_BIT)
         .flush_barriers();
     draw_cmds_buf_.buffer = std::move(new_buf);
-    draw_cmds_buf = draw_cmds_buf_.get_buffer();
   }
 
-  if (a.draw_cmd_slot.get_offset() >= draw_cmds_buf->size()) {
+  if (a.draw_cmd_slot.get_offset() >= device_->get_buffer(draw_cmds_buf_.buffer)->size()) {
     LINFO("unimplemented: need to resize Static mesh draw cmd buffer");
     exit(1);
   }
+  auto* draw_cmds_buf = device_->get_buffer(draw_cmds_buf_.buffer);
   state
       .buffer_barrier(draw_cmds_buf->buffer(), VK_PIPELINE_STAGE_2_TRANSFER_BIT,
                       VK_ACCESS_2_TRANSFER_WRITE_BIT)

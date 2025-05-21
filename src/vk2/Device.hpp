@@ -186,7 +186,7 @@ class Device {
     std::vector<VkSemaphoreSubmitInfo> wait_semaphores_infos;
     std::vector<VkCommandBufferSubmitInfo> submit_cmds;
 
-    std::vector<vk2::Swapchain> swapchain_updates;
+    std::vector<vk2::Swapchain*> swapchain_updates;
     std::vector<VkSwapchainKHR> submit_swapchains;
     std::vector<u32> submit_swapchain_img_indices;
     std::mutex mtx_;

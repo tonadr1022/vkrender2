@@ -712,8 +712,8 @@ VkImage Device::acquire_next_image(CmdEncoder* cmd) {
     assert(0);
   }
   assert(swapchain_.release_semaphore);
-  cmd->submit_swapchains_.push_back(swapchain_);
-  // TODO: barrier
+  cmd->submit_swapchains_.push_back(&swapchain_);
+  // TODO: barrier the swapchain?
 
   return swapchain_.imgs[swapchain_.curr_swapchain_idx];
 }
@@ -1724,7 +1724,7 @@ void Device::Queue::submit(Device* device, VkFence fence) {
       // out of date == recreate swapchain
       if (present_result == VK_ERROR_OUT_OF_DATE_KHR || present_result == VK_SUBOPTIMAL_KHR) {
         for (auto& swapchain : swapchain_updates) {
-          create_swapchain(swapchain, swapchain.desc);
+          create_swapchain(*swapchain, swapchain->desc);
         }
       } else {
         VK_CHECK(present_result);
@@ -1787,17 +1787,17 @@ void Device::submit_commands() {
       // swapchain submits
       queue.swapchain_updates = cmd_list->submit_swapchains_;
       for (auto& swapchain : cmd_list->submit_swapchains_) {
-        queue.submit_swapchains.push_back(swapchain.swapchain);
-        queue.submit_swapchain_img_indices.push_back(swapchain.curr_swapchain_idx);
+        queue.submit_swapchains.push_back(swapchain->swapchain);
+        queue.submit_swapchain_img_indices.push_back(swapchain->curr_swapchain_idx);
         // queue needs to wait for ready
         queue.wait_semaphores_infos.emplace_back(vk2::init::semaphore_submit_info(
-            swapchain.acquire_semaphores[swapchain.acquire_semaphore_idx],
+            swapchain->acquire_semaphores[swapchain->acquire_semaphore_idx],
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_BLIT_BIT, 0));
         // signals the release for swapchain
-        assert(swapchain.release_semaphore != VK_NULL_HANDLE);
-        queue.signal_semaphores.emplace_back(swapchain.release_semaphore);
+        assert(swapchain->release_semaphore != VK_NULL_HANDLE);
+        queue.signal_semaphores.emplace_back(swapchain->release_semaphore);
         queue.signal_semaphore_infos.emplace_back(vk2::init::semaphore_submit_info(
-            swapchain.release_semaphore, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0));
+            swapchain->release_semaphore, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0));
       }
 
       // handle dependencies
