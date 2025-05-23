@@ -1,5 +1,7 @@
 #include "App.hpp"
 
+#include <nfd.h>
+
 #include <fstream>
 #include <tracy/Tracy.hpp>
 
@@ -28,6 +30,8 @@ std::optional<std::filesystem::path> get_resource_dir() {
 
 using namespace gfx;
 App::App(const InitInfo& info) : cam(cam_data, .1) {
+  NFD_Init();
+
   auto resource_dir_ret = get_resource_dir();
   if (!resource_dir_ret.has_value()) {
     LCRITICAL("failed to find resource directory");
@@ -168,6 +172,7 @@ void App::shutdown() const {
   VkRender2::shutdown();
   Device::destroy();
   glfwTerminate();
+  NFD_Quit();
 }
 
 void App::update(float dt) {
@@ -248,6 +253,29 @@ void App::draw_imgui() {
     }
     if (enter_clicked && no_file_err) {
       ImGui::Text("File not found: %s", err_filename.c_str());
+    }
+    if (ImGui::Button("Load glTF Model")) {
+      nfdu8filteritem_t filters[] = {{"glTF", "glb,glTF"}};
+      nfdopendialogu8args_t args = {};
+      args.filterList = filters;
+      args.filterCount = glm::countof(filters);
+      nfdu8char_t* outpath{};
+      if (NFD_OpenDialogU8_With(&outpath, &args) == NFD_OKAY) {
+        VkRender2::get().load_model(outpath);
+        NFD_FreePathU8(outpath);
+      }
+    }
+
+    if (ImGui::Button("Set IBL HDR Map")) {
+      nfdu8filteritem_t filters[] = {{"HDR Map", "hdr"}};
+      nfdopendialogu8args_t args = {};
+      args.filterList = filters;
+      args.filterCount = glm::countof(filters);
+      nfdu8char_t* outpath{};
+      if (NFD_OpenDialogU8_With(&outpath, &args) == NFD_OKAY) {
+        VkRender2::get().set_env_map(outpath);
+        NFD_FreePathU8(outpath);
+      }
     }
 
     // TODO: frame time graph

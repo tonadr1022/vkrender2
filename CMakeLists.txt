@@ -98,6 +98,7 @@ glslang-default-resource-limits
 BS_thread_pool
 stb_image
 mikktspace
+nfd
 SPIRV
 )
 target_compile_options(vkrender2 PRIVATE "-Wno-unknown-pragmas")

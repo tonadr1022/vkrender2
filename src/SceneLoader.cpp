@@ -282,8 +282,8 @@ void update_node_transforms(std::vector<NodeData>& nodes, std::vector<u32>& root
   }
 }
 
-void load_scene_graph_data(LoadedSceneBaseData& result, fastgltf::Asset& gltf,
-                           u32 default_mat_idx) {
+void load_scene_graph_data(LoadedSceneBaseData& result, fastgltf::Asset& gltf, u32 default_mat_idx,
+                           const Material& default_mat) {
   ZoneScoped;
   auto& scene_graph_data = result.scene_graph_data;
   // aggregate nodes
@@ -308,8 +308,12 @@ void load_scene_graph_data(LoadedSceneBaseData& result, fastgltf::Asset& gltf,
             .mesh_idx = prim_offsets_of_meshes[mesh_idx] + prim_idx++,
             .material_id = static_cast<u16>(primitive.materialIndex.value_or(default_mat_idx)),
         });
-        auto& mat = result.materials[new_node.meshes.back().material_id];
-        new_node.meshes.back().pass_flags = mat.get_pass_flags();
+        if (result.materials.size() > 0) {
+          auto& mat = result.materials[new_node.meshes.back().material_id];
+          new_node.meshes.back().pass_flags = mat.get_pass_flags();
+        } else {
+          new_node.meshes.back().pass_flags = default_mat.get_pass_flags();
+        }
       }
       result.scene_graph_data.mesh_node_indices.emplace_back(node_idx);
     }
@@ -644,7 +648,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
   }
 
   assert(result->textures.size() == images.size());
-  {
+  if (staging_offset > 0) {
     ZoneScopedN("upload images");
     constexpr i32 max_batch_upload_size = 1024ull * 1024 * 1024;  // 1 GB
     i32 batch_upload_size = std::min<i32>(max_batch_upload_size, staging_offset);
@@ -745,6 +749,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
     }
     futures.clear();
   }
+
   {
     ZoneScopedN("free imgs");
     for (auto& image : images) {
@@ -999,7 +1004,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
     }
   }
 
-  load_scene_graph_data(*result, gltf, 0);
+  load_scene_graph_data(*result, gltf, 0, Material{});
 
   return result;
 }

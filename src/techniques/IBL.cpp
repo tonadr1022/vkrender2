@@ -103,7 +103,7 @@ void IBL::init_post_pipeline_load() {
         .min_filter = FilterMode::Linear,
         .mag_filter = FilterMode::Linear,
         .mipmap_mode = FilterMode::Linear,
-        .address_mode = AddressMode::Repeat,
+        .address_mode = AddressMode::ClampToEdge,
     });
   }
   VkRender2::get().immediate_submit([this](CmdEncoder& ctx) {
@@ -124,7 +124,7 @@ void IBL::init_post_pipeline_load() {
              .min_filter = FilterMode::Linear,
              .mag_filter = FilterMode::Linear,
              .mipmap_mode = FilterMode::Linear,
-             .address_mode = AddressMode::Repeat,
+             .address_mode = AddressMode::ClampToEdge,
          }))};
 
     ctx.push_constants(sizeof(pc), &pc);
@@ -145,11 +145,11 @@ void IBL::equirect_to_cube(CmdEncoder& cmd) {
   // TODO: define linear sampler idx in the shader
 
   EquirectToCubeComputePushConstants pc{
-      .sampler_idx = device_->get_bindless_idx(
-          device_->get_or_create_sampler(SamplerCreateInfo{.min_filter = FilterMode::Linear,
-                                                           .mag_filter = FilterMode::Linear,
-                                                           .mipmap_mode = FilterMode::Linear,
-                                                           .address_mode = AddressMode::Repeat})),
+      .sampler_idx = device_->get_bindless_idx(device_->get_or_create_sampler(
+          SamplerCreateInfo{.min_filter = FilterMode::Linear,
+                            .mag_filter = FilterMode::Linear,
+                            .mipmap_mode = FilterMode::Linear,
+                            .address_mode = AddressMode::ClampToEdge})),
       .tex_idx = device_->get_bindless_idx(env_equirect_tex_, SubresourceType::Shader),
       .out_tex_idx = device_->get_bindless_idx(env_cubemap_tex_, SubresourceType::Storage)};
   cmd.push_constants(sizeof(pc), &pc);
@@ -159,6 +159,7 @@ void IBL::equirect_to_cube(CmdEncoder& cmd) {
 }
 
 void IBL::convolute_cube(CmdEncoder& cmd) {
+  cmd.begin_region("convolute cube");
   auto* irradiance_cubemap_tex = device_->get_image(irradiance_cubemap_tex_);
   cmd.transition_image(env_cubemap_tex_.handle, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
   cmd.transition_image(irradiance_cubemap_tex_.handle, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
@@ -174,13 +175,18 @@ void IBL::convolute_cube(CmdEncoder& cmd) {
       u32 in_tex_idx, sampler_idx, vertex_buffer_idx;
     } pc{PROJ * VIEW_MATRICES[i],
          device_->get_bindless_idx(env_cubemap_tex_.handle, SubresourceType::Shader),
-         device_->get_bindless_idx(linear_sampler_),
+         device_->get_bindless_idx(device_->get_or_create_sampler(
+             SamplerCreateInfo{.min_filter = FilterMode::Linear,
+                               .mag_filter = FilterMode::Linear,
+                               .mipmap_mode = FilterMode::Linear,
+                               .address_mode = AddressMode::ClampToEdge})),
          get_device().get_buffer(cube_vertex_buf_)->resource_info_->handle};
     cmd.push_constants(sizeof(pc), &pc);
     cmd.set_cull_mode(CullMode::None);
     cmd.draw(36);
     cmd.end_rendering();
   }
+  cmd.end_region();
 }
 
 void IBL::prefilter_env_map(CmdEncoder& cmd) {
@@ -226,7 +232,7 @@ void IBL::prefilter_env_map(CmdEncoder& cmd) {
                  .min_filter = FilterMode::Linear,
                  .mag_filter = FilterMode::Linear,
                  .mipmap_mode = FilterMode::Linear,
-                 .address_mode = AddressMode::Repeat,
+                 .address_mode = AddressMode::ClampToEdge,
              })),
              get_device().get_buffer(cube_vertex_buf_)->resource_info_->handle,
              static_cast<float>(device_->get_image(env_cubemap_tex_)->size().x)};

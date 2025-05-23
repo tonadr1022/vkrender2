@@ -31,6 +31,7 @@ add_subdirectory(glslang)
 add_subdirectory(ktx)
 add_subdirectory(tracy)
 add_subdirectory(fastgltf)
+add_subdirectory(nativefiledialog-extended)
 
 add_library(lib_imgui
     imgui/imgui.cpp

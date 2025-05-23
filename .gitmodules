@@ -31,3 +31,6 @@
 [submodule "third_party/bshoshany-thread-pool"]
 	path = third_party/bshoshany-thread-pool
 	url = git@github.com:bshoshany/thread-pool
+[submodule "third_party/nativefiledialog-extended"]
+	path = third_party/nativefiledialog-extended
+	url = git@github.com:btzy/nativefiledialog-extended.git
