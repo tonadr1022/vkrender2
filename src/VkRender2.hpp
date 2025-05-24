@@ -11,6 +11,7 @@
 #include "RenderGraph.hpp"
 #include "Scene.hpp"
 #include "SceneLoader.hpp"
+#include "SceneResources.hpp"
 #include "StateTracker.hpp"
 #include "Types.hpp"
 #include "shaders/common.h.glsl"
@@ -26,7 +27,43 @@ namespace tracy {
 struct VkCtx;
 }
 
+struct LoadedModelData;
+
 namespace gfx {
+
+struct ModelGPUResources {
+  std::vector<Holder<ImageHandle>> textures;
+  std::vector<PrimitiveDrawInfo> mesh_draw_infos;
+  util::FreeListAllocator::Slot materials_slot;
+  util::FreeListAllocator::Slot vertices_slot;
+  util::FreeListAllocator::Slot indices_slot;
+  std::vector<Material> materials;
+  u64 first_vertex;
+  u64 first_index;
+  u64 num_vertices;
+  u64 num_indices;
+  std::string name;
+  u32 ref_count;
+};
+
+enum MeshPass : u8 {
+  MeshPass_Opaque,
+  MeshPass_OpaqueAlphaMask,
+  MeshPass_Transparent,
+  MeshPass_Count
+};
+
+struct StaticModelInstanceResources {
+  std::vector<ObjectData> object_datas;
+  std::array<u32, MeshPass_Count> mesh_pass_draw_handles;
+  util::FreeListAllocator::Slot instance_data_slot;
+  util::FreeListAllocator::Slot object_data_slot;
+  ModelHandle model_handle;
+  // owned by gpu resource
+  const char* name;
+};
+
+using ModelGPUResourceHandle = GenerationalHandle<ModelGPUResources>;
 
 struct LinearCopyer {
   explicit LinearCopyer(void* data) : data_(data) {}
@@ -88,8 +125,10 @@ class VkRender2 final {
   explicit VkRender2(const InitInfo& info, bool& succes);
   ~VkRender2();
 
-  ModelHandle load_model(const std::filesystem::path& path, bool dynamic = false,
-                         const mat4& transform = mat4{1});
+  bool load_model2(const std::filesystem::path& path, LoadedModelData& result);
+  StaticModelInstanceResourcesHandle add_instance(ModelHandle model_handle, const mat4& transform);
+
+  Pool<ModelGPUResourceHandle, ModelGPUResources> model_gpu_resources_pool_;
 
   // TODO: private
   void immediate_submit(std::function<void(CmdEncoder& cmd)>&& function);
@@ -167,16 +206,9 @@ class VkRender2 final {
     u32 materials;
   };
 
-  enum MeshPass : u8 {
-    MeshPass_Opaque,
-    MeshPass_OpaqueAlphaMask,
-    MeshPass_Transparent,
-    MeshPass_Count
-  };
   std::array<u32, 2> opaque_mesh_pass_idxs_{MeshPass_Opaque, MeshPass_OpaqueAlphaMask};
 
   struct StaticMeshDrawManager {
-    using Handle = GenerationalHandle<struct Alloc>;
     StaticMeshDrawManager() = default;
     void init(MeshPass type, size_t initial_max_draw_cnt, Device* device);
     StaticMeshDrawManager(const StaticMeshDrawManager&) = delete;
@@ -202,9 +234,9 @@ class VkRender2 final {
     [[nodiscard]] u32 add_draw_pass();
 
     // TODO: this is a little jank
-    Handle add_draws(StateTracker& state, Device::CopyAllocator::CopyCmd& cmd, size_t size,
-                     size_t staging_offset, u32 num_double_sided_draws);
-    void remove_draws(StateTracker& state, CmdEncoder& cmd, Handle handle);
+    u32 add_draws(StateTracker& state, Device::CopyAllocator::CopyCmd& cmd, size_t size,
+                  size_t staging_offset, u32 num_double_sided_draws);
+    void remove_draws(StateTracker& state, CmdEncoder& cmd, u32 handle);
 
     [[nodiscard]] const std::string& get_name() const { return name_; }
     [[nodiscard]] u32 get_num_draw_cmds(bool double_sided) const {
@@ -225,7 +257,8 @@ class VkRender2 final {
    private:
     std::vector<DrawPass> draw_passes_;
     std::string name_;
-    Pool<Handle, Alloc> allocs_;
+    std::vector<Alloc> allocs_;
+    std::vector<u32> free_alloc_indices_;
     FreeListBuffer draw_cmds_buf_;
     u32 num_draw_cmds_[2] = {};  // idx 1 is double sided
     Device* device_{};
@@ -235,66 +268,7 @@ class VkRender2 final {
   std::array<u32, MeshPass_Count> main_view_mesh_pass_indices_;
   std::vector<std::array<u32, MeshPass_Count>> shadow_mesh_pass_indices_;
 
-  struct StaticModelGPUResources {
-    StaticModelGPUResources() = default;
-    StaticModelGPUResources(Scene2&& scene_graph_data,
-                            std::vector<gfx::PrimitiveDrawInfo>&& mesh_draw_infos,
-                            util::FreeListAllocator::Slot&& materials_slot,
-                            util::FreeListAllocator::Slot&& vertices_slot,
-                            util::FreeListAllocator::Slot&& indices_slot,
-                            std::vector<Holder<ImageHandle>>&& textures,
-                            std::vector<Material>&& materials, u64 first_vertex, u64 first_index,
-                            u64 num_vertices, u64 num_indices, std::string name, u32 ref_count)
-        : scene_graph_data(std::move(scene_graph_data)),
-          mesh_draw_infos(std::move(mesh_draw_infos)),
-          materials_slot(std::move(materials_slot)),
-          vertices_slot(std::move(vertices_slot)),
-          indices_slot(std::move(indices_slot)),
-          textures(std::move(textures)),
-          materials(std::move(materials)),
-          first_vertex(first_vertex),
-          first_index(first_index),
-          num_vertices(num_vertices),
-          num_indices(num_indices),
-          name(std::move(name)),
-          ref_count(ref_count) {}
-    StaticModelGPUResources(const StaticModelGPUResources&) = delete;
-    StaticModelGPUResources(StaticModelGPUResources&&) = default;
-    StaticModelGPUResources& operator=(const StaticModelGPUResources&) = delete;
-    StaticModelGPUResources& operator=(StaticModelGPUResources&&) = default;
-    ~StaticModelGPUResources();
-
-    Scene2 scene_graph_data;
-    std::vector<gfx::PrimitiveDrawInfo> mesh_draw_infos;
-    util::FreeListAllocator::Slot materials_slot;
-    util::FreeListAllocator::Slot vertices_slot;
-    util::FreeListAllocator::Slot indices_slot;
-    std::vector<Holder<ImageHandle>> textures;
-    std::vector<Material> materials;
-    u64 first_vertex;
-    u64 first_index;
-    u64 num_vertices;
-    u64 num_indices;
-    std::string name;
-    u32 ref_count;
-  };
-
-  using StaticModelGPUResourcesHandle = GenerationalHandle<StaticModelGPUResources>;
-  Pool<StaticModelGPUResourcesHandle, StaticModelGPUResources> static_models_pool_;
-  std::unordered_map<std::string, StaticModelGPUResourcesHandle> static_model_name_to_handle_;
-
-  struct StaticModelInstanceResources {
-    std::vector<ObjectData> object_datas;
-    std::array<StaticMeshDrawManager::Handle, MeshPass_Count> mesh_pass_draw_handles;
-    util::FreeListAllocator::Slot instance_data_slot;
-    util::FreeListAllocator::Slot object_data_slot;
-    StaticModelGPUResourcesHandle model_resources_handle;
-    // owned by gpu resource
-    const char* name;
-  };
-
   std::vector<StaticModelInstanceResources> to_delete_static_model_instances_;
-  using StaticModelInstanceResourcesHandle = GenerationalHandle<StaticModelInstanceResources>;
   Pool<StaticModelInstanceResourcesHandle, StaticModelInstanceResources>
       static_model_instance_pool_;
   std::vector<StaticModelInstanceResourcesHandle> loaded_model_instance_resources_;
@@ -397,21 +371,6 @@ class VkRender2 final {
   bool draw_imgui_{true};
   bool deferred_enabled_{true};
   bool draw_debug_aabbs_{false};
-
-  struct LoadSceneReq {
-    std::filesystem::path path;
-    LoadedSceneData result;
-    mat4 transform;
-  };
-  std::vector<LoadSceneReq> load_scene_reqs_;
-  std::mutex scene_load_mtx_;
-
-  struct LoadInstanceReq {
-    StaticModelGPUResourcesHandle resource_handle;
-    mat4 transform;
-  };
-  std::vector<LoadInstanceReq> load_instance_reqs_;
-  void handle_load_scene_requests();
 };
 
 }  // namespace gfx

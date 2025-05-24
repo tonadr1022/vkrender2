@@ -4,7 +4,7 @@
 
 #include "Camera.hpp"
 #include "Common.hpp"
-#include "Scene.hpp"
+#include "ResourceManager.hpp"
 #include "VkRender2.hpp"
 struct GLFWwindow;
 
@@ -33,7 +33,7 @@ struct App {
   bool hide_mouse{false};
   std::filesystem::path resource_dir;
   std::filesystem::path local_models_dir;
-  std::vector<gfx::ModelHandle> scenes_;
+  std::vector<InstanceHandle> scenes_;
   gfx::SceneDrawInfo info_{.light_color = {1., 1., 1.}, .fov_degrees = 70.f};
   vec3 light_dir_{2., -3.5, 2.};
   bool spin_light_{};

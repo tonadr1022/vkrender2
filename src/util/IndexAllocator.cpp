@@ -16,7 +16,7 @@ void FreeListAllocator::init(u32 size_bytes, u32 alignment, u32 element_reserve_
   empty_alloc.size_ = size_bytes;
   empty_alloc.offset_ = 0;
   empty_alloc.mark_free();
-  allocs_.push_back(std::move(empty_alloc));
+  allocs_.push_back(empty_alloc);
 }
 bool FreeListAllocator::reserve(u32 size_bytes) {
   // top bit in the offset is reserved
@@ -72,12 +72,12 @@ FreeListAllocator::Slot FreeListAllocator::allocate(u32 size_bytes) {
   size_ += size_bytes;
 
   if (smallest_free_alloc->size_ == 0) {
-    *smallest_free_alloc = std::move(new_alloc);
+    *smallest_free_alloc = new_alloc;
     Slot s{smallest_free_alloc->get_offset(), smallest_free_alloc->size_};
     s.mark_used();
     return s;
   }
-  auto res = allocs_.insert(smallest_free_alloc, std::move(new_alloc));
+  auto res = allocs_.insert(smallest_free_alloc, new_alloc);
   Slot s{res->get_offset(), res->size_};
   s.mark_used();
   return s;
@@ -135,13 +135,6 @@ void FreeListAllocator::coalesce(Iterator& it) {
   } else if (remove_next) {
     allocs_.erase(it + 1);  // only next
   }
-}
-FreeListAllocator::Slot& FreeListAllocator::Slot::operator=(Slot&& other) noexcept {
-  if (&other != this) {
-    offset_ = other.offset_;
-    size_ = std::exchange(other.size_, 0);
-  }
-  return *this;
 }
 
 FreeListAllocator::Slot::Slot(u32 offset, u32 size) : offset_(offset | 0x80000000), size_(size) {}

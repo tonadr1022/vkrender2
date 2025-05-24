@@ -1099,7 +1099,6 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
       }
     }
   }
-
   traverse(result->scene_graph_data, gltf, Material{}, result->materials);
   recalc_global_transforms(result->scene_graph_data);
   return result;

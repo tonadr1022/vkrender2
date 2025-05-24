@@ -26,6 +26,7 @@ src/techniques/IBL.cpp
 src/techniques/CSM.cpp
 
 src/Scene.cpp
+src/ResourceManager.cpp
 src/CommandEncoder.cpp
 src/vk2/VkTypes.cpp
 src/vk2/StagingBufferPool.cpp

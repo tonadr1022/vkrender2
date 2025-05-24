@@ -7,6 +7,7 @@
 
 #include "Camera.hpp"
 #include "GLFW/glfw3.h"
+#include "ResourceManager.hpp"
 #include "VkRender2.hpp"
 #include "core/Logger.hpp"
 #include "imgui.h"
@@ -84,6 +85,7 @@ App::App(const InitInfo& info) : cam(cam_data, .1) {
   if (!success) {
     return;
   }
+  ResourceManager::init();
   local_models_dir = resource_dir / "local_models/";
   running_ = true;
 }
@@ -128,14 +130,14 @@ void App::run() {
   // VkRender2::get().load_scene(local_models_dir / "ABeautifulGame.glb", false,
   //                             glm::scale(mat4{1}, vec3{10}));
 
-  VkRender2::get().load_model(local_models_dir / "Bistro_Godot_opt.glb", false);
+  ResourceManager::get().load_model(local_models_dir / "Bistro_Godot_opt.glb");
   // VkRender2::get().load_model(local_models_dir / "Bistro_Godot.glb", false);
   // std::filesystem::path env_tex = local_models_dir / "quarry_04_puresky_4k.hdr";
   // std::filesystem::path env_tex = local_models_dir / "immenstadter_horn_2k.hdr";
 
   // VkRender2::get().load_model(local_models_dir / "sponza.glb", false);
 
-  VkRender2::get().load_model(resource_dir / "models/Cube/glTF/Cube.gltf", false);
+  ResourceManager::get().load_model(resource_dir / "models/Cube/glTF/Cube.gltf");
   std::filesystem::path env_tex = local_models_dir / "newport_loft.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/quarry_04_puresky_4k.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/golden_gate_hills_4k.hdr";
@@ -168,6 +170,7 @@ void App::shutdown() const {
   // NOTE: destroying window first doesn't break the renderer for now. it's nice
   // since the window of the app closes faster
   glfwDestroyWindow(window);
+  ResourceManager::shutdown();
   VkRender2::shutdown();
   Device::destroy();
   glfwTerminate();
@@ -245,7 +248,7 @@ void App::draw_imgui() {
         no_file_err = true;
         err_filename = filename;
       } else {
-        VkRender2::get().load_model(filename);
+        ResourceManager::get().load_model(filename);
         no_file_err = false;
         enter_clicked = false;
       }
@@ -260,7 +263,7 @@ void App::draw_imgui() {
       args.filterCount = glm::countof(filters);
       nfdu8char_t* outpath{};
       if (NFD_OpenDialogU8_With(&outpath, &args) == NFD_OKAY) {
-        VkRender2::get().load_model(outpath);
+        ResourceManager::get().load_model(outpath);
         NFD_FreePathU8(outpath);
       }
     }
@@ -311,8 +314,8 @@ void App::draw_imgui() {
 
     if (ImGui::Button("add sponza")) {
       static int offset = 1;
-      VkRender2::get().load_model(local_models_dir / "sponza.glb", false,
-                                  glm::translate(mat4{1}, vec3{0, 0, offset * 40}));
+      ResourceManager::get().load_model(local_models_dir / "sponza.glb",
+                                        glm::translate(mat4{1}, vec3{0, 0, offset * 40}));
       offset++;
     }
     CVarSystem::get().draw_imgui_editor();
@@ -324,7 +327,7 @@ void App::on_file_drop(int count, const char** paths) {
   for (int i = 0; i < count; i++) {
     LINFO("dropped file: {}", paths[i]);
     if (std::filesystem::exists(paths[i])) {
-      VkRender2::get().load_model(paths[i]);
+      ResourceManager::get().load_model(paths[i]);
     }
   }
 }

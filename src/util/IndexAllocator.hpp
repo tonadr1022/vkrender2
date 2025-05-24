@@ -2,7 +2,6 @@
 
 #include <cassert>
 #include <span>
-#include <utility>
 #include <vector>
 
 #include "Common.hpp"
@@ -88,10 +87,6 @@ class FreeListAllocator {
     u32 size_{};
 
    public:
-    Slot(const Slot&) = delete;
-    Slot(Slot&& other) noexcept : offset_(other.offset_), size_(std::exchange(other.size_, 0)) {}
-    Slot& operator=(const Slot&) = delete;
-    Slot& operator=(Slot&& other) noexcept;
     [[nodiscard]] bool valid() const { return size_ != 0; }
     [[nodiscard]] bool is_free() const { return valid() && (offset_ & 0x80000000) != 0; }
     void mark_free() { offset_ |= 0x80000000; }

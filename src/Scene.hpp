@@ -3,7 +3,6 @@
 #include <vector>
 
 #include "Common.hpp"
-#include "vk2/Handle.hpp"
 
 namespace gfx {
 
@@ -81,7 +80,5 @@ struct Scene2 {
 
 void mark_changed(Scene2& scene, int node);
 void recalc_global_transforms(Scene2& scene);
-
-VK2_DEFINE_HANDLE(Model);
 
 }  // namespace gfx
