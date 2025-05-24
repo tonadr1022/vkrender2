@@ -237,7 +237,7 @@ class VkRender2 final {
 
   struct StaticModelGPUResources {
     StaticModelGPUResources() = default;
-    StaticModelGPUResources(SceneLoadData scene_graph_data,
+    StaticModelGPUResources(Scene2&& scene_graph_data,
                             std::vector<gfx::PrimitiveDrawInfo>&& mesh_draw_infos,
                             util::FreeListAllocator::Slot&& materials_slot,
                             util::FreeListAllocator::Slot&& vertices_slot,
@@ -264,7 +264,7 @@ class VkRender2 final {
     StaticModelGPUResources& operator=(StaticModelGPUResources&&) = default;
     ~StaticModelGPUResources();
 
-    SceneLoadData scene_graph_data;
+    Scene2 scene_graph_data;
     std::vector<gfx::PrimitiveDrawInfo> mesh_draw_infos;
     util::FreeListAllocator::Slot materials_slot;
     util::FreeListAllocator::Slot vertices_slot;

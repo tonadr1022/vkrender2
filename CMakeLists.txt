@@ -5,6 +5,10 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 project(vkrender2)
+
+if(APPLE)
+    enable_language(OBJC)
+endif()
 add_subdirectory(third_party)
 
 add_executable(vkrender2
@@ -21,6 +25,7 @@ src/RenderGraph.cpp
 src/techniques/IBL.cpp
 src/techniques/CSM.cpp
 
+src/Scene.cpp
 src/CommandEncoder.cpp
 src/vk2/VkTypes.cpp
 src/vk2/StagingBufferPool.cpp

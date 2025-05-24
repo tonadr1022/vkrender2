@@ -1647,25 +1647,27 @@ void VkRender2::handle_load_scene_requests() {
     u32 pass_double_sided_draw_cnts[MeshPass_Count] = {};
     u32 pass_obj_counts[MeshPass_Count] = {};
 
-    for (auto& node : resources->scene_graph_data.node_datas) {
-      for (auto& mesh_indices : node.meshes) {
-        bool double_sided = resources->materials[mesh_indices.material_id].is_double_sided();
-        if (mesh_indices.pass_flags & PassFlags_Opaque) {
-          if (double_sided) {
-            pass_double_sided_draw_cnts[MeshPass_Opaque]++;
-          }
-          pass_obj_counts[MeshPass_Opaque]++;
-        } else if (mesh_indices.pass_flags & PassFlags_OpaqueAlpha) {
-          if (double_sided) {
-            pass_double_sided_draw_cnts[MeshPass_OpaqueAlphaMask]++;
-          }
-          pass_obj_counts[MeshPass_OpaqueAlphaMask]++;
-        } else if (mesh_indices.pass_flags & PassFlags_Transparent) {
-          if (double_sided) {
-            pass_double_sided_draw_cnts[MeshPass_Transparent]++;
-          }
-          pass_obj_counts[MeshPass_Transparent]++;
+    const auto& scene = resources->scene_graph_data;
+    for (size_t node_i = 0; node_i < scene.hierarchies.size(); node_i++) {
+      auto it = scene.node_to_mesh_data.find(node_i);
+      if (it == scene.node_to_mesh_data.end()) continue;
+      const auto& mesh_indices = it->second;
+      bool double_sided = resources->materials[mesh_indices.material_id].is_double_sided();
+      if (mesh_indices.pass_flags & PassFlags_Opaque) {
+        if (double_sided) {
+          pass_double_sided_draw_cnts[MeshPass_Opaque]++;
         }
+        pass_obj_counts[MeshPass_Opaque]++;
+      } else if (mesh_indices.pass_flags & PassFlags_OpaqueAlpha) {
+        if (double_sided) {
+          pass_double_sided_draw_cnts[MeshPass_OpaqueAlphaMask]++;
+        }
+        pass_obj_counts[MeshPass_OpaqueAlphaMask]++;
+      } else if (mesh_indices.pass_flags & PassFlags_Transparent) {
+        if (double_sided) {
+          pass_double_sided_draw_cnts[MeshPass_Transparent]++;
+        }
+        pass_obj_counts[MeshPass_Transparent]++;
       }
     }
     resources->ref_count++;
@@ -1707,58 +1709,62 @@ void VkRender2::handle_load_scene_requests() {
     auto base_material_id = resources->materials_slot.get_offset() / sizeof(Material);
 
     bool is_non_identity_root_node_transform = transform != mat4{1};
-    for (auto& node : resources->scene_graph_data.node_datas) {
-      for (auto& node_mesh_data : node.meshes) {
-        auto& mesh = resources->mesh_draw_infos[node_mesh_data.mesh_idx];
-        mat4 model = is_non_identity_root_node_transform ? transform * node.world_transform
-                                                         : node.world_transform;
-        // https://stackoverflow.com/questions/6053522/how-to-recalculate-axis-aligned-bounding-box-after-translate-rotate/58630206#58630206
-        auto transform_aabb = [](const glm::mat4& model, const AABB& aabb) -> AABB {
-          AABB result;
-          result.min = glm::vec3(model[3]);  // translation part
-          result.max = result.min;
-          for (int i = 0; i < 3; ++i) {    // for each row (x, y, z in result)
-            for (int j = 0; j < 3; ++j) {  // for each column (x, y, z in input aabb)
-              float a = model[i][j] * aabb.min[j];
-              float b = model[i][j] * aabb.max[j];
-              result.min[i] += glm::min(a, b);
-              result.max[i] += glm::max(a, b);
-            }
+
+    for (size_t node_i = 0; node_i < scene.hierarchies.size(); node_i++) {
+      auto it = scene.node_to_mesh_data.find(node_i);
+      if (it == scene.node_to_mesh_data.end()) continue;
+      const auto& node_mesh_data = it->second;
+      // auto& node_mesh_data
+      auto& mesh = resources->mesh_draw_infos[node_mesh_data.mesh_idx];
+      const mat4 model = is_non_identity_root_node_transform
+                             ? scene.global_transforms[node_i] * transform
+                             : scene.global_transforms[node_i];
+      // https://stackoverflow.com/questions/6053522/how-to-recalculate-axis-aligned-bounding-box-after-translate-rotate/58630206#58630206
+      auto transform_aabb = [](const glm::mat4& model, const AABB& aabb) -> AABB {
+        AABB result;
+        result.min = glm::vec3(model[3]);  // translation part
+        result.max = result.min;
+        for (int i = 0; i < 3; ++i) {    // for each row (x, y, z in result)
+          for (int j = 0; j < 3; ++j) {  // for each column (x, y, z in input aabb)
+            float a = model[i][j] * aabb.min[j];
+            float b = model[i][j] * aabb.max[j];
+            result.min[i] += glm::min(a, b);
+            result.max[i] += glm::max(a, b);
           }
-          return result;
-        };
-        AABB world_space_aabb = transform_aabb(model, mesh.aabb);
-        scene_min = glm::min(scene_min, world_space_aabb.min);
-        scene_max = glm::max(scene_max, world_space_aabb.max);
-        u32 instance_id = base_instance_id + instance_datas.size();
-        instance_datas.emplace_back(node_mesh_data.material_id + base_material_id,
-                                    base_object_data_id + instance_resources->object_datas.size());
-        instance_resources->object_datas.emplace_back(gfx::ObjectData{
-            .model = model,
-            .aabb_min = vec4(mesh.aabb.min, 0.),
-            .aabb_max = vec4(mesh.aabb.max, 0.),
-
-        });
-
-        u32 draw_flags{};
-        if (resources->materials[node_mesh_data.material_id].is_double_sided()) {
-          draw_flags |= GPUDrawInfoFlags_DoubleSided;
         }
+        return result;
+      };
+      AABB world_space_aabb = transform_aabb(model, mesh.aabb);
+      scene_min = glm::min(scene_min, world_space_aabb.min);
+      scene_max = glm::max(scene_max, world_space_aabb.max);
+      u32 instance_id = base_instance_id + instance_datas.size();
+      instance_datas.emplace_back(node_mesh_data.material_id + base_material_id,
+                                  base_object_data_id + instance_resources->object_datas.size());
+      instance_resources->object_datas.emplace_back(gfx::ObjectData{
+          .model = model,
+          .aabb_min = vec4(mesh.aabb.min, 0.),
+          .aabb_max = vec4(mesh.aabb.max, 0.),
 
-        GPUDrawInfo draw{
-            .index_cnt = mesh.index_count,
-            .first_index = static_cast<u32>(resources->first_index + mesh.first_index),
-            .vertex_offset = static_cast<u32>(resources->first_vertex + mesh.first_vertex),
-            .instance_id = instance_id,
-            .flags = draw_flags};
+      });
 
-        if (node_mesh_data.pass_flags & PassFlags_Opaque) {
-          pass_cmds[MeshPass_Opaque].emplace_back(draw);
-        } else if (node_mesh_data.pass_flags & PassFlags_OpaqueAlpha) {
-          pass_cmds[MeshPass_OpaqueAlphaMask].emplace_back(draw);
-        } else if (node_mesh_data.pass_flags & PassFlags_Transparent) {
-          pass_cmds[MeshPass_Transparent].emplace_back(draw);
-        }
+      u32 draw_flags{};
+      if (resources->materials[node_mesh_data.material_id].is_double_sided()) {
+        draw_flags |= GPUDrawInfoFlags_DoubleSided;
+      }
+
+      GPUDrawInfo draw{
+          .index_cnt = mesh.index_count,
+          .first_index = static_cast<u32>(resources->first_index + mesh.first_index),
+          .vertex_offset = static_cast<u32>(resources->first_vertex + mesh.first_vertex),
+          .instance_id = instance_id,
+          .flags = draw_flags};
+
+      if (node_mesh_data.pass_flags & PassFlags_Opaque) {
+        pass_cmds[MeshPass_Opaque].emplace_back(draw);
+      } else if (node_mesh_data.pass_flags & PassFlags_OpaqueAlpha) {
+        pass_cmds[MeshPass_OpaqueAlphaMask].emplace_back(draw);
+      } else if (node_mesh_data.pass_flags & PassFlags_Transparent) {
+        pass_cmds[MeshPass_Transparent].emplace_back(draw);
       }
     }
 

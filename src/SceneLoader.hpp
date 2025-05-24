@@ -27,16 +27,6 @@ struct Vertex {
   vec4 tangent;
 };
 
-struct Material {
-  vec4 emissive_factors{0.};
-  vec4 albedo_factors{1.};
-  vec4 pbr_factors;
-  uvec4 ids1;  // albedo, normal, metal_rough, emissive
-  uvec4 ids2;  // ao
-  [[nodiscard]] PassFlags get_pass_flags() const;
-  [[nodiscard]] bool is_double_sided() const;
-};
-
 struct PrimitiveDrawInfo {
   AABB aabb;
   u32 first_index;
@@ -47,7 +37,7 @@ struct PrimitiveDrawInfo {
 };
 
 struct LoadedSceneData {
-  SceneLoadData scene_graph_data;
+  Scene2 scene_graph_data;
   std::vector<Material> materials;
   std::vector<Holder<ImageHandle>> textures;
   std::vector<PrimitiveDrawInfo> mesh_draw_infos;
@@ -56,13 +46,15 @@ struct LoadedSceneData {
 };
 
 struct LoadedSceneBaseData {
-  SceneLoadData scene_graph_data;
+  Scene2 scene_graph_data;
+  // SceneLoadData scene_graph_data;
   std::vector<PrimitiveDrawInfo> mesh_draw_infos;
   std::vector<Vertex> vertices;
   std::vector<u32> indices;
   std::vector<Holder<ImageHandle>> textures;
   std::vector<Material> materials;
 };
+
 struct DefaultMaterialData {
   u32 white_img_handle;
 };

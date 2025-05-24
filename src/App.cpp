@@ -125,7 +125,6 @@ void App::run() {
   load_cam(cam_data);
   float last_time{};
   auto& renderer = VkRender2::get();
-
   // VkRender2::get().load_scene(local_models_dir / "ABeautifulGame.glb", false,
   //                             glm::scale(mat4{1}, vec3{10}));
 

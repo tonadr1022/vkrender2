@@ -19,4 +19,4 @@ CMakeUserPresets.json
 *.spv
 local_models/
 graphs/
-./imgui.ini
+imgui.ini
