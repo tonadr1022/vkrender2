@@ -8,6 +8,7 @@
 #include "Camera.hpp"
 #include "GLFW/glfw3.h"
 #include "ResourceManager.hpp"
+#include "Scene.hpp"
 #include "VkRender2.hpp"
 #include "core/Logger.hpp"
 #include "imgui.h"
@@ -157,7 +158,13 @@ void App::run() {
 
     renderer.new_frame();
     update(dt);
-    draw_imgui();
+    on_imgui();
+    for (auto& instance_handle : instances_) {
+      auto* instance = ResourceManager::get().get_instance(instance_handle);
+      if (recalc_global_transforms(instance->scene_graph_data)) {
+        VkRender2::get().update_transforms(*instance);
+      }
+    }
     renderer.draw(info_);
   }
 
@@ -237,9 +244,9 @@ uvec2 App::window_dims() const {
   return {x, y};
 }
 
-void App::draw_imgui() {
+void App::on_imgui() {
   ZoneScoped;
-  if (ImGui::Begin("hello")) {
+  if (ImGui::Begin("app")) {
     static char filename[100];
     static std::string err_filename;
     static bool enter_clicked = false;
@@ -320,32 +327,41 @@ void App::draw_imgui() {
                                         glm::translate(mat4{1}, vec3{0, 0, offset * 40}));
       offset++;
     }
-    util::fixed_vector<u32, 8> to_delete;
-    size_t i = 0;
-    for (auto& instance_handle : instances_) {
-      auto* instance = ResourceManager::get().get_instance(instance_handle);
-      if (!instance || !instance->is_valid()) {
-        continue;
-      }
-      auto* model = ResourceManager::get().get_model(instance->model_handle);
-      ImGui::PushID(&instance_handle);
 
-      if (ImGui::Button("X")) {
-        if (!to_delete.full()) {
-          to_delete.emplace_back(i);
+    if (ImGui::TreeNodeEx("Scene", ImGuiTreeNodeFlags_DefaultOpen)) {
+      util::fixed_vector<u32, 8> to_delete;
+      size_t i = 0;
+      for (auto& instance_handle : instances_) {
+        auto* instance = ResourceManager::get().get_instance(instance_handle);
+        if (!instance || !instance->is_valid()) {
+          continue;
         }
+        auto* model = ResourceManager::get().get_model(instance->model_handle);
+        ImGui::PushID(&instance_handle);
+
+        if (ImGui::Button("X")) {
+          if (!to_delete.full()) {
+            to_delete.emplace_back(i);
+          }
+        }
+        ImGui::SameLine();
+        if (ImGui::TreeNodeEx("%s", ImGuiTreeNodeFlags_DefaultOpen, "%s",
+                              model->path.string().c_str())) {
+          scene_node_imgui(instance->scene_graph_data, 0);
+          ImGui::TreePop();
+        }
+        ImGui::PopID();
+        i++;
       }
-      ImGui::SameLine();
-      ImGui::Text("%s", model->path.string().c_str());
-      ImGui::PopID();
-      i++;
-    }
-    for (auto d : to_delete) {
-      ResourceManager::get().remove_model(instances_[d]);
-      if (instances_.size() > 1) {
-        instances_[d] = instances_.back();
+
+      for (auto d : to_delete) {
+        ResourceManager::get().remove_model(instances_[d]);
+        if (instances_.size() > 1) {
+          instances_[d] = instances_.back();
+        }
+        instances_.pop_back();
       }
-      instances_.pop_back();
+      ImGui::TreePop();
     }
 
     CVarSystem::get().draw_imgui_editor();
@@ -360,4 +376,24 @@ void App::on_file_drop(int count, const char** paths) {
       ResourceManager::get().load_model(paths[i]);
     }
   }
+}
+
+void App::scene_node_imgui(gfx::Scene2& scene, int node) {
+  auto it = scene.node_to_node_name_idx.find(node);
+  ImGui::PushID(node);
+  if (ImGui::TreeNode("%s", "%s",
+                      it == scene.node_to_node_name_idx.end()
+                          ? "Node"
+                          : scene.node_names[it->second].c_str())) {
+    auto& local_transform = scene.local_transforms[node];
+    if (ImGui::DragFloat("z", &local_transform[3][2])) {
+      mark_changed(scene, node);
+    }
+    for (int c = scene.hierarchies[node].first_child; c != -1;
+         c = scene.hierarchies[c].next_sibling) {
+      scene_node_imgui(scene, c);
+    }
+    ImGui::TreePop();
+  }
+  ImGui::PopID();
 }

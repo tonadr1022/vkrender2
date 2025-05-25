@@ -27,6 +27,7 @@ namespace tracy {
 struct VkCtx;
 }
 
+struct LoadedInstanceData;
 struct LoadedModelData;
 
 namespace gfx {
@@ -128,6 +129,7 @@ class VkRender2 final {
 
   bool load_model2(const std::filesystem::path& path, LoadedModelData& result);
   StaticModelInstanceResourcesHandle add_instance(ModelHandle model_handle, const mat4& transform);
+  void update_transforms(LoadedInstanceData& instance);
   void remove_instance(StaticModelInstanceResourcesHandle handle);
 
   Pool<ModelGPUResourceHandle, ModelGPUResources> model_gpu_resources_pool_;

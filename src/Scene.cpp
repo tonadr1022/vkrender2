@@ -26,12 +26,14 @@ void mark_changed(Scene2& scene, int node) {
   }
 }
 
-void recalc_global_transforms(Scene2& scene) {
+bool recalc_global_transforms(Scene2& scene) {
   // root node
+  bool dirty = false;
   if (scene.changed_this_frame[0].size() > 0) {
     int changed_node = scene.changed_this_frame[0][0];
     scene.global_transforms[changed_node] = scene.local_transforms[changed_node];
     scene.changed_this_frame[0].clear();
+    dirty = true;
   }
 
   for (int level = 1; level < Scene2::max_node_depth && scene.changed_this_frame[level].size() > 0;
@@ -40,8 +42,10 @@ void recalc_global_transforms(Scene2& scene) {
       int parent = scene.hierarchies[changed_node].parent;
       scene.global_transforms[changed_node] =
           scene.global_transforms[parent] * scene.local_transforms[changed_node];
+      dirty = true;
     }
     scene.changed_this_frame[level].clear();
   }
+  return dirty;
 }
 }  // namespace gfx

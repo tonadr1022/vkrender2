@@ -25,7 +25,7 @@ struct App {
   void on_file_drop(int count, const char** paths);
   void on_hide_mouse_change(bool new_hide_mouse);
   void on_cursor_event(vec2 pos);
-  void draw_imgui();
+  void on_imgui();
   std::vector<InstanceHandle> instances_;
 
   Camera cam_data;
@@ -49,4 +49,5 @@ struct App {
   void update(float dt);
   [[nodiscard]] float aspect_ratio() const;
   [[nodiscard]] uvec2 window_dims() const;
+  void scene_node_imgui(gfx::Scene2& scene, int node);
 };

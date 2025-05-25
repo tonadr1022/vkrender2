@@ -79,6 +79,6 @@ struct Scene2 {
 };
 
 void mark_changed(Scene2& scene, int node);
-void recalc_global_transforms(Scene2& scene);
+bool recalc_global_transforms(Scene2& scene);
 
 }  // namespace gfx
