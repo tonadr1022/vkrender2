@@ -52,10 +52,11 @@ enum MeshPass : u8 {
   MeshPass_Transparent,
   MeshPass_Count
 };
+std::string to_string(MeshPass p);
 
 struct StaticModelInstanceResources {
   std::vector<ObjectData> object_datas;
-  std::array<u32, MeshPass_Count> mesh_pass_draw_handles;
+  std::array<u32, MeshPass_Count> mesh_pass_draw_handles{UINT32_MAX};
   util::FreeListAllocator::Slot instance_data_slot;
   util::FreeListAllocator::Slot object_data_slot;
   ModelHandle model_handle;
@@ -127,6 +128,7 @@ class VkRender2 final {
 
   bool load_model2(const std::filesystem::path& path, LoadedModelData& result);
   StaticModelInstanceResourcesHandle add_instance(ModelHandle model_handle, const mat4& transform);
+  void remove_instance(StaticModelInstanceResourcesHandle handle);
 
   Pool<ModelGPUResourceHandle, ModelGPUResources> model_gpu_resources_pool_;
 
@@ -209,8 +211,9 @@ class VkRender2 final {
   std::array<u32, 2> opaque_mesh_pass_idxs_{MeshPass_Opaque, MeshPass_OpaqueAlphaMask};
 
   struct StaticMeshDrawManager {
+    static constexpr u32 null_handle{UINT32_MAX};
     StaticMeshDrawManager() = default;
-    void init(MeshPass type, size_t initial_max_draw_cnt, Device* device);
+    void init(MeshPass type, size_t initial_max_draw_cnt, Device* device, const std::string& name);
     StaticMeshDrawManager(const StaticMeshDrawManager&) = delete;
     StaticMeshDrawManager(StaticMeshDrawManager&&) = delete;
     StaticMeshDrawManager& operator=(const StaticMeshDrawManager&) = delete;
@@ -268,7 +271,7 @@ class VkRender2 final {
   std::array<u32, MeshPass_Count> main_view_mesh_pass_indices_;
   std::vector<std::array<u32, MeshPass_Count>> shadow_mesh_pass_indices_;
 
-  std::vector<StaticModelInstanceResources> to_delete_static_model_instances_;
+  std::vector<StaticModelInstanceResourcesHandle> to_delete_static_model_instances_;
   Pool<StaticModelInstanceResourcesHandle, StaticModelInstanceResources>
       static_model_instance_pool_;
   std::vector<StaticModelInstanceResourcesHandle> loaded_model_instance_resources_;

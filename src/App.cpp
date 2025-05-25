@@ -130,14 +130,16 @@ void App::run() {
   // VkRender2::get().load_scene(local_models_dir / "ABeautifulGame.glb", false,
   //                             glm::scale(mat4{1}, vec3{10}));
 
-  ResourceManager::get().load_model(local_models_dir / "Bistro_Godot_opt.glb");
+  instances_.emplace_back(
+      ResourceManager::get().load_model(local_models_dir / "Bistro_Godot_opt.glb"));
   // VkRender2::get().load_model(local_models_dir / "Bistro_Godot.glb", false);
   // std::filesystem::path env_tex = local_models_dir / "quarry_04_puresky_4k.hdr";
   // std::filesystem::path env_tex = local_models_dir / "immenstadter_horn_2k.hdr";
 
   // VkRender2::get().load_model(local_models_dir / "sponza.glb", false);
 
-  ResourceManager::get().load_model(resource_dir / "models/Cube/glTF/Cube.gltf");
+  instances_.emplace_back(
+      ResourceManager::get().load_model(resource_dir / "models/Cube/glTF/Cube.gltf"));
   std::filesystem::path env_tex = local_models_dir / "newport_loft.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/quarry_04_puresky_4k.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/golden_gate_hills_4k.hdr";
@@ -318,6 +320,34 @@ void App::draw_imgui() {
                                         glm::translate(mat4{1}, vec3{0, 0, offset * 40}));
       offset++;
     }
+    util::fixed_vector<u32, 8> to_delete;
+    size_t i = 0;
+    for (auto& instance_handle : instances_) {
+      auto* instance = ResourceManager::get().get_instance(instance_handle);
+      if (!instance || !instance->is_valid()) {
+        continue;
+      }
+      auto* model = ResourceManager::get().get_model(instance->model_handle);
+      ImGui::PushID(&instance_handle);
+
+      if (ImGui::Button("X")) {
+        if (!to_delete.full()) {
+          to_delete.emplace_back(i);
+        }
+      }
+      ImGui::SameLine();
+      ImGui::Text("%s", model->path.string().c_str());
+      ImGui::PopID();
+      i++;
+    }
+    for (auto d : to_delete) {
+      ResourceManager::get().remove_model(instances_[d]);
+      if (instances_.size() > 1) {
+        instances_[d] = instances_.back();
+      }
+      instances_.pop_back();
+    }
+
     CVarSystem::get().draw_imgui_editor();
   }
   ImGui::End();

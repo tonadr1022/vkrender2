@@ -18,7 +18,8 @@ InstanceHandle ResourceManager::load_model(const std::filesystem::path& path,
   auto instance_handle = instance_pool_.alloc();
 
   if (model_handle_it != model_name_to_handle_.end()) {
-    add_instance(model_handle_it->second, instance_handle, transform);
+    std::scoped_lock lock(instance_load_req_mtx_);
+    instance_load_requests_.emplace_back(transform, instance_handle, model_handle_it->second);
   } else {
     threads::pool.submit_task([this, path, transform, instance_handle]() {
       auto model_handle = loaded_model_pool_.alloc();
@@ -28,9 +29,11 @@ InstanceHandle ResourceManager::load_model(const std::filesystem::path& path,
         return;
       }
       d->path = path;
-      add_instance(model_handle, instance_handle, transform);
+      std::scoped_lock lock(instance_load_req_mtx_);
+      instance_load_requests_.emplace_back(transform, instance_handle, model_handle);
     });
   }
+
   return instance_handle;
 }
 
@@ -63,3 +66,20 @@ void ResourceManager::add_instance(ModelHandle model_handle, InstanceHandle inst
   instance->scene_graph_data = model->scene_graph_data;
   instance->model_handle = model_handle;
 };
+
+void ResourceManager::update() {
+  std::scoped_lock lock(instance_load_req_mtx_);
+  for (const auto& req : instance_load_requests_) {
+    add_instance(req.model_handle, req.instance_handle, req.transform);
+  }
+  instance_load_requests_.clear();
+}
+
+void ResourceManager::remove_model(InstanceHandle handle) {
+  auto* instance = instance_pool_.get(handle);
+  assert(instance);
+  if (instance) {
+    gfx::VkRender2::get().remove_instance(instance->instance_resources_handle);
+  }
+  instance_pool_.destroy(handle);
+}

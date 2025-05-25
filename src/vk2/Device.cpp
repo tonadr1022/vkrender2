@@ -1693,7 +1693,6 @@ void Device::Queue::submit(Device* device, VkFence fence) {
   if (queue == VK_NULL_HANDLE) {
     return;
   }
-
   {
     // main submit
     if (fence != VK_NULL_HANDLE) {
@@ -1713,13 +1712,10 @@ void Device::Queue::submit(Device* device, VkFence fence) {
         .pCommandBufferInfos = submit_cmds.data(),
         .signalSemaphoreInfoCount = static_cast<u32>(signal_semaphore_infos.size()),
         .pSignalSemaphoreInfos = signal_semaphore_infos.data()};
-
     submit(1, &queue_submit_info, fence);
-
     wait_semaphores_infos.clear();
     signal_semaphore_infos.clear();
     submit_cmds.clear();
-
     // present swapchain results
     if (submit_swapchains.size()) {
       VkPresentInfoKHR info{.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
@@ -1728,7 +1724,11 @@ void Device::Queue::submit(Device* device, VkFence fence) {
                             .swapchainCount = static_cast<u32>(submit_swapchains.size()),
                             .pSwapchains = submit_swapchains.data(),
                             .pImageIndices = submit_swapchain_img_indices.data()};
-      VkResult present_result = vkQueuePresentKHR(queue, &info);
+      VkResult present_result{};
+      {
+        std::scoped_lock lock(mtx_);
+        present_result = vkQueuePresentKHR(queue, &info);
+      }
       // out of date == recreate swapchain
       if (present_result == VK_ERROR_OUT_OF_DATE_KHR || present_result == VK_SUBOPTIMAL_KHR) {
         for (auto& swapchain : swapchain_updates) {

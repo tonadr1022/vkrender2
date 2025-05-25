@@ -379,7 +379,7 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   ibl_->init_post_pipeline_load();
 
   for (int i = 0; i < MeshPass_Count; i++) {
-    static_draw_mgrs_[i].init(static_cast<MeshPass>(i), 1000, device_);
+    static_draw_mgrs_[i].init(static_cast<MeshPass>(i), 1000, device_, to_string((MeshPass)i));
     main_view_mesh_pass_indices_[i] = static_draw_mgrs_[i].add_draw_pass();
   }
 
@@ -445,14 +445,13 @@ void VkRender2::draw(const SceneDrawInfo& info) {
   // auto cmd_begin_info = init::command_buffer_begin_info();
   // VK_CHECK(vkBeginCommandBuffer(cmd_buf, &cmd_begin_info));
 
-  // TODO: flush resource loads
-
+  ResourceManager::get().update();
   CmdEncoder* cmd = device_->begin_command_list(QueueType::Graphics);
   state_.reset(*cmd);
   device_->bind_bindless_descriptors(*cmd);
 
   for (auto& instance : to_delete_static_model_instances_) {
-    free(*cmd, instance);
+    free(*cmd, *static_model_instance_pool_.get(instance));
   }
 
   to_delete_static_model_instances_.clear();
@@ -550,10 +549,15 @@ void VkRender2::on_imgui() {
 
     if (ImGui::TreeNodeEx("Static Geo", ImGuiTreeNodeFlags_DefaultOpen)) {
       for (auto& mgr : static_draw_mgrs_) {
+        ImGui::PushID(&mgr);
         if (ImGui::TreeNodeEx(mgr.get_name().c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+          ImGui::Text("draws %u (%u double sided)",
+                      mgr.get_num_draw_cmds(false) + mgr.get_num_draw_cmds(true),
+                      mgr.get_num_draw_cmds(true));
           ImGui::Checkbox("Enabled", &mgr.draw_enabled);
           ImGui::TreePop();
         }
+        ImGui::PopID();
       }
 
       ImGui::TreePop();
@@ -587,7 +591,7 @@ void VkRender2::on_imgui() {
                      device_->get_image(ibl_->prefiltered_env_map_tex_)->get_desc().mip_levels - 1);
   }
 
-  if (ImGui::TreeNodeEx("Scene", ImGuiTreeNodeFlags_DefaultOpen)) {
+  if (ImGui::TreeNodeEx("Scene")) {
     // TODO: make this external to the renderer
     util::fixed_vector<u32, 8> to_delete;
     for (u32 i = 0; i < loaded_model_instance_resources_.size(); i++) {
@@ -598,8 +602,7 @@ void VkRender2::on_imgui() {
         ImGui::SameLine();
         if (ImGui::Button("X")) {
           if (!to_delete.full()) {
-            to_delete_static_model_instances_.emplace_back(std::move(*res));
-            static_model_instance_pool_.destroy(handle);
+            to_delete_static_model_instances_.emplace_back(handle);
             to_delete.push_back(i);
           }
         }
@@ -610,8 +613,8 @@ void VkRender2::on_imgui() {
     for (const u32 idx : to_delete) {
       if (loaded_model_instance_resources_.size() > 1) {
         loaded_model_instance_resources_[idx] = loaded_model_instance_resources_.back();
-        loaded_model_instance_resources_.pop_back();
       }
+      loaded_model_instance_resources_.pop_back();
     }
     ImGui::TreePop();
   }
@@ -1250,13 +1253,19 @@ void VkRender2::execute_draw(CmdEncoder& cmd, BufferHandle buffer, u32 draw_coun
 }
 
 void VkRender2::StaticMeshDrawManager::remove_draws(StateTracker&, CmdEncoder& cmd, u32 handle) {
+  if (handle == null_handle) {
+    return;
+  }
+  assert(handle < allocs_.size());
   Alloc& a = allocs_[handle];
   for (int double_sided = 0; double_sided < 2; double_sided++) {
     u32 num_double_sided_draws = a.num_double_sided_draws;
     u32 num_draws = a.draw_cmd_slot.get_size() / sizeof(GPUDrawInfo);
     if (double_sided) {
+      assert(num_draw_cmds_[double_sided] >= num_double_sided_draws);
       num_draw_cmds_[double_sided] -= num_double_sided_draws;
     } else {
+      assert(num_draw_cmds_[double_sided] >= num_draws - num_double_sided_draws);
       num_draw_cmds_[double_sided] -= num_draws - num_double_sided_draws;
     }
   }
@@ -1270,7 +1279,7 @@ u32 VkRender2::StaticMeshDrawManager::add_draws(StateTracker& state,
                                                 Device::CopyAllocator::CopyCmd& cmd, size_t size,
                                                 size_t staging_offset, u32 num_double_sided_draws) {
   assert(size > 0);
-  Alloc a;
+  Alloc a{};
   a.num_double_sided_draws = num_double_sided_draws;
   a.draw_cmd_slot = draw_cmds_buf_.allocator.allocate(size);
   u32 num_single_sided_draws = (size / sizeof(GPUDrawInfo)) - num_double_sided_draws;
@@ -1333,8 +1342,10 @@ u32 VkRender2::StaticMeshDrawManager::add_draws(StateTracker& state,
   if (free_alloc_indices_.size()) {
     auto h = free_alloc_indices_.back();
     free_alloc_indices_.pop_back();
+    allocs_[h] = a;
     return h;
   }
+
   auto h = allocs_.size();
   allocs_.emplace_back(a);
   return h;
@@ -1489,7 +1500,6 @@ void VkRender2::free(StaticModelInstanceResources& instance) {
 
   auto* resources = model_gpu_resources_pool_.get(pmodel->gpu_resource_handle);
   if (resources->ref_count == 0) {
-    // lol
     LERROR("uh oh");
     exit(1);
   }
@@ -1534,7 +1544,8 @@ PipelineTask VkRender2::make_pipeline_task(const ComputePipelineCreateInfo& info
 }
 
 void VkRender2::StaticMeshDrawManager::init(MeshPass type, size_t initial_max_draw_cnt,
-                                            Device* device) {
+                                            Device* device, const std::string& name) {
+  name_ = name;
   device_ = device;
   mesh_pass_ = type;
   draw_cmds_buf_.buffer = device_->create_buffer_holder(BufferCreateInfo{
@@ -1613,7 +1624,7 @@ bool VkRender2::load_model2(const std::filesystem::path& path, LoadedModelData& 
     resources->materials_slot = materials_gpu_slot;
     resources->vertices_slot = vertices_gpu_slot;
     resources->indices_slot = indices_gpu_slot;
-    resources->materials = res.materials;
+    resources->materials = std::move(res.materials);
     resources->num_vertices = res.vertices.size();
     resources->num_indices = res.indices.size();
     resources->name = path;
@@ -1675,6 +1686,7 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   auto model_instance_resources_handle = static_model_instance_pool_.alloc();
   loaded_model_instance_resources_.emplace_back(model_instance_resources_handle);
   auto* instance_resources = static_model_instance_pool_.get(model_instance_resources_handle);
+  std::ranges::fill(instance_resources->mesh_pass_draw_handles, StaticMeshDrawManager::null_handle);
   instance_resources->model_handle = model_handle;
   instance_resources->name = resources->name.c_str();
 
@@ -1806,4 +1818,20 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   return model_instance_resources_handle;
 }
 
+std::string to_string(MeshPass p) {
+  switch (p) {
+    case MeshPass_Opaque:
+      return "MeshPass_Opaque";
+    case MeshPass_OpaqueAlphaMask:
+      return "MeshPass_OpaqueAlphaMask";
+    case MeshPass_Transparent:
+      return "MeshPass_Transparent";
+    case MeshPass_Count:
+      return "MeshPass_Count";
+  }
+}
+
+void VkRender2::remove_instance(StaticModelInstanceResourcesHandle handle) {
+  to_delete_static_model_instances_.emplace_back(handle);
+}
 }  // namespace gfx

@@ -26,6 +26,7 @@ struct App {
   void on_hide_mouse_change(bool new_hide_mouse);
   void on_cursor_event(vec2 pos);
   void draw_imgui();
+  std::vector<InstanceHandle> instances_;
 
   Camera cam_data;
   CameraController cam;
