@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <cstdint>
 #include <expected>
-#include <fstream>
 #include <tracy/Tracy.hpp>
 #include <utility>
 
@@ -179,8 +178,8 @@ RGResourceHandle RenderGraphPass::add_image_access(const std::string& name, Acce
   return handle;
 }
 
-RenderGraphPass::RenderGraphPass(std::string name, RenderGraph& graph, uint32_t idx, Type type)
-    : name_(std::move(name)), graph_(graph), idx_(idx), type_(type) {}
+RenderGraphPass::RenderGraphPass(std::string name, RenderGraph& graph, uint32_t idx, Type)
+    : name_(std::move(name)), graph_(graph), idx_(idx) {}
 
 RenderGraph::RenderGraph(std::string name) : name_(std::move(name)) { log_ = false; }
 
@@ -744,52 +743,53 @@ void RenderGraph::PhysicalPass::reset() {
   physical_depth_stencil = RenderResource::unused;
 }
 
-VoidResult RenderGraph::output_graphvis(const std::filesystem::path& path) {
-  if (physical_passes_.empty() || passes_.empty()) {
-    return std::unexpected("no passes");
-  }
-
-  std::ofstream ofs(path);
-  if (!ofs.is_open()) {
-    return std::unexpected("failed to open file");
-  }
-  ofs << "digraph G {\nsize =\"4,4\";\n";
-  auto s = pass_stack_;
-  auto print_link = [&](const std::string& source, const std::string& sink,
-                        const std::string& label = "") {
-    if (label.size()) {
-      std::println(ofs, "{} -> {} [label=\"{}\"];\n", source, sink, label);
-    } else {
-      std::println(ofs, "{} -> {};\n", source, sink);
-    }
-  };
-  std::ranges::reverse(s);
-  // for (auto p : s) {
-  //   auto& pass = passes_[p];
-  //   for (const auto& writer : pass_dependencies_[p]) {
-  //     for (const auto& resource : passes_[writer].get_resources()) {
-  //       assert(resource.idx < resources_.size());
-  //       auto& output_res = resources_[resource.idx];
-  //       for (const auto& input : pass.get_resources()) {
-  //         if (output_res.name == resources_[input.idx].name) {
-  //           print_link(passes_[writer].get_name(), pass.get_name(), output_res.name);
-  //         }
-  //       }
+VoidResult RenderGraph::output_graphvis(const std::filesystem::path&) {
+  return {};
+  // if (physical_passes_.empty() || passes_.empty()) {
+  //   return std::unexpected("no passes");
+  // }
+  //
+  // std::ofstream ofs(path);
+  // if (!ofs.is_open()) {
+  //   return std::unexpected("failed to open file");
+  // }
+  // ofs << "digraph G {\nsize =\"4,4\";\n";
+  // auto s = pass_stack_;
+  // auto print_link = [&](const std::string& source, const std::string& sink,
+  //                       const std::string& label = "") {
+  //   if (label.size()) {
+  //     std::println(ofs, "{} -> {} [label=\"{}\"];\n", source, sink, label);
+  //   } else {
+  //     std::println(ofs, "{} -> {};\n", source, sink);
+  //   }
+  // };
+  // std::ranges::reverse(s);
+  // // for (auto p : s) {
+  // //   auto& pass = passes_[p];
+  // //   for (const auto& writer : pass_dependencies_[p]) {
+  // //     for (const auto& resource : passes_[writer].get_resources()) {
+  // //       assert(resource.idx < resources_.size());
+  // //       auto& output_res = resources_[resource.idx];
+  // //       for (const auto& input : pass.get_resources()) {
+  // //         if (output_res.name == resources_[input.idx].name) {
+  // //           print_link(passes_[writer].get_name(), pass.get_name(), output_res.name);
+  // //         }
+  // //       }
+  // //     }
+  // //   }
+  // // }
+  //
+  // for (uint32_t writer : swapchain_writer_passes_) {
+  //   for (const auto& output : passes_[writer].get_resources()) {
+  //     auto& res = *get_resource(output.handle);
+  //     if (res.name == backbuffer_img_) {
+  //       print_link(passes_[writer].get_name(), "swapchain", res.name);
   //     }
   //   }
   // }
-
-  for (uint32_t writer : swapchain_writer_passes_) {
-    for (const auto& output : passes_[writer].get_resources()) {
-      auto& res = *get_resource(output.handle);
-      if (res.name == backbuffer_img_) {
-        print_link(passes_[writer].get_name(), "swapchain", res.name);
-      }
-    }
-  }
-  ofs << "}\n";
-
-  return {};
+  // ofs << "}\n";
+  //
+  // return {};
 }
 
 void RenderGraph::setup_attachments() {

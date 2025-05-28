@@ -125,6 +125,7 @@ class Device {
 
   // TODO: better args
   BufferHandle create_buffer(const BufferCreateInfo& info);
+  BufferHandle create_staging_buffer(u64 size);
   Holder<BufferHandle> create_buffer_holder(const BufferCreateInfo& info);
   // returns subresource handle
   i32 create_subresource(ImageHandle image_handle, u32 base_mip_level, u32 level_count,
@@ -231,6 +232,7 @@ class Device {
                        u64 size) const;
     };
     CopyCmd allocate(u64 size);
+    CmdEncoder* allocate2(u64 size);
     void submit(CopyCmd cmd);
     void destroy();
 
@@ -239,6 +241,7 @@ class Device {
     QueueType type_{QueueType::Count};
     std::mutex free_list_mtx_;
     std::vector<CopyCmd> free_copy_cmds_;
+    std::vector<BufferHandle> free_staging_buffers2_;
   };
 
  private:

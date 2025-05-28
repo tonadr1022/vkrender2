@@ -17,7 +17,6 @@ struct LoadedInstanceData {
   gfx::StaticModelInstanceResourcesHandle instance_resources_handle;
   [[nodiscard]] bool is_valid() const { return model_handle.is_valid(); }
 };
-using InstanceHandle = GenerationalHandle<LoadedInstanceData>;
 
 class ResourceManager {
  public:

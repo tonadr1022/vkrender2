@@ -309,4 +309,20 @@ void CmdEncoder::reset(u32 frame_in_flight) {
   wait_semaphores_.clear();
   signal_semaphores_.clear();
 }
+void BufferCopyer::add_copy(u64 src_offset, u64 dst_offset, u64 size) {
+  copies.emplace_back(VkBufferCopy2KHR{.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2_KHR,
+                                       .srcOffset = src_offset,
+                                       .dstOffset = dst_offset,
+                                       .size = size});
+}
+
+void CmdEncoder::copy_buffer(BufferCopyer& copyer, Buffer& src, Buffer& dst) const {
+  VkCopyBufferInfo2KHR copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+                                 .srcBuffer = src.buffer(),
+                                 .dstBuffer = dst.buffer(),
+                                 .regionCount = static_cast<u32>(copyer.copies.size()),
+                                 .pRegions = copyer.copies.data()};
+  vkCmdCopyBuffer2KHR(get_cmd_buf(), &copy_info);
+}
+
 }  // namespace gfx

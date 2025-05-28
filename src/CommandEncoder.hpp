@@ -12,6 +12,11 @@ namespace gfx {
 class Buffer;
 class Device;
 
+struct BufferCopyer {
+  void add_copy(u64 src_offset, u64 dst_offset, u64 size);
+  std::vector<VkBufferCopy2KHR> copies;
+};
+
 struct CmdEncoder {
   // TODO: constructor can't take in command buffer
   explicit CmdEncoder(Device* device, VkPipelineLayout default_pipeline_layout)
@@ -36,6 +41,7 @@ struct CmdEncoder {
   void set_cull_mode(CullMode mode) const;
   void set_depth_bias(float constant_factor, float bias, float slope_factor) const;
   void bind_pipeline(PipelineBindPoint bind_point, PipelineHandle pipeline) const;
+  void copy_buffer(BufferCopyer& copyer, Buffer& src, Buffer& dst) const;
   void end_rendering() const;
   void draw(u32 vertex_count, u32 instance_count = 1, u32 first_vertex = 0,
             u32 first_instance = 0) const;
@@ -56,6 +62,11 @@ struct CmdEncoder {
   void draw_indexed_indirect_count(BufferHandle draw_cmd_buf, u64 draw_cmd_offset,
                                    BufferHandle draw_count_buf, u64 draw_count_offset,
                                    u32 draw_count, u32 stride);
+  struct CopyInfo {
+    u64 src_offset;
+    u64 dst_offset;
+    u64 size;
+  };
   void copy_buffer(const Buffer& src, const Buffer& dst, u64 src_offset, u64 dst_offset,
                    u64 size) const;
 

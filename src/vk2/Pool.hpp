@@ -33,6 +33,7 @@ struct Pool {
 
     ObjectT object{};
     uint32_t gen_{1};
+    bool live_{false};
   };
 
   template <typename... Args>
@@ -50,6 +51,7 @@ struct Pool {
     handle.gen_ = entries_[handle.idx_].gen_;
     num_created_++;
     size_++;
+    entries_[handle.idx_].live_ = true;
     return handle;
   }
 
@@ -68,6 +70,7 @@ struct Pool {
     }
     entries_[handle.idx_].gen_++;
     entries_[handle.idx_].object = {};
+    entries_.back().live_ = false;
     free_list_.emplace_back(handle.idx_);
     size_--;
     num_destroyed_++;

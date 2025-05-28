@@ -166,7 +166,6 @@ struct RenderGraphPass {
   ExecuteFn execute_;
   RenderGraph& graph_;
   const uint32_t idx_;
-  const Type type_{Type::Graphics};
 
   // [[nodiscard]] bool contains_input(const std::string& name) const;
 };
@@ -176,7 +175,7 @@ struct RenderGraph {
   RenderGraphPass& add_pass(const std::string& name,
                             RenderGraphPass::Type type = RenderGraphPass::Type::Graphics);
   void set_backbuffer_img(const std::string& name) { backbuffer_img_ = name; }
-  const std::string& get_backbuffer_img_name() const { return backbuffer_img_; }
+  [[nodiscard]] const std::string& get_backbuffer_img_name() const { return backbuffer_img_; }
   void reset();
   VoidResult bake(CmdEncoder* cmd);
   VoidResult output_graphvis(const std::filesystem::path& path);
@@ -279,7 +278,6 @@ struct RenderGraph {
     VkPipelineStageFlags2 flushed_stages{};
   };
   std::vector<ResourceState2> resource_states_;
-  u64 all_submitted_pass_name_hash_{};
   AttachmentInfo desc_;
   bool log_ = true;
 };

@@ -128,6 +128,14 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
 
   device_->init_imgui();
 
+  // create per frame staging buffers
+  for (u32 i = 0; i < device_->get_frames_in_flight(); i++) {
+    // 64 MB
+    staging_buffers_.emplace_back(device_->create_staging_buffer(1024ul * 1024 * 64));
+    staging_buffer_copiers_.emplace_back(
+        device_->get_buffer(staging_buffers_.back())->mapped_data());
+  }
+
   PipelineManager::init(device_->device(), resource_dir_ / "shaders", true,
                         device_->default_pipeline_layout_);
 
@@ -400,6 +408,7 @@ void VkRender2::draw(const SceneDrawInfo& info) {
     ImGui::Render();
     device_->begin_frame();
   }
+
   {
     ZoneScopedN("scene uniform buffer");
     auto& d = curr_frame();
@@ -429,29 +438,54 @@ void VkRender2::draw(const SceneDrawInfo& info) {
     memcpy(device_->get_buffer(d.scene_uniform_buf)->mapped_data(), &scene_uniform_cpu_data_,
            sizeof(SceneUniforms));
   }
+
+  staging_buffer_copiers_[device_->curr_frame_in_flight()].reset();
+
+  {
+    ZoneScopedN("copy dirty transforms");
+    if (object_datas_to_copy_.size()) {
+      auto copy_size = sizeof(ObjectData) * object_data_buffer_copier_.copies.size();
+      immediate_submit([this, copy_size](CmdEncoder& cmd) {
+        state_
+            .buffer_barrier(static_object_data_buf_.get_buffer()->buffer(),
+                            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
+            .flush_barriers();
+        staging_buffer_copiers_[device_->curr_frame_in_flight()].copy(object_datas_to_copy_.data(),
+                                                                      copy_size);
+        cmd.copy_buffer(object_data_buffer_copier_,
+                        *device_->get_buffer(staging_buffers_[device_->curr_frame_in_flight()]),
+                        *static_object_data_buf_.get_buffer());
+        state_
+            .buffer_barrier(
+                static_object_data_buf_.get_buffer()->buffer(),
+                VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+                VK_ACCESS_2_SHADER_READ_BIT)
+            .flush_barriers();
+      });
+      object_datas_to_copy_.clear();
+      object_data_buffer_copier_.copies.clear();
+    }
+  }
+
   if (draw_debug_aabbs_) {
     ZoneScopedN("debug aabbs");
-    for (const auto& handle : loaded_model_instance_resources_) {
-      if (auto* res = static_model_instance_pool_.get(handle); res != nullptr) {
-        for (const auto& obj_data : res->object_datas) {
-          draw_box(obj_data.model, AABB{obj_data.aabb_min, obj_data.aabb_max});
-        }
+    for (const auto& entry : static_model_instance_pool_.get_entries()) {
+      if (!entry.live_) continue;
+      for (const auto& obj_data : entry.object.object_datas) {
+        draw_box(obj_data.model, AABB{obj_data.aabb_min, obj_data.aabb_max});
       }
     }
   }
 
-  // VkCommandBuffer cmd_buf = curr_frame().main_cmd_buffer;
-  // VK_CHECK(vkResetCommandPool(device_->device(), curr_frame().cmd_pool, 0));
-  // auto cmd_begin_info = init::command_buffer_begin_info();
-  // VK_CHECK(vkBeginCommandBuffer(cmd_buf, &cmd_begin_info));
-
   ResourceManager::get().update();
+
   CmdEncoder* cmd = device_->begin_command_list(QueueType::Graphics);
   state_.reset(*cmd);
   device_->bind_bindless_descriptors(*cmd);
 
   for (auto& instance : to_delete_static_model_instances_) {
     free(*cmd, *static_model_instance_pool_.get(instance));
+    static_model_instance_pool_.destroy(instance);
   }
 
   to_delete_static_model_instances_.clear();
@@ -477,22 +511,6 @@ void VkRender2::draw(const SceneDrawInfo& info) {
 
   rg_.setup_attachments();
   rg_.execute(*cmd);
-
-  // TracyVkCollect(curr_frame().tracy_vk_ctx, cmd_buf);
-
-  // TODO: refactor queues lmao
-  // std::array<VkSemaphoreSubmitInfo, 10> wait_semaphores{};
-  // u32 next_wait_sem_idx{0};
-  // wait_semaphores[next_wait_sem_idx++] = init::semaphore_submit_info(
-  //     device_->curr_swapchain_semaphore(),
-  //     VK_PIPELINE_STAGE_2_TRANSFER_BIT | VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT);
-  // auto signal_info = init::semaphore_submit_info(device_->curr_frame().render_semaphore,
-  //                                                VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT);
-  // auto cmd_buf_submit_info = init::command_buffer_submit_info(cmd_buf);
-  // auto submit = init::queue_submit_info(SPAN1(cmd_buf_submit_info),
-  //                                       std::span(wait_semaphores.data(), next_wait_sem_idx),
-  //                                       SPAN1(signal_info));
-  // device_->queue_submit(QueueType::Graphics, SPAN1(submit));
 
   for (auto& wait_for : frame_imm_submits_) {
     device_->cmd_list_wait(cmd, wait_for);
@@ -589,34 +607,6 @@ void VkRender2::on_imgui() {
     ImGui::Checkbox("Render prefilter env map skybox", &render_prefilter_mip_skybox_);
     ImGui::SliderInt("Prefilter Env Map Layer", &prefilter_mip_skybox_render_mip_level_, 0,
                      device_->get_image(ibl_->prefiltered_env_map_tex_)->get_desc().mip_levels - 1);
-  }
-
-  if (ImGui::TreeNodeEx("Scene")) {
-    // TODO: make this external to the renderer
-    util::fixed_vector<u32, 8> to_delete;
-    for (u32 i = 0; i < loaded_model_instance_resources_.size(); i++) {
-      auto handle = loaded_model_instance_resources_[i];
-      if (auto* res = static_model_instance_pool_.get(handle); res) {
-        ImGui::PushID(res);
-        ImGui::Text("%s", res->name);
-        ImGui::SameLine();
-        if (ImGui::Button("X")) {
-          if (!to_delete.full()) {
-            to_delete_static_model_instances_.emplace_back(handle);
-            to_delete.push_back(i);
-          }
-        }
-        ImGui::PopID();
-      }
-    }
-
-    for (const u32 idx : to_delete) {
-      if (loaded_model_instance_resources_.size() > 1) {
-        loaded_model_instance_resources_[idx] = loaded_model_instance_resources_.back();
-      }
-      loaded_model_instance_resources_.pop_back();
-    }
-    ImGui::TreePop();
   }
   ImGui::End();
 }
@@ -1685,7 +1675,6 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   }
 
   auto model_instance_resources_handle = static_model_instance_pool_.alloc();
-  loaded_model_instance_resources_.emplace_back(model_instance_resources_handle);
   auto* instance_resources = static_model_instance_pool_.get(model_instance_resources_handle);
   std::ranges::fill(instance_resources->mesh_pass_draw_handles, StaticMeshDrawManager::null_handle);
   instance_resources->model_handle = model_handle;
@@ -1716,6 +1705,7 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
     const auto& node_mesh_data = scene.mesh_datas[mesh_data_i];
     // auto& node_mesh_data
     auto& mesh = resources->mesh_draw_infos[node_mesh_data.mesh_idx];
+    // TODO: get rid
     const mat4 model = is_non_identity_root_node_transform
                            ? scene.global_transforms[node_i] * transform
                            : scene.global_transforms[node_i];
@@ -1836,7 +1826,8 @@ void VkRender2::remove_instance(StaticModelInstanceResourcesHandle handle) {
   to_delete_static_model_instances_.emplace_back(handle);
 }
 
-void VkRender2::update_transforms(LoadedInstanceData& instance) {
+void VkRender2::update_transforms(LoadedInstanceData& instance,
+                                  const std::vector<i32>& changed_nodes) {
   ZoneScoped;
   // TODO: instead of recalculating the entire vector of object datas, store it in the scene2 vector
   // and memcpy it
@@ -1846,41 +1837,24 @@ void VkRender2::update_transforms(LoadedInstanceData& instance) {
   assert(instance_resources);
   auto* model = ResourceManager::get().get_model(instance.model_handle);
   auto* model_resources = model_gpu_resources_pool_.get(model->gpu_resource_handle);
-  instance_resources->object_datas.clear();
   auto& scene = instance.scene_graph_data;
-  for (size_t node_i = 0; node_i < scene.hierarchies.size(); node_i++) {
+  for (auto node_i : changed_nodes) {
     auto mesh_data_i = scene.node_mesh_indices[node_i];
     if (mesh_data_i == -1) continue;
     const auto& mesh_info =
         model_resources->mesh_draw_infos[scene.mesh_datas[mesh_data_i].mesh_idx];
-    instance_resources->object_datas.emplace_back(scene.global_transforms[node_i],
-                                                  vec4{mesh_info.aabb.min, 0.},
-                                                  vec4{mesh_info.aabb.max, 0.});
-  }
-
-  {
-    ZoneScopedN("copy to gpu");
-    auto copy_size = instance_resources->object_datas.size() * sizeof(ObjectData);
-    auto copy_cmd = device_->graphics_copy_allocator_.allocate(copy_size);
-    state_.reset(copy_cmd.transfer_cmd_buf)
-        .buffer_barrier(static_object_data_buf_.get_buffer()->buffer(),
-                        VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
-        .flush_barriers();
-    {
-      ZoneScopedN("memcpy");
-      memcpy(device_->get_buffer(copy_cmd.staging_buffer)->mapped_data(),
-             instance_resources->object_datas.data(), copy_size);
-    }
-    copy_cmd.copy_buffer(device_, *static_object_data_buf_.get_buffer(), 0,
-                         instance_resources->object_data_slot.get_offset(), copy_size);
-    state_
-        .buffer_barrier(
-            static_object_data_buf_.get_buffer()->buffer(),
-            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
-            VK_ACCESS_2_SHADER_READ_BIT)
-        .flush_barriers();
-    device_->graphics_copy_allocator_.submit(copy_cmd);
+    auto idx = scene.mesh_datas[mesh_data_i].mesh_idx;
+    object_data_buffer_copier_.add_copy(
+        object_datas_to_copy_.size() * sizeof(ObjectData),
+        (idx * sizeof(ObjectData)) + instance_resources->object_data_slot.get_offset(),
+        sizeof(ObjectData));
+    object_datas_to_copy_.emplace_back(scene.global_transforms[node_i],
+                                       vec4{mesh_info.aabb.min, 0.}, vec4{mesh_info.aabb.max, 0.});
+    // TODO: use idx?
+    instance_resources->object_datas[idx] = object_datas_to_copy_.back();
   }
 }
+
+void VkRender2::mark_dirty(InstanceHandle handle) { dirty_instances_.emplace_back(handle); }
 
 }  // namespace gfx

@@ -161,10 +161,12 @@ void App::run() {
     on_imgui();
     {
       ZoneScopedN("update transforms overall");
+      static std::vector<i32> changed_nodes;
       for (auto& instance_handle : instances_) {
         auto* instance = ResourceManager::get().get_instance(instance_handle);
-        if (recalc_global_transforms(instance->scene_graph_data)) {
-          VkRender2::get().update_transforms(*instance);
+        changed_nodes.clear();
+        if (recalc_global_transforms(instance->scene_graph_data, &changed_nodes)) {
+          VkRender2::get().update_transforms(*instance, changed_nodes);
         }
       }
     }
@@ -390,6 +392,7 @@ void App::scene_node_imgui(gfx::Scene2& scene, int node) {
                           : scene.node_names[it->second].c_str())) {
     auto& local_transform = scene.local_transforms[node];
     if (ImGui::DragFloat("z", &local_transform[3][2])) {
+      // VkRender2::get().mark_dirty();
       mark_changed(scene, node);
     }
     for (int c = scene.hierarchies[node].first_child; c != -1;

@@ -28,7 +28,7 @@ void mark_changed(Scene2& scene, int node) {
   }
 }
 
-bool recalc_global_transforms(Scene2& scene) {
+bool recalc_global_transforms(Scene2& scene, std::vector<i32>* changed_nodes) {
   ZoneScoped;
   // root node
   bool dirty = false;
@@ -36,12 +36,18 @@ bool recalc_global_transforms(Scene2& scene) {
     int changed_node = scene.changed_this_frame[0][0];
     scene.global_transforms[changed_node] = scene.local_transforms[changed_node];
     scene.changed_this_frame[0].clear();
+    if (changed_nodes) {
+      changed_nodes->emplace_back(changed_node);
+    }
     dirty = true;
   }
 
   for (int level = 1; level < Scene2::max_node_depth && scene.changed_this_frame[level].size() > 0;
        level++) {
     for (auto changed_node : scene.changed_this_frame[level]) {
+      if (changed_nodes) {
+        changed_nodes->emplace_back(changed_node);
+      }
       int parent = scene.hierarchies[changed_node].parent;
       scene.global_transforms[changed_node] =
           scene.global_transforms[parent] * scene.local_transforms[changed_node];

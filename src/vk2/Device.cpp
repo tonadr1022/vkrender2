@@ -573,7 +573,6 @@ Device::CopyAllocator::CopyCmd Device::CopyAllocator::allocate(u64 size) {
                                               .flags = 0};
   VK_CHECK(vkBeginCommandBuffer(cmd.transfer_cmd_buf, &cmd_buf_begin_info));
   VK_CHECK(vkResetFences(device_->device_, 1, &cmd.fence));
-
   return cmd;
 }
 
@@ -2023,6 +2022,11 @@ void Device::set_name(VkCommandPool pool, const char* name) const {
 void Device::Queue::submit(u32 submit_count, const VkSubmitInfo2* submits, VkFence fence) {
   std::scoped_lock lock(mtx_);
   VK_CHECK(vkQueueSubmit2KHR(queue, submit_count, submits, fence));
+}
+
+BufferHandle Device::create_staging_buffer(u64 size) {
+  return create_buffer(BufferCreateInfo{.size = std::max<u64>(size, 1024ul * 64),
+                                        .flags = BufferCreateFlags_HostVisible});
 }
 
 }  // namespace gfx

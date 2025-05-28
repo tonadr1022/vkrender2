@@ -58,6 +58,6 @@ struct Scene2 {
 };
 
 void mark_changed(Scene2& scene, int node);
-bool recalc_global_transforms(Scene2& scene);
+bool recalc_global_transforms(Scene2& scene, std::vector<i32>* changed_nodes = nullptr);
 
 }  // namespace gfx

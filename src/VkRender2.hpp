@@ -69,12 +69,14 @@ using ModelGPUResourceHandle = GenerationalHandle<ModelGPUResources>;
 
 struct LinearCopyer {
   explicit LinearCopyer(void* data) : data_(data) {}
+  LinearCopyer() = default;
 
   u64 copy(const void* data, u64 size) {
     memcpy((char*)data_ + offset_, data, size);
     offset_ += size;
     return offset_ - size;
   }
+  void reset() { offset_ = 0; }
 
  private:
   u64 offset_{};
@@ -129,8 +131,9 @@ class VkRender2 final {
 
   bool load_model2(const std::filesystem::path& path, LoadedModelData& result);
   StaticModelInstanceResourcesHandle add_instance(ModelHandle model_handle, const mat4& transform);
-  void update_transforms(LoadedInstanceData& instance);
+  void update_transforms(LoadedInstanceData& instance, const std::vector<i32>& changed_nodes);
   void remove_instance(StaticModelInstanceResourcesHandle handle);
+  void mark_dirty(InstanceHandle handle);
 
   Pool<ModelGPUResourceHandle, ModelGPUResources> model_gpu_resources_pool_;
 
@@ -276,7 +279,6 @@ class VkRender2 final {
   std::vector<StaticModelInstanceResourcesHandle> to_delete_static_model_instances_;
   Pool<StaticModelInstanceResourcesHandle, StaticModelInstanceResources>
       static_model_instance_pool_;
-  std::vector<StaticModelInstanceResourcesHandle> loaded_model_instance_resources_;
   void free(StaticModelInstanceResources& instance);
   void free(CmdEncoder& cmd, StaticModelInstanceResources& instance);
 
@@ -316,6 +318,12 @@ class VkRender2 final {
     u32 material_id;
     u32 instance_id;
   };
+
+  BufferCopyer object_data_buffer_copier_;
+  std::vector<InstanceHandle> dirty_instances_;
+  std::vector<ObjectData> object_datas_to_copy_;
+  std::vector<Holder<BufferHandle>> staging_buffers_;
+  std::vector<LinearCopyer> staging_buffer_copiers_;
 
   PipelineTask make_pipeline_task(const ComputePipelineCreateInfo& info,
                                   PipelineHandle* out_handle);
