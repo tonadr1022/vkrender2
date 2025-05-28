@@ -578,6 +578,7 @@ Device::CopyAllocator::CopyCmd Device::CopyAllocator::allocate(u64 size) {
 }
 
 void Device::CopyAllocator::submit(CopyCmd cmd) {
+  ZoneScoped;
   // need to transfer ownership?
   VK_CHECK(vkEndCommandBuffer(cmd.transfer_cmd_buf));
   VkCommandBufferSubmitInfo cb_submit{.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
@@ -975,7 +976,7 @@ Holder<ImageHandle> Device::create_image_holder(const ImageDesc& desc, void* ini
   return Holder<ImageHandle>{create_image(desc, initial_data)};
 }
 
-ImageHandle Device::create_image(const ImageDesc& desc, void* initial_data) {
+ImageHandle Device::create_image(const ImageDesc& desc, void*) {
   VkImageCreateInfo cinfo{.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
   VmaAllocationCreateInfo alloc_create_info{.usage = VMA_MEMORY_USAGE_AUTO};
   if (has_flag(desc.bind_flags, BindFlag::ColorAttachment)) {

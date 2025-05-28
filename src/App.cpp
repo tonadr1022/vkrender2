@@ -159,10 +159,13 @@ void App::run() {
     renderer.new_frame();
     update(dt);
     on_imgui();
-    for (auto& instance_handle : instances_) {
-      auto* instance = ResourceManager::get().get_instance(instance_handle);
-      if (recalc_global_transforms(instance->scene_graph_data)) {
-        VkRender2::get().update_transforms(*instance);
+    {
+      ZoneScopedN("update transforms overall");
+      for (auto& instance_handle : instances_) {
+        auto* instance = ResourceManager::get().get_instance(instance_handle);
+        if (recalc_global_transforms(instance->scene_graph_data)) {
+          VkRender2::get().update_transforms(*instance);
+        }
       }
     }
     renderer.draw(info_);

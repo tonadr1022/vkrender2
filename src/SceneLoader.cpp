@@ -498,6 +498,7 @@ i32 add_node(Scene2& scene, i32 parent, i32 level) {
   size_t node_i = scene.hierarchies.size();
   scene.local_transforms.emplace_back(1);
   scene.global_transforms.emplace_back(1);
+  scene.node_mesh_indices.emplace_back(-1);
   scene.hierarchies.push_back(Hierarchy{.parent = parent});
   // if parent exists, update it
   if (parent >= 0) {
@@ -570,11 +571,12 @@ void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_mate
         scene.node_to_node_name_idx[submesh_node] = scene.node_names.size();
         scene.node_names.emplace_back(std::string(gltf_node.name) + "_mesh_" +
                                       std::to_string(primitive_i));
-        auto result = scene.node_to_mesh_data.emplace(
-            submesh_node, MeshData{.mesh_idx = prim_offsets_of_meshes[gltf_mesh_i] + primitive_i,
-                                   .material_id = static_cast<u32>(
-                                       primitive.materialIndex.value_or(UINT32_MAX))});
-        auto& mesh_data = result.first->second;
+        assert(scene.node_mesh_indices.size() >= (size_t)submesh_node);
+        scene.node_mesh_indices[submesh_node] = scene.mesh_datas.size();
+        scene.mesh_datas.emplace_back(MeshData{
+            .mesh_idx = prim_offsets_of_meshes[gltf_mesh_i] + primitive_i,
+            .material_id = static_cast<u32>(primitive.materialIndex.value_or(UINT32_MAX))});
+        auto& mesh_data = scene.mesh_datas.back();
         mesh_data.pass_flags = mesh_data.material_id != UINT32_MAX
                                    ? materials[mesh_data.material_id].get_pass_flags()
                                    : default_material.get_pass_flags();

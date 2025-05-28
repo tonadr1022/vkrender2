@@ -1,5 +1,7 @@
 #include "Scene.hpp"
 
+#include <tracy/Tracy.hpp>
+
 #include "shaders/common.h.glsl"
 
 namespace gfx {
@@ -27,6 +29,7 @@ void mark_changed(Scene2& scene, int node) {
 }
 
 bool recalc_global_transforms(Scene2& scene) {
+  ZoneScoped;
   // root node
   bool dirty = false;
   if (scene.changed_this_frame[0].size() > 0) {

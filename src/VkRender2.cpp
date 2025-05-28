@@ -1654,10 +1654,11 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   u32 pass_obj_counts[MeshPass_Count] = {};
 
   const auto& scene = model.scene_graph_data;
+  assert(scene.hierarchies.size() == scene.node_mesh_indices.size());
   for (size_t node_i = 0; node_i < scene.hierarchies.size(); node_i++) {
-    auto it = scene.node_to_mesh_data.find(node_i);
-    if (it == scene.node_to_mesh_data.end()) continue;
-    const auto& mesh_indices = it->second;
+    auto mesh_data_i = scene.node_mesh_indices[node_i];
+    if (mesh_data_i == -1) continue;
+    const auto& mesh_indices = scene.mesh_datas[mesh_data_i];
     bool double_sided = resources->materials[mesh_indices.material_id].is_double_sided();
     if (mesh_indices.pass_flags & PassFlags_Opaque) {
       if (double_sided) {
@@ -1710,9 +1711,9 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   bool is_non_identity_root_node_transform = transform != mat4{1};
 
   for (size_t node_i = 0; node_i < scene.hierarchies.size(); node_i++) {
-    auto it = scene.node_to_mesh_data.find(node_i);
-    if (it == scene.node_to_mesh_data.end()) continue;
-    const auto& node_mesh_data = it->second;
+    auto mesh_data_i = scene.node_mesh_indices[node_i];
+    if (mesh_data_i == -1) continue;
+    const auto& node_mesh_data = scene.mesh_datas[mesh_data_i];
     // auto& node_mesh_data
     auto& mesh = resources->mesh_draw_infos[node_mesh_data.mesh_idx];
     const mat4 model = is_non_identity_root_node_transform
@@ -1836,9 +1837,9 @@ void VkRender2::remove_instance(StaticModelInstanceResourcesHandle handle) {
 }
 
 void VkRender2::update_transforms(LoadedInstanceData& instance) {
+  ZoneScoped;
   // TODO: instead of recalculating the entire vector of object datas, store it in the scene2 vector
   // and memcpy it
-
   // copy instance matrices to global buffer
   // instance.scene_graph_data.global_transforms;
   auto* instance_resources = static_model_instance_pool_.get(instance.instance_resources_handle);
@@ -1848,30 +1849,38 @@ void VkRender2::update_transforms(LoadedInstanceData& instance) {
   instance_resources->object_datas.clear();
   auto& scene = instance.scene_graph_data;
   for (size_t node_i = 0; node_i < scene.hierarchies.size(); node_i++) {
-    auto it = scene.node_to_mesh_data.find(node_i);
-    if (it == scene.node_to_mesh_data.end()) continue;
-    const auto& mesh_info = model_resources->mesh_draw_infos[it->second.mesh_idx];
+    auto mesh_data_i = scene.node_mesh_indices[node_i];
+    if (mesh_data_i == -1) continue;
+    const auto& mesh_info =
+        model_resources->mesh_draw_infos[scene.mesh_datas[mesh_data_i].mesh_idx];
     instance_resources->object_datas.emplace_back(scene.global_transforms[node_i],
                                                   vec4{mesh_info.aabb.min, 0.},
                                                   vec4{mesh_info.aabb.max, 0.});
   }
-  auto copy_size = instance_resources->object_datas.size() * sizeof(ObjectData);
-  auto copy_cmd = device_->graphics_copy_allocator_.allocate(copy_size);
-  state_.reset(copy_cmd.transfer_cmd_buf)
-      .buffer_barrier(static_object_data_buf_.get_buffer()->buffer(),
-                      VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
-      .flush_barriers();
-  memcpy(device_->get_buffer(copy_cmd.staging_buffer)->mapped_data(),
-         instance_resources->object_datas.data(), copy_size);
-  copy_cmd.copy_buffer(device_, *static_object_data_buf_.get_buffer(), 0,
-                       instance_resources->object_data_slot.get_offset(), copy_size);
-  state_
-      .buffer_barrier(
-          static_object_data_buf_.get_buffer()->buffer(),
-          VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
-          VK_ACCESS_2_SHADER_READ_BIT)
-      .flush_barriers();
-  device_->graphics_copy_allocator_.submit(copy_cmd);
+
+  {
+    ZoneScopedN("copy to gpu");
+    auto copy_size = instance_resources->object_datas.size() * sizeof(ObjectData);
+    auto copy_cmd = device_->graphics_copy_allocator_.allocate(copy_size);
+    state_.reset(copy_cmd.transfer_cmd_buf)
+        .buffer_barrier(static_object_data_buf_.get_buffer()->buffer(),
+                        VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
+        .flush_barriers();
+    {
+      ZoneScopedN("memcpy");
+      memcpy(device_->get_buffer(copy_cmd.staging_buffer)->mapped_data(),
+             instance_resources->object_datas.data(), copy_size);
+    }
+    copy_cmd.copy_buffer(device_, *static_object_data_buf_.get_buffer(), 0,
+                         instance_resources->object_data_slot.get_offset(), copy_size);
+    state_
+        .buffer_barrier(
+            static_object_data_buf_.get_buffer()->buffer(),
+            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+            VK_ACCESS_2_SHADER_READ_BIT)
+        .flush_barriers();
+    device_->graphics_copy_allocator_.submit(copy_cmd);
+  }
 }
 
 }  // namespace gfx
