@@ -188,6 +188,7 @@ class VkRender2 final {
     mat4 view_proj;
     mat4 view;
     mat4 proj;
+    mat4 inverse_view_proj;
     uvec4 debug_flags;
     vec3 view_pos;
     float _p1;
@@ -343,6 +344,8 @@ class VkRender2 final {
   PipelineHandle gbuffer_alpha_mask_pipeline_;
   PipelineHandle deferred_shade_pipeline_;
   PipelineHandle line_draw_pipeline_;
+  PipelineHandle transparent_oit_pipeline_;
+  PipelineHandle oit_comp_pipeline_;
   Format gbuffer_a_format_{Format::R8G8B8A8Unorm};
   Format gbuffer_b_format_{Format::R8G8B8A8Unorm};
   Format gbuffer_c_format_{Format::R8G8B8A8Unorm};
@@ -367,7 +370,7 @@ class VkRender2 final {
     bool enabled{true};
     bool paused{false};
   } frustum_cull_settings_;
-  vec2 near_far_z_{.1, 1000.f};
+  vec2 near_far_z_{.1, 10000.f};
 
   struct LineVertex {
     vec4 pos;
@@ -384,6 +387,15 @@ class VkRender2 final {
   bool draw_imgui_{true};
   bool deferred_enabled_{true};
   bool draw_debug_aabbs_{false};
+
+  // OIT things
+  u32 max_oit_fragments_{};
+  Holder<BufferHandle> oit_fragment_buffer_;
+  Holder<BufferHandle> oit_atomic_counter_buf_;
+  Holder<ImageHandle> oit_heads_tex_;
+  bool oit_enabled_{true};
+  bool oit_debug_heatmap_{false};
+  float oit_opacity_boost_{0.0};
 };
 
 }  // namespace gfx

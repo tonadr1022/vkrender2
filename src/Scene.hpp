@@ -53,7 +53,7 @@ struct Scene2 {
   std::unordered_map<i32, i32> node_to_node_name_idx;
   std::vector<i32> node_mesh_indices;
   std::vector<MeshData> mesh_datas;
-  static constexpr int max_node_depth{10};
+  static constexpr int max_node_depth{15};
   std::vector<u32> changed_this_frame[max_node_depth];
 };
 

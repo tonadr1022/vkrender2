@@ -16,13 +16,13 @@ VK2_DECLARE_SAMPLED_IMAGES(textureCube);
 #define STORE(x) imageStore(vk2_get_storage_img(image2D, output_tex), tex_coord, x)
 
 void main() {
-    SceneData scene_data = scene_data_buffer[scene_buffer].data;
-    uvec4 debug_flags = scene_data.debug_flags;
     ivec2 tex_coord = ivec2(gl_GlobalInvocationID);
     ivec2 img_size = imageSize(vk2_get_storage_img(image2D, gbuffer_a_tex));
     if (tex_coord.x >= img_size.x || tex_coord.y >= img_size.y) {
         return;
     }
+    SceneData scene_data = scene_data_buffer[scene_buffer].data;
+    uvec4 debug_flags = scene_data.debug_flags;
 
     vec2 uv = (vec2(tex_coord) + .5) / vec2(img_size);
     float depth = texture(vk2_sampler2D(depth_img, sampler_idx), uv).r;

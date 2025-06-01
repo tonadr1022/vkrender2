@@ -131,16 +131,23 @@ void App::run() {
   // VkRender2::get().load_scene(local_models_dir / "ABeautifulGame.glb", false,
   //                             glm::scale(mat4{1}, vec3{10}));
 
-  instances_.emplace_back(
-      ResourceManager::get().load_model(local_models_dir / "Bistro_Godot_opt.glb"));
+  // instances_.emplace_back(
+  //     ResourceManager::get().load_model("/Users/tony/Downloads/bistro/Exterior/exterior.glb"));
+  // instances_.emplace_back(ResourceManager::get().load_model(
+  //     "/Users/tony/models/Models/AlphaBlendModeTest/glTF/AlphaBlendModeTest.gltf"));
+  instances_.emplace_back(ResourceManager::get().load_model(
+      "/Users/tony/models/Models/AlphaBlendModeTest/glTF/AlphaBlendModeTest.gltf"));
+  // instances_.emplace_back(
+  //     ResourceManager::get().load_model(local_models_dir / "Bistro_Godot_opt.glb"));
+
   // VkRender2::get().load_model(local_models_dir / "Bistro_Godot.glb", false);
   // std::filesystem::path env_tex = local_models_dir / "quarry_04_puresky_4k.hdr";
   // std::filesystem::path env_tex = local_models_dir / "immenstadter_horn_2k.hdr";
 
   // VkRender2::get().load_model(local_models_dir / "sponza.glb", false);
 
-  instances_.emplace_back(
-      ResourceManager::get().load_model(resource_dir / "models/Cube/glTF/Cube.gltf"));
+  // instances_.emplace_back(
+  //     ResourceManager::get().load_model(resource_dir / "models/Cube/glTF/Cube.gltf"));
   std::filesystem::path env_tex = local_models_dir / "newport_loft.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/quarry_04_puresky_4k.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/golden_gate_hills_4k.hdr";
@@ -383,6 +390,18 @@ void App::on_file_drop(int count, const char** paths) {
   }
 }
 
+namespace {
+
+void decompose_matrix(const glm::mat4& m, glm::vec3& pos, glm::quat& rot, glm::vec3& scale) {
+  pos = m[3];
+  for (int i = 0; i < 3; i++) scale[i] = glm::length(glm::vec3(m[i]));
+  const glm::mat3 rot_mtx(glm::vec3(m[0]) / scale[0], glm::vec3(m[1]) / scale[1],
+                          glm::vec3(m[2]) / scale[2]);
+  rot = glm::quat_cast(rot_mtx);
+}
+
+}  // namespace
+
 void App::scene_node_imgui(gfx::Scene2& scene, int node) {
   auto it = scene.node_to_node_name_idx.find(node);
   ImGui::PushID(node);
@@ -392,8 +411,15 @@ void App::scene_node_imgui(gfx::Scene2& scene, int node) {
                           : scene.node_names[it->second].c_str())) {
     auto& local_transform = scene.local_transforms[node];
     if (ImGui::DragFloat("z", &local_transform[3][2])) {
-      // VkRender2::get().mark_dirty();
       mark_changed(scene, node);
+    }
+    {
+      vec3 pos, scale;
+      quat rot;
+      decompose_matrix(local_transform, pos, rot, scale);
+      ImGui::Text("Translation: %f %f %f", pos.x, pos.y, pos.z);
+      ImGui::Text("rot: %f %f %f %f", rot.x, rot.y, rot.z, rot.w);
+      ImGui::Text("scale: %f %f %f", scale.x, scale.y, scale.z);
     }
     for (int c = scene.hierarchies[node].first_child; c != -1;
          c = scene.hierarchies[c].next_sibling) {

@@ -18,6 +18,7 @@
 #include <fastgltf/glm_element_traits.hpp>
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #pragma GCC diagnostic pop
 #include <future>
 #include <optional>
@@ -187,166 +188,21 @@ std::vector<uint8_t> read_file(const std::string& full_path) {
   return buffer;
 }
 
-// void decompose_matrix(const glm::mat4& m, glm::vec3& pos, glm::quat& rot, glm::vec3& scale) {
-//   pos = m[3];
-//   for (int i = 0; i < 3; i++) scale[i] = glm::length(glm::vec3(m[i]));
-//   const glm::mat3 rot_mtx(glm::vec3(m[0]) / scale[0], glm::vec3(m[1]) / scale[1],
-//                           glm::vec3(m[2]) / scale[2]);
-//   rot = glm::quat_cast(rot_mtx);
-// }
-//
-// VkFilter gltf_to_vk_filter(fastgltf::Filter filter) {
-//   switch (filter) {
-//     // nearest
-//     case fastgltf::Filter::Nearest:
-//     case fastgltf::Filter::NearestMipMapNearest:
-//     case fastgltf::Filter::NearestMipMapLinear:
-//       return VK_FILTER_NEAREST;
-//
-//       // linear
-//     case fastgltf::Filter::Linear:
-//     case fastgltf::Filter::LinearMipMapLinear:
-//     case fastgltf::Filter::LinearMipMapNearest:
-//     default:
-//       return VK_FILTER_LINEAR;
-//   }
-// }
-//
-// VkSamplerMipmapMode gltf_to_vk_mipmap_mode(fastgltf::Filter filter) {
-//   switch (filter) {
-//     case fastgltf::Filter::NearestMipMapNearest:
-//     case fastgltf::Filter::LinearMipMapNearest:
-//       return VK_SAMPLER_MIPMAP_MODE_LINEAR;
-//     case fastgltf::Filter::NearestMipMapLinear:
-//     case fastgltf::Filter::LinearMipMapLinear:
-//     default:
-//       return VK_SAMPLER_MIPMAP_MODE_NEAREST;
-//   }
-// }
-//
-// VkSamplerAddressMode gltf_to_vk_wrap_mode(fastgltf::Wrap wrap) {
-//   switch (wrap) {
-//     case fastgltf::Wrap::ClampToEdge:
-//       return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-//     case fastgltf::Wrap::MirroredRepeat:
-//       return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
-//     default:
-//       return VK_SAMPLER_ADDRESS_MODE_REPEAT;
-//   }
-// }
-
 void set_node_transform_from_gltf_node(mat4& local_transform, const fastgltf::Node& gltf_node) {
-  std::visit(fastgltf::visitor{[&](fastgltf::TRS matrix) {
-                                 glm::vec3 trans(matrix.translation[0], matrix.translation[1],
-                                                 matrix.translation[2]);
-                                 glm::quat rot(matrix.rotation[3], matrix.rotation[0],
-                                               matrix.rotation[1], matrix.rotation[2]);
-                                 glm::vec3 scale(matrix.scale[0], matrix.scale[1], matrix.scale[2]);
-                                 local_transform = glm::translate(glm::mat4{1}, trans) *
-                                                   glm::toMat4(rot) *
-                                                   glm::scale(glm::mat4{1}, scale);
-                               },
-                               [&](fastgltf::math::fmat4x4 matrix) {
-                                 for (int row = 0; row < 4; row++) {
-                                   for (int col = 0; col < 4; col++) {
-                                     local_transform[row][col] = matrix[row][col];
-                                   }
-                                 }
-                               }},
-             gltf_node.transform);
+  std::visit(
+      fastgltf::visitor{
+          [&](fastgltf::TRS matrix) {
+            auto trans = glm::make_vec3(matrix.translation.data());
+            glm::quat rot(matrix.rotation[3], matrix.rotation[0], matrix.rotation[1],
+                          matrix.rotation[2]);
+            auto scale = glm::make_vec3(matrix.scale.data());
+            // T * R * S
+            local_transform =
+                glm::scale(glm::translate(glm::mat4{1}, trans) * glm::mat4_cast(rot), scale);
+          },
+          [&](fastgltf::math::fmat4x4 matrix) { local_transform = glm::make_mat4(matrix.data()); }},
+      gltf_node.transform);
 }
-
-// void update_node_transforms(std::vector<NodeData>& nodes, std::vector<u32>& root_node_indices) {
-//   // node idx, parent idx
-//   std::vector<std::pair<u32, u32>> to_refresh;
-//   to_refresh.reserve(root_node_indices.size());
-//   for (size_t i = 0; i < nodes.size(); i++) {
-//     auto& node = nodes[i];
-//     to_refresh.clear();
-//     if (node.parent_idx == NodeData::null_idx) {
-//       root_node_indices.emplace_back(i);
-//       to_refresh.emplace_back(i, NodeData::null_idx);
-//     }
-//
-//     while (!to_refresh.empty()) {
-//       auto [node_idx, parent_idx] = to_refresh.back();
-//       to_refresh.pop_back();
-//       auto& node = nodes[node_idx];
-//       node.world_transform = parent_idx == NodeData::null_idx
-//                                  ? node.local_transform
-//                                  : nodes[parent_idx].world_transform * node.local_transform;
-//       for (auto c : node.children_indices) {
-//         to_refresh.emplace_back(c, node_idx);
-//       }
-//     }
-//   }
-// }
-
-// void load_scene_graph_data(LoadedSceneBaseData& result, fastgltf::Asset& gltf, u32
-// default_mat_idx,
-//                            const Material& default_mat) {
-//   ZoneScoped;
-//   auto& scene_graph_data = result.scene_graph_data;
-//   // aggregate nodes
-//   std::vector<u32> prim_offsets_of_meshes(gltf.meshes.size());
-//   {
-//     u32 offset = 0;
-//     for (u32 mesh_idx = 0; mesh_idx < gltf.meshes.size(); mesh_idx++) {
-//       prim_offsets_of_meshes[mesh_idx] = offset;
-//       offset += gltf.meshes[mesh_idx].primitives.size();
-//     }
-//   }
-//   result.scene_graph_data.node_datas.reserve(gltf.nodes.size());
-//   std::vector<u32> camera_node_indices;
-//   for (u32 node_idx = 0; node_idx < gltf.nodes.size(); node_idx++) {
-//     fastgltf::Node& gltf_node = gltf.nodes[node_idx];
-//     NodeData new_node;
-//     if (auto mesh_idx = gltf_node.meshIndex.value_or(NodeData::null_idx);
-//         mesh_idx != NodeData::null_idx) {
-//       u32 prim_idx = 0;
-//       for (const auto& primitive : gltf.meshes[mesh_idx].primitives) {
-//         new_node.meshes.emplace_back(MeshData{
-//             .mesh_idx = prim_offsets_of_meshes[mesh_idx] + prim_idx++,
-//             .material_id = static_cast<u16>(primitive.materialIndex.value_or(default_mat_idx)),
-//         });
-//         if (result.materials.size() > 0) {
-//           auto& mat = result.materials[new_node.meshes.back().material_id];
-//           new_node.meshes.back().pass_flags = mat.get_pass_flags();
-//         } else {
-//           new_node.meshes.back().pass_flags = default_mat.get_pass_flags();
-//         }
-//       }
-//       result.scene_graph_data.mesh_node_indices.emplace_back(node_idx);
-//     }
-//     if (auto cam_idx = gltf_node.cameraIndex.value_or(NodeData::null_idx);
-//         cam_idx != NodeData::null_idx) {
-//       camera_node_indices.emplace_back(cam_idx);
-//     }
-//     new_node.name = gltf_node.name;
-//     set_node_transform_from_gltf_node(new_node.local_transform, gltf_node);
-//     result.scene_graph_data.node_datas.emplace_back(new_node);
-//   }
-//
-//   // link children/parents
-//   for (u64 node_idx = 0; node_idx < gltf.nodes.size(); node_idx++) {
-//     auto& gltf_node = gltf.nodes[node_idx];
-//     auto& scene_node = result.scene_graph_data.node_datas[node_idx];
-//     scene_node.children_indices.reserve(gltf_node.children.size());
-//     for (auto child_idx : gltf_node.children) {
-//       scene_node.children_indices.emplace_back(child_idx);
-//       result.scene_graph_data.node_datas[child_idx].parent_idx = node_idx;
-//     }
-//   }
-//
-//   // assign root nodes
-//   for (u64 node_idx = 0; node_idx < scene_graph_data.node_datas.size(); node_idx++) {
-//     auto& node = scene_graph_data.node_datas[node_idx];
-//     if (node.parent_idx == NodeData::null_idx) {
-//       scene_graph_data.root_node_indices.emplace_back(node_idx);
-//     }
-//   }
-//   update_node_transforms(scene_graph_data.node_datas, scene_graph_data.root_node_indices);
-// }
 
 struct CpuImageData {
   enum class Type : u8 { None, KTX2, JPEG, PNG, DDS };
@@ -501,16 +357,16 @@ i32 add_node(Scene2& scene, i32 parent, i32 level) {
   scene.node_mesh_indices.emplace_back(-1);
   scene.hierarchies.push_back(Hierarchy{.parent = parent});
   // if parent exists, update it
-  if (parent >= 0) {
+  if (parent > -1) {
     i32 sibling = scene.hierarchies[parent].first_child;
-    if (sibling < 0) {
+    if (sibling == -1) {
       // no sibling, node is first child of parent and own last sibling
       scene.hierarchies[parent].first_child = node_i;
       scene.hierarchies[node_i].last_sibling = node_i;
     } else {
       // sibling exists, traverse to find last sibling
       i32 dest = scene.hierarchies[sibling].last_sibling;
-      if (dest < 0) {
+      if (dest <= -1) {
         for (dest = sibling; scene.hierarchies[dest].next_sibling != -1;
              dest = scene.hierarchies[dest].next_sibling);
       }
@@ -539,25 +395,31 @@ void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_mate
       offset += gltf.meshes[mesh_idx].primitives.size();
     }
   }
-  std::vector<NodeStackEntry> node_stack;
-
+  std::vector<NodeStackEntry> to_add_node_stack;
   int root_node = add_node(scene, -1, 0);
-  for (const auto& gltf_node_i : gltf.scenes[gltf.defaultScene.value_or(0)].nodeIndices) {
-    node_stack.emplace_back(NodeStackEntry{
+  scene.node_to_node_name_idx.emplace(root_node, scene.node_names.size());
+  scene.node_names.emplace_back("Root node");
+
+  auto& scene_node_indices = gltf.scenes[gltf.defaultScene.value_or(0)].nodeIndices;
+  to_add_node_stack.reserve(scene_node_indices.size());
+
+  for (size_t i = scene_node_indices.size(); i > 0; i--) {
+    auto gltf_node_i = scene_node_indices[i - 1];
+    to_add_node_stack.emplace_back(NodeStackEntry{
         .gltf_node_i = static_cast<int>(gltf_node_i), .parent_i = root_node, .level = 1});
   }
 
-  while (node_stack.size() > 0) {
-    int gltf_node_i = node_stack.back().gltf_node_i;
-    int parent_i = node_stack.back().parent_i;
-    int level = node_stack.back().level;
-    node_stack.pop_back();
+  while (to_add_node_stack.size() > 0) {
+    int gltf_node_i = to_add_node_stack.back().gltf_node_i;
+    int parent_i = to_add_node_stack.back().parent_i;
+    int level = to_add_node_stack.back().level;
+    to_add_node_stack.pop_back();
 
     const auto& gltf_node = gltf.nodes[gltf_node_i];
     i32 new_node = add_node(scene, parent_i, level);
     set_node_transform_from_gltf_node(scene.local_transforms[new_node], gltf.nodes[gltf_node_i]);
     if (gltf_node.name.size() > 0) {
-      scene.node_to_node_name_idx.emplace(gltf_node_i, scene.node_names.size());
+      scene.node_to_node_name_idx.emplace(new_node, scene.node_names.size());
       scene.node_names.emplace_back(gltf_node.name);
     }
 
@@ -571,12 +433,10 @@ void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_mate
         scene.node_to_node_name_idx[submesh_node] = scene.node_names.size();
         scene.node_names.emplace_back(std::string(gltf_node.name) + "_mesh_" +
                                       std::to_string(primitive_i));
-        assert(scene.node_mesh_indices.size() >= (size_t)submesh_node);
         scene.node_mesh_indices[submesh_node] = scene.mesh_datas.size();
-        scene.mesh_datas.emplace_back(MeshData{
-            .mesh_idx = prim_offsets_of_meshes[gltf_mesh_i] + primitive_i,
-            .material_id = static_cast<u32>(primitive.materialIndex.value_or(UINT32_MAX))});
-        auto& mesh_data = scene.mesh_datas.back();
+        auto& mesh_data = scene.mesh_datas.emplace_back(MeshData{});
+        mesh_data.mesh_idx = prim_offsets_of_meshes[gltf_mesh_i] + primitive_i;
+        mesh_data.material_id = static_cast<u32>(primitive.materialIndex.value_or(UINT32_MAX));
         mesh_data.pass_flags = mesh_data.material_id != UINT32_MAX
                                    ? materials[mesh_data.material_id].get_pass_flags()
                                    : default_material.get_pass_flags();
@@ -585,8 +445,8 @@ void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_mate
     }
 
     for (const auto& gltf_child_i : gltf_node.children) {
-      node_stack.emplace_back(NodeStackEntry{
-          .gltf_node_i = static_cast<int>(gltf_child_i), .parent_i = new_node, .level = 0});
+      to_add_node_stack.emplace_back(NodeStackEntry{
+          .gltf_node_i = static_cast<int>(gltf_child_i), .parent_i = new_node, .level = level + 1});
     }
   }
 }
@@ -729,7 +589,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
       // TODO: mip gen?
       size_t size = img_to_buffer_size(img.format, {img.w, img.h, 1});
       img_upload_infos.emplace_back(
-          ImgUploadInfo{.extent = {img.w, img.w, 1},
+          ImgUploadInfo{.extent = {img.w, img.h, 1},
                         .size = size,
                         .data = img.data,
                         .staging_offset = staging_offset,
@@ -897,6 +757,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
       mat.albedo_factors = {base_col.x(), base_col.y(), base_col.z(), base_col.w()};
       mat.pbr_factors.x = gltf_mat.pbrData.metallicFactor;
       mat.pbr_factors.y = gltf_mat.pbrData.roughnessFactor;
+      mat.pbr_factors.w = gltf_mat.alphaCutoff;
 
       if (gltf_mat.doubleSided) {
         mat.ids2.w |= MATERIAL_DOUBLE_SIDED_BIT;
@@ -1102,6 +963,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
     }
   }
   traverse(result->scene_graph_data, gltf, Material{}, result->materials);
+  mark_changed(result->scene_graph_data,0);
   recalc_global_transforms(result->scene_graph_data);
   return result;
 }

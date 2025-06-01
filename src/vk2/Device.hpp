@@ -83,7 +83,9 @@ class Device {
 
   // VkFormat get_swapchain_format();
 
-  VkImage acquire_next_image(CmdEncoder* cmd);
+  void acquire_next_image(CmdEncoder* cmd);
+  [[nodiscard]] VkImage get_curr_swapchain_img() const;
+
   // TODO: eradicate this
   [[nodiscard]] VkInstance get_instance() const { return instance_.instance; }
   [[nodiscard]] VkSurfaceKHR get_surface() const { return surface_; }

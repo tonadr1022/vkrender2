@@ -28,6 +28,7 @@ struct SceneData {
     mat4 view_proj;
     mat4 view;
     mat4 proj;
+    mat4 inverse_view_proj;
     uvec4 debug_flags; // w is debug modes
     vec3 view_pos;
     vec3 light_dir;
@@ -42,9 +43,13 @@ layout(std430, buffer_reference) readonly buffer SceneDatas {
 };
 
 #else
+
+#ifndef IGNORE_SCENE_UNIFORM_DECL
 VK2_DECLARE_STORAGE_BUFFERS_RO(SceneUniforms){
 SceneData data;
 } scene_data_buffer[];
+#endif
+
 #endif
 
 #endif

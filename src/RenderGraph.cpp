@@ -135,6 +135,20 @@ RenderGraphPass::UsageAndHandle RenderGraphPass::init_usage_and_handle(Access ac
   return res_usage;
 }
 
+void RenderGraphPass::add(ImageHandle image, Access access) {
+  auto resource_handle = graph_.get_or_add_texture_resource(image);
+  RenderResource& res = *graph_.get_resource(resource_handle);
+  res.access = static_cast<Access>(res.access | access);
+
+  auto* img = get_device().get_image(image);
+  assert(img);
+  if (!img) {
+    return;
+  }
+  res.img_handle = image;
+  init_usage_and_handle(access, resource_handle, res);
+}
+
 void RenderGraphPass::add(BufferHandle buf_handle, Access access) {
   auto resource_handle = graph_.get_or_add_buffer_resource(buf_handle);
   RenderResource& res = *graph_.get_resource(resource_handle);
@@ -191,9 +205,9 @@ RenderGraphPass& RenderGraph::add_pass(const std::string& name, RenderGraphPass:
 
 VoidResult RenderGraph::validate() { return VoidResult{}; }
 
-VoidResult RenderGraph::bake(CmdEncoder* cmd) {
+VoidResult RenderGraph::bake() {
   ZoneScoped;
-  swapchain_img_ = get_device().acquire_next_image(cmd);
+  swapchain_img_ = get_device().get_curr_swapchain_img();
   desc_ = get_device().get_swapchain_info();
   if (auto ok = validate(); !ok) {
     return ok;
@@ -644,6 +658,18 @@ void RenderGraph::prune_duplicates(std::vector<uint32_t>& data) {
   data.resize(std::distance(data.begin(), write_it));
 }
 
+RGResourceHandle RenderGraph::get_or_add_texture_resource(ImageHandle handle) {
+  auto it = image_to_idx_map_.find(handle);
+  if (it != image_to_idx_map_.end()) {
+    return it->second;
+  }
+  uint32_t idx = resources_.size();
+  RGResourceHandle out_handle{idx, RenderResource::Type::Texture};
+  image_to_idx_map_.emplace(handle, out_handle);
+  resources_.emplace_back(RenderResource::Type::Texture, idx);
+  return out_handle;
+}
+
 RGResourceHandle RenderGraph::get_or_add_buffer_resource(BufferHandle handle) {
   auto it = buffer_to_idx_map_.find(handle);
   if (it != buffer_to_idx_map_.end()) {
@@ -681,6 +707,8 @@ ResourceDimensions RenderGraph::get_resource_dims(const RenderResource& resource
   ResourceDimensions dims{};
   if (resource.get_type() == RenderResource::Type::Buffer) {
     dims.buffer_info = resource.buffer_info;
+  } else if (resource.img_handle.is_valid()) {
+    dims.external_img_handle = resource.img_handle;
   } else {
     assert(desc_.dims.x > 0 && desc_.dims.y > 0);
     dims = {.format = resource.info.format,
@@ -820,7 +848,7 @@ void RenderGraph::setup_attachments() {
 
   for (size_t i = 0; i < physical_resource_dims_.size(); i++) {
     auto& dims = physical_resource_dims_[i];
-    if (dims.is_image()) {
+    if (dims.is_image() && !dims.external_img_handle.is_valid()) {
       ImageDesc desc{
           .type = ImageDesc::Type::TwoD,
           .format = dims.format,
@@ -875,6 +903,8 @@ void RenderGraph::setup_attachments() {
           physical_image_attachments_[i] = img_cache_used_.back().second.handle;
         }
       }
+    } else if (dims.is_image()) {
+      physical_image_attachments_[i] = dims.external_img_handle;
     } else {
       physical_buffers_[i] = dims.buffer_info.handle;
     }
@@ -891,7 +921,7 @@ VkImageLayout get_image_layout(Access access) {
   if (access & Access::DepthStencilRW) {
     return VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL_KHR;
   }
-  if (access & (Access::ComputeRW)) {
+  if (access & (Access::ComputeRW | Access::TransferWrite)) {
     return VK_IMAGE_LAYOUT_GENERAL;
   }
   return VK_IMAGE_LAYOUT_UNDEFINED;
@@ -1121,6 +1151,7 @@ const RenderGraphPass::UsageAndHandle* RenderGraphPass::get_swapchain_write_usag
 void RenderGraph::reset() {
   passes_.clear();
   buffer_to_idx_map_.clear();
+  image_to_idx_map_.clear();
   physical_resource_dims_.clear();
   resources_.clear();
   resource_to_idx_map_.clear();
@@ -1155,6 +1186,14 @@ RenderGraph::ResourceState* RenderGraph::get_resource_pipeline_state(u32 idx) {
     return &image_pipeline_states_[physical_image_attachments_[idx]];
   }
   return &buffer_pipeline_states_[physical_buffers_[idx]];
+}
+
+void RenderGraph::print_pass_order() {
+  LINFO("passes: \n");
+  for (auto& pass : physical_passes_) {
+    LINFO("{}", pass.name);
+  }
+  LINFO("");
 }
 
 }  // namespace gfx

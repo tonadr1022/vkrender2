@@ -106,7 +106,12 @@ void CmdEncoder::bind_pipeline(PipelineBindPoint bind_point, PipelineHandle pipe
       bp = VK_PIPELINE_BIND_POINT_COMPUTE;
       break;
   }
-  vkCmdBindPipeline(get_cmd_buf(), bp, PipelineManager::get().get(pipeline)->pipeline);
+  if (auto* pipeline_actual = PipelineManager::get().get(pipeline); pipeline_actual) {
+    vkCmdBindPipeline(get_cmd_buf(), bp, pipeline_actual->pipeline);
+  } else {
+    LCRITICAL("pipeline not found");
+    exit(1);
+  }
 }
 
 void CmdEncoder::end_rendering() const { vkCmdEndRenderingKHR(get_cmd_buf()); }

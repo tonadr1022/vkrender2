@@ -30,6 +30,7 @@ struct BufferInfo {
 struct ResourceDimensions {
   Format format{};
   BufferInfo buffer_info;
+  ImageHandle external_img_handle;
   SizeClass size_class{SizeClass::SwapchainRelative};
   uint32_t width{}, height{}, depth{}, layers{1}, levels{1}, samples{1};
   Access access_usage{};
@@ -124,6 +125,7 @@ struct RenderGraphPass {
   void add(BufferHandle buf_handle, Access access);
   RGResourceHandle add(const std::string& name, const AttachmentInfo& info, Access access,
                        const std::string& input = "");
+  void add(ImageHandle image, Access access);
 
   template <typename F>
   void set_execute_fn(F&& fn)
@@ -177,18 +179,22 @@ struct RenderGraph {
   void set_backbuffer_img(const std::string& name) { backbuffer_img_ = name; }
   [[nodiscard]] const std::string& get_backbuffer_img_name() const { return backbuffer_img_; }
   void reset();
-  VoidResult bake(CmdEncoder* cmd);
+  VoidResult bake();
   VoidResult output_graphvis(const std::filesystem::path& path);
   void setup_attachments();
   void execute(CmdEncoder& cmd);
 
   RGResourceHandle get_or_add_buffer_resource(BufferHandle handle);
+  RGResourceHandle get_or_add_texture_resource(ImageHandle handle);
   RGResourceHandle get_or_add_texture_resource(const std::string& name);
   RenderResource* get_resource(RGResourceHandle handle);
   Image* get_texture(RGResourceHandle handle);
   Image* get_texture(RenderResource* resource);
   ImageHandle get_texture_handle(RenderResource* resource);
   ImageHandle get_texture_handle(RGResourceHandle resource);
+
+  [[nodiscard]] const AttachmentInfo& get_swapchain_info() const { return desc_; }
+  void print_pass_order();
 
  private:
   // TODO: integrate swapchain more closely?
@@ -244,6 +250,7 @@ struct RenderGraph {
 
   std::unordered_map<std::string, RGResourceHandle> resource_to_idx_map_;
   std::unordered_map<BufferHandle, RGResourceHandle> buffer_to_idx_map_;
+  std::unordered_map<ImageHandle, RGResourceHandle> image_to_idx_map_;
 
   // TODO: bitset
   std::vector<std::unordered_set<uint32_t>> pass_dependencies_;

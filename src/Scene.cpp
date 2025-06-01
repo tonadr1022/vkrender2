@@ -42,8 +42,8 @@ bool recalc_global_transforms(Scene2& scene, std::vector<i32>* changed_nodes) {
     dirty = true;
   }
 
-  for (int level = 1; level < Scene2::max_node_depth && scene.changed_this_frame[level].size() > 0;
-       level++) {
+  for (int level = 1; level < Scene2::max_node_depth; level++) {
+    if (scene.changed_this_frame[level].empty()) continue;
     for (auto changed_node : scene.changed_this_frame[level]) {
       if (changed_nodes) {
         changed_nodes->emplace_back(changed_node);

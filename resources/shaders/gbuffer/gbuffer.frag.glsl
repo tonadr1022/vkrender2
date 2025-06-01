@@ -48,7 +48,7 @@ void main() {
     // https://bgolus.medium.com/anti-aliased-alpha-test-the-esoteric-alpha-to-coverage-8b177335ae4f
     //runAlphaTest(baseColor.a, mat.emissiveFactorAlphaCutoff.w / max(32.0 * fwidth(uv.x), 1.0));
     #ifdef ALPHA_MASK_ENABLED
-    if (albedo.a < .5) {
+    if (albedo.a < material.pbr_factors.w) {
         discard;
     }
     #endif

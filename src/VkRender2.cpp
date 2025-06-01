@@ -31,6 +31,7 @@
 #include "shaders/gbuffer/gbuffer_common.h.glsl"
 #include "shaders/gbuffer/shade_common.h.glsl"
 #include "shaders/lines/draw_line_common.h.glsl"
+#include "shaders/oit/transparent_common.h.glsl"
 #include "shaders/shadow_depth_common.h.glsl"
 #include "util/CVar.hpp"
 #include "util/IndexAllocator.hpp"
@@ -69,6 +70,12 @@ gfx::Vertex cube_vertices[] = {
         1.0f, -1.0f, 1.0f, }}, {{ 1.0f, -1.0f, 1.0f, }}, {{ -1.0f, -1.0f, 1.0f, }}, {{ -1.0f, -1.0f, -1.0f, }}, {{ -1.0f, 1.0f, -1.0f, }}, {{
         1.0f, 1.0f, 1.0f, }}, {{ 1.0f, 1.0f, -1.0f, }}, {{ 1.0f, 1.0f, 1.0f, }}, {{ -1.0f, 1.0f, -1.0f, }}, {{ -1.0f,
         1.0f, 1.0f, }},
+};
+
+struct TransparentFragmentData {
+  u64 rgba;
+  float depth;
+  u32 next;
 };
 
 // clang-format on
@@ -320,7 +327,17 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
               .depth_stencil =
                   GraphicsPipelineCreateInfo::depth_enable(false, CompareOp::GreaterOrEqual),
               .name = "lines"},
-          &line_draw_pipeline_);
+          &line_draw_pipeline_)
+      .add_graphics(
+          GraphicsPipelineCreateInfo{
+              .shaders = {{"oit/transparent.vert", ShaderType::Vertex},
+                          {"oit/transparent.frag", ShaderType::Fragment}},
+              .rendering = {.color_formats = {}, .depth_format = convert_format(depth_img_format_)},
+              .depth_stencil =
+                  GraphicsPipelineCreateInfo::depth_enable(false, CompareOp::GreaterOrEqual),
+              .name = "transparent_oit"},
+          &transparent_oit_pipeline_)
+      .add_compute("oit/oit.comp", &oit_comp_pipeline_);
 
   GraphicsPipelineCreateInfo gbuffer_info{
       .shaders = {{"gbuffer/gbuffer.vert", ShaderType::Vertex},
@@ -399,6 +416,8 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
     }
   }
   default_env_map_path_ = info.resource_dir / "hdr" / "newport_loft.hdr";
+  oit_atomic_counter_buf_ = device_->create_buffer_holder(
+      BufferCreateInfo{.size = sizeof(u32), .usage = BufferUsage_Storage});
 }
 
 void VkRender2::draw(const SceneDrawInfo& info) {
@@ -418,6 +437,7 @@ void VkRender2::draw(const SceneDrawInfo& info) {
     scene_uniform_cpu_data_.view_proj = scene_uniform_cpu_data_.proj * info.view;
     scene_uniform_cpu_data_.view = info.view;
     scene_uniform_cpu_data_.debug_flags = uvec4{};
+    scene_uniform_cpu_data_.inverse_view_proj = glm::inverse(scene_uniform_cpu_data_.view_proj);
     if (ao_map_enabled.get()) {
       scene_uniform_cpu_data_.debug_flags.x |= AO_ENABLED_BIT;
     }
@@ -502,8 +522,34 @@ void VkRender2::draw(const SceneDrawInfo& info) {
   for (u32 cascade_level = 0; cascade_level < csm_->get_num_cascade_levels(); cascade_level++) {
     cull_vp_matrices_.emplace_back(csm_->get_light_matrices()[cascade_level]);
   }
+  get_device().acquire_next_image(cmd);
+
+  {
+    auto draw_img_dims = device_->get_swapchain_info().dims;
+    // OIT
+    u32 max_oit_fragments = draw_img_dims.x * draw_img_dims.y * 4;
+    if (max_oit_fragments > max_oit_fragments_) {
+      max_oit_fragments_ = max_oit_fragments;
+      // create buffer
+      oit_fragment_buffer_ = device_->create_buffer_holder(BufferCreateInfo{
+          .size = max_oit_fragments_ * sizeof(TransparentFragmentData),
+          .usage = BufferUsage_Storage,
+      });
+    }
+    auto* oit_heads_tex = device_->get_image(oit_heads_tex_);
+    if (!oit_heads_tex || oit_heads_tex->size().x != draw_img_dims.x ||
+        oit_heads_tex->size().y != draw_img_dims.y) {
+      oit_heads_tex_ = device_->create_image_holder(ImageDesc{
+          .type = ImageDesc::Type::TwoD,
+          .format = Format::R32Uint,
+          .dims = draw_img_dims,
+          .bind_flags = BindFlag::Storage,
+      });
+    }
+  }
+
   add_rendering_passes(rg_);
-  auto res = rg_.bake(cmd);
+  auto res = rg_.bake();
   if (!res) {
     LERROR("bake error {}", res.error());
     exit(1);
@@ -581,6 +627,12 @@ void VkRender2::on_imgui() {
       ImGui::TreePop();
     }
 
+    if (ImGui::TreeNode("Transparency")) {
+      ImGui::Checkbox("OIT enabled", &oit_enabled_);
+      ImGui::Checkbox("OIT Debug Heatmap", &oit_debug_heatmap_);
+      ImGui::SliderFloat("Opacity boost", &oit_opacity_boost_, 0., 1.);
+      ImGui::TreePop();
+    }
     if (ImGui::TreeNode("Shadows")) {
       csm_->on_imgui();
       ImGui::TreePop();
@@ -1143,10 +1195,138 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
       });
     }
   }
+  bool oit_pass_needed = oit_enabled_ && static_draw_mgrs_[MeshPass_Transparent].should_draw();
+  const char* post_process_input_img_name = "draw_out";
+  if (oit_pass_needed) {
+    post_process_input_img_name = "oit_out";
+  }
+
+  if (oit_pass_needed) {
+    {
+      auto& prepare_transparent_draw_pass = rg.add_pass("prepare_transparent_draw");
+      prepare_transparent_draw_pass.add(oit_heads_tex_.handle, Access::TransferWrite);
+      prepare_transparent_draw_pass.set_execute_fn([this](CmdEncoder& cmd) {
+        VkClearColorValue clear_color{.uint32 = {0xFFFFFFFF}};
+        VkImageSubresourceRange range{
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1};
+        vkCmdClearColorImage(cmd.get_cmd_buf(), device_->get_image(oit_heads_tex_)->image(),
+                             VK_IMAGE_LAYOUT_GENERAL, &clear_color, 1, &range);
+      });
+    }
+    {
+      auto& transparent_draw_pass = rg.add_pass("transparent_draw");
+      // draw cmd inputs
+      for (int double_sided = 0; double_sided < 2; double_sided++) {
+        auto& mgr = static_draw_mgrs_[MeshPass_Transparent];
+        transparent_draw_pass.add(
+            mgr.get_draw_pass(main_view_mesh_pass_indices_[MeshPass_Transparent])
+                .get_frame_out_draw_cmd_buf_handle(double_sided),
+            Access::IndirectRead);
+      }
+
+      // reads depth buffer after opaque
+      auto rg_depth_handle =
+          transparent_draw_pass.add("depth", {.format = depth_img_format_},
+                                    (Access)(Access::DepthStencilRead | Access::FragmentRead));
+      transparent_draw_pass.add(oit_heads_tex_.handle,
+                                (Access)(Access::ComputeRead | Access::ComputeWrite));
+      transparent_draw_pass.add(oit_fragment_buffer_.handle, Access::ComputeWrite);
+      transparent_draw_pass.set_execute_fn([&rg, rg_depth_handle, this](CmdEncoder& cmd) {
+        auto dims = rg.get_texture(rg_depth_handle)->size();
+        state_
+            .buffer_barrier(*device_->get_buffer(oit_atomic_counter_buf_),
+                            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
+            .flush_barriers();
+        cmd.fill_buffer(oit_atomic_counter_buf_.handle, 0, constants::whole_size, 0);
+        state_
+            .buffer_barrier(
+                *device_->get_buffer(oit_atomic_counter_buf_),
+                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_SHADER_READ_BIT)
+            .flush_barriers();
+        cmd.begin_region("oit draw");
+
+        cmd.begin_rendering({.extent = dims},
+                            {RenderingAttachmentInfo::depth_stencil_att(
+                                rg.get_texture_handle(rg_depth_handle), LoadOp::Load)});
+
+        cmd.set_viewport_and_scissor(dims);
+        cmd.bind_pipeline(PipelineBindPoint::Graphics, transparent_oit_pipeline_);
+
+        // TODO: clear atomic count buffer
+        TransparentPushConstants pc{
+            .instance_buffer = static_instance_data_buf_.get_buffer()->device_addr(),
+            .vertex_buffer = static_vertex_buf_.get_buffer()->device_addr(),
+            .object_data_buffer = static_object_data_buf_.get_buffer()->device_addr(),
+            .materials_buffer = static_materials_buf_.get_buffer()->device_addr(),
+            .scene_buffer = device_->get_bindless_idx(curr_frame().scene_uniform_buf),
+            .irradiance_img_idx =
+                device_->get_bindless_idx(ibl_->irradiance_cubemap_tex_, SubresourceType::Shader),
+            .brdf_lut_idx =
+                device_->get_bindless_idx(ibl_->brdf_lut_.handle, SubresourceType::Shader),
+            .prefiltered_env_map_idx = device_->get_bindless_idx(
+                ibl_->prefiltered_env_map_tex_.handle, SubresourceType::Shader),
+            .linear_clamp_to_edge_sampler_idx =
+                device_->get_bindless_idx(linear_sampler_clamp_to_edge_),
+            .atomic_counter_buffer = device_->get_bindless_idx(oit_atomic_counter_buf_),
+            .max_oit_fragments = max_oit_fragments_,
+            .oit_tex_heads = device_->get_bindless_idx(oit_heads_tex_, SubresourceType::Storage),
+            .oit_lists_buf = device_->get_bindless_idx(oit_fragment_buffer_),
+            .sampler_idx = device_->get_bindless_idx(linear_sampler_),
+            .img_size = {dims.x, dims.y},
+            .depth_img = device_->get_bindless_idx(rg.get_texture_handle(rg_depth_handle),
+                                                   SubresourceType::Shader)};
+        cmd.push_constants(sizeof(pc), &pc);
+        cmd.set_cull_mode(CullMode::Back);
+        execute_static_geo_draws(cmd, false, MeshPass_Transparent);
+        cmd.set_cull_mode(CullMode::None);
+        execute_static_geo_draws(cmd, true, MeshPass_Transparent);
+
+        cmd.end_rendering();
+        cmd.end_region();
+      });
+    }
+
+    {
+      auto& oit_pass = rg.add_pass("oit");
+      auto draw_img_handle = oit_pass.add("draw_out", {.format = draw_img_format_},
+                                          (Access)(Access::ColorRead | Access::ComputeRead));
+      auto oit_out_handle = oit_pass.add(post_process_input_img_name, {.format = draw_img_format_},
+                                         Access::ComputeWrite);
+      oit_pass.add(oit_heads_tex_.handle, Access::ComputeRead);
+      oit_pass.add(oit_fragment_buffer_.handle, Access::ComputeRead);
+      oit_pass.set_execute_fn([this, &rg, draw_img_handle, oit_out_handle](CmdEncoder& cmd) {
+        cmd.bind_pipeline(PipelineBindPoint::Compute, oit_comp_pipeline_);
+        struct {
+          u64 oit_lists_buf;
+          u32 oit_heads_tex;
+          float opacity_boost;
+          u32 color_tex;
+          u32 out_tex;
+          float time;
+          u32 show_heatmap;
+        } pc{
+            device_->get_buffer(oit_fragment_buffer_)->device_addr(),
+            device_->get_bindless_idx(oit_heads_tex_, SubresourceType::Storage),
+            oit_opacity_boost_,
+            device_->get_bindless_idx(rg.get_texture_handle(draw_img_handle),
+                                      SubresourceType::Storage),
+            device_->get_bindless_idx(rg.get_texture_handle(oit_out_handle),
+                                      SubresourceType::Storage),
+            static_cast<float>(glfwGetTime()),
+            (u32)oit_debug_heatmap_,
+        };
+        auto dims = device_->get_image(oit_heads_tex_)->size();
+        cmd.push_constants(sizeof(pc), &pc);
+        cmd.dispatch((dims.x + 16) / 16, (dims.y + 16) / 16, 1);
+      });
+    }
+  }
 
   {
     auto& pp = rg.add_pass("post_process");
-    auto draw_out_handle = pp.add("draw_out", {.format = draw_img_format_}, Access::ComputeRead);
+    auto draw_out_handle =
+        pp.add(post_process_input_img_name, {.format = draw_img_format_}, Access::ComputeRead);
     auto final_out_handle =
         pp.add("final_out", AttachmentInfo{.format = device_->get_swapchain_info().format},
                Access::ComputeWrite);
@@ -1627,8 +1807,7 @@ bool VkRender2::load_model2(const std::filesystem::path& path, LoadedModelData& 
 }
 
 // TODO: thread safe
-StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_handle,
-                                                           const mat4& transform) {
+StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_handle, const mat4&) {
   auto* pmodel = ResourceManager::get().get_model(model_handle);
   assert(pmodel);
   if (!pmodel) {
@@ -1697,8 +1876,6 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   u32 base_object_data_id = instance_resources->object_data_slot.get_offset() / sizeof(ObjectData);
   auto base_material_id = resources->materials_slot.get_offset() / sizeof(Material);
 
-  bool is_non_identity_root_node_transform = transform != mat4{1};
-
   for (size_t node_i = 0; node_i < scene.hierarchies.size(); node_i++) {
     auto mesh_data_i = scene.node_mesh_indices[node_i];
     if (mesh_data_i == -1) continue;
@@ -1706,9 +1883,7 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
     // auto& node_mesh_data
     auto& mesh = resources->mesh_draw_infos[node_mesh_data.mesh_idx];
     // TODO: get rid
-    const mat4 model = is_non_identity_root_node_transform
-                           ? scene.global_transforms[node_i] * transform
-                           : scene.global_transforms[node_i];
+    const mat4 model = scene.global_transforms[node_i];
     // https://stackoverflow.com/questions/6053522/how-to-recalculate-axis-aligned-bounding-box-after-translate-rotate/58630206#58630206
     auto transform_aabb = [](const glm::mat4& model, const AABB& aabb) -> AABB {
       AABB result;

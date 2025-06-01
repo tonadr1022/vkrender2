@@ -16,6 +16,8 @@
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_shader_image_load_formatted : require   // readable images without explicit format
+#extension GL_EXT_shader_16bit_storage : enable
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
 
 #define BINDLESS_STORAGE_BUFFER_BINDING 1
 #define BINDLESS_SAMPLER_BINDING 0
@@ -27,6 +29,9 @@
   layout(set = 0, binding = BINDLESS_SAMPLED_IMAGE_BINDING) uniform type t_sampled_images_##type[]
 #define VK2_DECLARE_STORAGE_IMAGES(type) \
   layout(set = 0, binding = BINDLESS_STORAGE_IMAGE_BINDING) uniform type t_storage_images_##type[]
+#define VK2_DECLARE_STORAGE_IMAGES_FORMAT(type,format) \
+  layout(set = 0, binding = BINDLESS_STORAGE_IMAGE_BINDING, format) uniform type t_storage_images_##type[]
+
 #define VK2_DECLARE_STORAGE_IMAGES_WO(type) \
   layout(set = 0, binding = BINDLESS_STORAGE_IMAGE_BINDING) writeonly uniform type t_storage_images_##type[]
 #define VK2_DECLARE_STORAGE_IMAGES_RO(type) \

@@ -156,14 +156,17 @@ void Device::init_impl(const CreateInfo& info) {
   supported_features12_.descriptorBindingVariableDescriptorCount = true;
   supported_features12_.runtimeDescriptorArray = true;
   supported_features12_.timelineSemaphore = true;
+  supported_features12_.shaderFloat16 = true;
   VkPhysicalDeviceFeatures features{};
   features.shaderStorageImageWriteWithoutFormat = true;
   features.depthClamp = true;
   features.shaderInt64 = true;
   features.multiDrawIndirect = true;
+  features.fragmentStoresAndAtomics = true;
   VkPhysicalDeviceVulkan11Features features11{
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES};
   features11.shaderDrawParameters = true;
+  features11.storageBuffer16BitAccess = true;
 
   VkPhysicalDeviceDynamicRenderingFeatures dynamic_rendering_features{};
   dynamic_rendering_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES;
@@ -675,7 +678,7 @@ AttachmentInfo Device::get_swapchain_info() const {
 
 VkImage Device::get_swapchain_img(u32 idx) const { return swapchain_.imgs[idx]; }
 
-VkImage Device::acquire_next_image(CmdEncoder* cmd) {
+void Device::acquire_next_image(CmdEncoder* cmd) {
   ZoneScoped;
   swapchain_.acquire_semaphore_idx =
       (swapchain_.acquire_semaphore_idx + 1) % swapchain_.imgs.size();
@@ -707,15 +710,13 @@ VkImage Device::acquire_next_image(CmdEncoder* cmd) {
       desc.width = x;
       desc.height = y;
       create_swapchain(swapchain_, desc);
-      return acquire_next_image(cmd);
+      acquire_next_image(cmd);
     }
     assert(0);
   }
   assert(swapchain_.release_semaphore);
   cmd->submit_swapchains_.push_back(&swapchain_);
   // TODO: barrier the swapchain?
-
-  return swapchain_.imgs[swapchain_.curr_swapchain_idx];
 }
 
 void Device::begin_frame() { ZoneScoped; }
@@ -2029,4 +2030,7 @@ BufferHandle Device::create_staging_buffer(u64 size) {
                                         .flags = BufferCreateFlags_HostVisible});
 }
 
+VkImage Device::get_curr_swapchain_img() const {
+  return swapchain_.imgs[swapchain_.curr_swapchain_idx];
+}
 }  // namespace gfx
