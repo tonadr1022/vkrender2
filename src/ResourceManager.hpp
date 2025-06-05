@@ -7,6 +7,7 @@
 
 struct LoadedModelData {
   gfx::Scene2 scene_graph_data;
+  std::vector<gfx::Animation> animations;
   gfx::ModelGPUResourceHandle gpu_resource_handle;
   std::filesystem::path path;
 };
@@ -14,6 +15,7 @@ struct LoadedModelData {
 struct LoadedInstanceData {
   ModelHandle model_handle;
   gfx::Scene2 scene_graph_data;
+  std::vector<gfx::AnimationState> animation_states;
   gfx::StaticModelInstanceResourcesHandle instance_resources_handle;
   [[nodiscard]] bool is_valid() const { return model_handle.is_valid(); }
 };

@@ -70,12 +70,6 @@ void main() {
         N = -N;
     }
 
-    vec2 uv = (vec2(gl_FragCoord) + .5) / vec2(pc.img_size);
-    float depth = texture(vk2_sampler2D(pc.depth_img, pc.sampler_idx), uv).r;
-    vec4 clip_pos = vec4(uv * 2. - 1., depth, 1.);
-    vec4 wpos_pre_divide = scene_data.inverse_view_proj * clip_pos;
-    vec3 world_pos = wpos_pre_divide.xyz / wpos_pre_divide.w;
-
     float metallic = material.pbr_factors.x;
     float roughness = material.pbr_factors.y;
     if (material.ids.z != 0) {
@@ -83,11 +77,38 @@ void main() {
         metallic = metal_rough.b;
         roughness = metal_rough.g;
     }
+
+    vec3 color = emissive;
+
+    vec2 uv = (vec2(gl_FragCoord) + .5) / vec2(pc.img_size);
+    float depth = texture(vk2_sampler2D(pc.depth_img, pc.sampler_idx), uv).r;
+    vec4 clip_pos = vec4(uv * 2. - 1., depth, 1.);
+    vec4 wpos_pre_divide = scene_data.inverse_view_proj * clip_pos;
+    vec3 world_pos = wpos_pre_divide.xyz / wpos_pre_divide.w;
+
+    // Dir light
     vec3 F0 = vec3(0.04);
     F0 = mix(F0, albedo.rgb, metallic);
-    vec3 color = emissive;
     vec3 V = normalize(scene_data.view_pos - world_pos);
     float NdotV = max(dot(N, V), 0.0);
+    {
+        vec3 L = -scene_data.light_dir;
+        vec3 radiance = scene_data.light_color;
+        vec3 H = normalize(V + L);
+
+        float NDF = DistributionGGX(N, H, roughness);
+        float G = GeometrySmith(N, V, L, roughness);
+        vec3 F = FresnelSchlick(clamp(dot(H, V), 0.0, 1.0), F0);
+
+        float NdotL = max(dot(N, L), 0.0);
+        vec3 numerator = NDF * G * F;
+        float denominator = 4.0 * max(NdotV * NdotL, .001);
+        vec3 specular = numerator / denominator;
+        vec3 kS = F;
+        vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
+        color += (kD * albedo.rgb + specular) * radiance * NdotL;
+    }
+
     vec3 F = FresnelSchlickRoughness(NdotV, F0, roughness);
     vec3 kS = F;
     vec3 kD = (1.0 - kS) * (1.0 - metallic);
@@ -107,10 +128,11 @@ void main() {
 
     // TODO: clearcoat transmission thickness
     float alpha = albedo.a;
-    bool is_transparent = (alpha > 0.01) && (alpha < 0.99);
-    // TODO: remove
-    is_transparent = true;
-    if (is_transparent && !gl_HelperInvocation) {
+
+    // "A helper invocation is a fragment-shader invocation that is
+    // created solely for the purposes of evaluating derivatives for
+    // use in non-helper fragment-shader invocations."
+    if (alpha > .01 && !gl_HelperInvocation) {
         uint idx = atomicAdd(cnt_bufs[pc.atomic_counter_buffer].cnt, 1);
         if (idx < pc.max_oit_fragments) {
             uint prev_idx = imageAtomicExchange(vk2_get_storage_img(uimage2D, pc.oit_tex_heads), ivec2(gl_FragCoord.xy), idx);

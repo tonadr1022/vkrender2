@@ -94,6 +94,7 @@ uint32_t format_storage_size(Format format) {
     case VK_FORMAT_R8G8_SINT:
     case VK_FORMAT_R8G8_UINT:
     case VK_FORMAT_D16_UNORM:
+    case VK_FORMAT_R8G8_SRGB:
       return 2;
 
     case VK_FORMAT_R16G16_UNORM:

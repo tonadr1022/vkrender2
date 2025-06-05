@@ -6,6 +6,7 @@
 #include <vulkan/vulkan_core.h>
 // clang-format on
 
+#include <algorithm>
 #include <cassert>
 #include <filesystem>
 #include <memory>
@@ -23,6 +24,7 @@
 #include "ThreadPool.hpp"
 #include "Types.hpp"
 #include "core/Logger.hpp"
+#include "glm/gtc/quaternion.hpp"
 #include "glm/packing.hpp"
 #include "imgui/imgui.h"
 #include "shaders/common.h.glsl"
@@ -1738,6 +1740,7 @@ bool VkRender2::load_model2(const std::filesystem::path& path, LoadedModelData& 
   auto load_result = gfx::load_gltf(path, gfx::DefaultMaterialData{});
   if (load_result.has_value()) {
     auto& res = *load_result;
+    result.animations = std::move(res.animations);
     u64 material_data_size = res.materials.size() * sizeof(gfx::Material);
     u64 vertices_size = res.vertices.size() * sizeof(gfx::Vertex);
     u64 indices_size = res.indices.size() * sizeof(u32);
@@ -1859,9 +1862,8 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   instance_resources->model_handle = model_handle;
   instance_resources->name = resources->name.c_str();
 
-  std::vector<GPUInstanceData> instance_datas;
   instance_resources->object_datas.reserve(num_objs_tot);
-  instance_datas.reserve(num_objs_tot);
+  instance_resources->instance_datas.reserve(num_objs_tot);
 
   vec3 scene_min = vec3{std::numeric_limits<float>::max()};
   vec3 scene_max = vec3{std::numeric_limits<float>::lowest()};
@@ -1902,9 +1904,10 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
     AABB world_space_aabb = transform_aabb(model, mesh.aabb);
     scene_min = glm::min(scene_min, world_space_aabb.min);
     scene_max = glm::max(scene_max, world_space_aabb.max);
-    u32 instance_id = base_instance_id + instance_datas.size();
-    instance_datas.emplace_back(node_mesh_data.material_id + base_material_id,
-                                base_object_data_id + instance_resources->object_datas.size());
+    u32 instance_id = base_instance_id + instance_resources->instance_datas.size();
+    instance_resources->instance_datas.emplace_back(
+        node_mesh_data.material_id + base_material_id,
+        base_object_data_id + instance_resources->object_datas.size());
     instance_resources->object_datas.emplace_back(gfx::ObjectData{
         .model = model,
         .aabb_min = vec4(mesh.aabb.min, 0.),
@@ -1933,7 +1936,7 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   }
 
   u64 obj_datas_size = instance_resources->object_datas.size() * sizeof(gfx::ObjectData);
-  u64 instance_datas_size = instance_datas.size() * sizeof(GPUInstanceData);
+  u64 instance_datas_size = instance_resources->instance_datas.size() * sizeof(GPUInstanceData);
 
   scene_aabb_.min = glm::min(scene_aabb_.min, scene_min);
   scene_aabb_.max = glm::max(scene_aabb_.max, scene_max);
@@ -1954,7 +1957,8 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   }
   u64 obj_datas_staging_offset =
       staging.copy(instance_resources->object_datas.data(), obj_datas_size);
-  u64 instance_datas_staging_offset = staging.copy(instance_datas.data(), instance_datas_size);
+  u64 instance_datas_staging_offset =
+      staging.copy(instance_resources->instance_datas.data(), instance_datas_size);
   {
     assert(obj_datas_size && instance_datas_size);
     state_.reset(copy_cmd.transfer_cmd_buf);
@@ -2004,32 +2008,124 @@ void VkRender2::remove_instance(StaticModelInstanceResourcesHandle handle) {
 void VkRender2::update_transforms(LoadedInstanceData& instance,
                                   const std::vector<i32>& changed_nodes) {
   ZoneScoped;
-  // TODO: instead of recalculating the entire vector of object datas, store it in the scene2 vector
-  // and memcpy it
-  // copy instance matrices to global buffer
-  // instance.scene_graph_data.global_transforms;
   auto* instance_resources = static_model_instance_pool_.get(instance.instance_resources_handle);
   assert(instance_resources);
   auto* model = ResourceManager::get().get_model(instance.model_handle);
   auto* model_resources = model_gpu_resources_pool_.get(model->gpu_resource_handle);
   auto& scene = instance.scene_graph_data;
+  u32 i = 0;
   for (auto node_i : changed_nodes) {
     auto mesh_data_i = scene.node_mesh_indices[node_i];
     if (mesh_data_i == -1) continue;
     const auto& mesh_info =
         model_resources->mesh_draw_infos[scene.mesh_datas[mesh_data_i].mesh_idx];
-    auto idx = scene.mesh_datas[mesh_data_i].mesh_idx;
     object_data_buffer_copier_.add_copy(
         object_datas_to_copy_.size() * sizeof(ObjectData),
-        (idx * sizeof(ObjectData)) + instance_resources->object_data_slot.get_offset(),
+        (i * sizeof(ObjectData)) + instance_resources->object_data_slot.get_offset(),
         sizeof(ObjectData));
     object_datas_to_copy_.emplace_back(scene.global_transforms[node_i],
                                        vec4{mesh_info.aabb.min, 0.}, vec4{mesh_info.aabb.max, 0.});
     // TODO: use idx?
-    instance_resources->object_datas[idx] = object_datas_to_copy_.back();
+    instance_resources->object_datas[i] = object_datas_to_copy_.back();
+    i++;
   }
 }
 
 void VkRender2::mark_dirty(InstanceHandle handle) { dirty_instances_.emplace_back(handle); }
+
+namespace {
+
+float get_interpolation_value(float start_anim_t, float end_anim_t, float curr_t) {
+  return (curr_t - start_anim_t) / (end_anim_t - start_anim_t);
+}
+
+}  // namespace
+
+void VkRender2::update_animation(LoadedInstanceData& instance, float dt) {
+  ZoneScoped;
+  LoadedModelData* model = ResourceManager::get().get_model(instance.model_handle);
+  assert(model);
+  size_t anim_i = 0;
+  for (auto& animation : model->animations) {
+    assert(animation.duration > 0.f);
+    AnimationState& anim_state = instance.animation_states[anim_i];
+    anim_state.curr_t += animation.ticks_per_second * dt;
+    if (anim_state.play_once && anim_state.curr_t > animation.duration) {
+      // animation is over
+      anim_state.active = false;
+      anim_state.curr_t = animation.duration;
+    } else {
+      anim_state.curr_t = std::fmodf(anim_state.curr_t, animation.duration);
+    }
+    assert(anim_state.anim_id != UINT32_MAX);
+    anim_i++;
+  }
+
+  // traverse from the root node? or iterate animations?
+  anim_i = 0;
+  for (Animation& animation : model->animations) {
+    const AnimationState& anim_state = instance.animation_states[anim_i];
+    vec3 interpolated_translation{0.f};
+    quat interpolated_rotation{0.f, 0.f, 0.f, 1.0};
+    vec3 interpolated_scale{1.f};
+    size_t channel_i = 0;
+    for (const Channel& channel : animation.channels) {
+      assert(channel.node != -1);
+      assert(channel.sampler_i < animation.samplers.size());
+      const AnimSampler& sampler = animation.samplers[channel.sampler_i];
+
+      // binary search
+      auto it = std::ranges::lower_bound(sampler.inputs, anim_state.curr_t);
+      size_t time_i = 0;
+      if (it != sampler.inputs.begin()) {
+        time_i = std::distance(sampler.inputs.begin(), it) - 1;
+      }
+      size_t next_time_i = sampler.inputs.size() == 1 ? 0 : (time_i + 1) % sampler.inputs.size();
+      assert(next_time_i < sampler.inputs.size());
+      assert(time_i < sampler.inputs.size());
+      float interpolation_val =
+          sampler.inputs.size() == 1
+              ? sampler.inputs[0]
+              : get_interpolation_value(sampler.inputs[time_i], sampler.inputs[next_time_i],
+                                        anim_state.curr_t);
+      if (channel.anim_path == AnimationPath::Translation) {
+        assert(sampler.outputs_raw.size() == sampler.inputs.size() * 3);
+        const vec3* positions = reinterpret_cast<const vec3*>(sampler.outputs_raw.data());
+        interpolated_translation =
+            sampler.outputs_raw.size() == 3
+                ? positions[0]
+                : glm::mix(positions[time_i], positions[next_time_i], interpolation_val);
+      } else if (channel.anim_path == AnimationPath::Rotation) {
+        assert(sampler.outputs_raw.size() == sampler.inputs.size() * 4);
+        const quat* rotations = reinterpret_cast<const quat*>(sampler.outputs_raw.data());
+        interpolated_rotation =
+            sampler.outputs_raw.size() == 4
+                ? rotations[0]
+                : glm::normalize(
+                      glm::slerp(rotations[time_i], rotations[next_time_i], interpolation_val));
+      } else if (channel.anim_path == AnimationPath::Scale) {
+        assert(sampler.outputs_raw.size() == sampler.inputs.size() * 3);
+        const vec3* scales = reinterpret_cast<const vec3*>(sampler.outputs_raw.data());
+        interpolated_scale = sampler.outputs_raw.size() == 3
+                                 ? scales[0]
+                                 : glm::mix(scales[time_i], scales[next_time_i], interpolation_val);
+      }
+      // channels sorted by node, so if next channel is for a new node, all channels for the current
+      // node are done and the transorm can be determined
+      if (channel_i + 1 >= animation.channels.size() ||
+          channel.node != animation.channels[channel_i + 1].node) {
+        assert(channel.node != -1 &&
+               channel.node < (int)instance.scene_graph_data.local_transforms.size());
+        instance.scene_graph_data.local_transforms[channel.node] =
+            glm::translate(mat4{1}, interpolated_translation) *
+            glm::mat4_cast(interpolated_rotation) * glm::scale(mat4{1}, interpolated_scale);
+        mark_changed(instance.scene_graph_data, channel.node);
+      }
+      channel_i++;
+    }
+
+    anim_i++;
+  }
+}
 
 }  // namespace gfx

@@ -63,7 +63,13 @@ void ResourceManager::add_instance(ModelHandle model_handle, InstanceHandle inst
   instance->instance_resources_handle = gfx::VkRender2::get().add_instance(model_handle, transform);
   auto* model = loaded_model_pool_.get(model_handle);
   assert(model);
+  // TODO: maybe not do this here?
   instance->scene_graph_data = model->scene_graph_data;
+
+  instance->animation_states.resize(model->animations.size());
+  for (size_t i = 0; i < model->animations.size(); i++) {
+    instance->animation_states[i].anim_id = i;
+  }
   instance->model_handle = model_handle;
 };
 

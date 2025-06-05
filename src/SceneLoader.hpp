@@ -26,6 +26,48 @@ struct Vertex {
   float uv_y;
   vec4 tangent;
 };
+inline constexpr u32 max_bones_per_vertex{8};
+
+enum class AnimationPath : u8 {
+  Translation = 1,
+  Rotation = 2,
+  Scale = 3,
+  Weights = 4,
+};
+
+struct Channel {
+  int node{-1};
+  u32 sampler_i{};
+  AnimationPath anim_path{};
+};
+
+struct AnimSampler {
+  std::vector<float> inputs;
+  std::vector<float> outputs_raw;
+};
+
+struct Animation {
+  std::vector<Channel> channels;
+  std::vector<AnimSampler> samplers;
+  float ticks_per_second{1.f};
+  float duration{0.};
+};
+
+struct AnimationState {
+  u32 anim_id = {UINT32_MAX};
+  float curr_t = {0.f};
+  bool play_once{false};
+  bool active{false};
+};
+
+struct AnimatedVertex {
+  vec3 pos;
+  float uv_x;
+  vec3 normal;
+  float uv_y;
+  u32 bone_id[max_bones_per_vertex]{~0u, ~0u, ~0u, ~0u, ~0u, ~0u, ~0u, ~0u};
+  float weights[max_bones_per_vertex]{};
+};
 
 struct PrimitiveDrawInfo {
   AABB aabb;
@@ -43,16 +85,18 @@ struct LoadedSceneData {
   std::vector<PrimitiveDrawInfo> mesh_draw_infos;
   std::vector<Vertex> vertices;
   std::vector<u32> indices;
+  std::vector<Animation> animations;
 };
 
 struct LoadedSceneBaseData {
   Scene2 scene_graph_data;
-  // SceneLoadData scene_graph_data;
   std::vector<PrimitiveDrawInfo> mesh_draw_infos;
   std::vector<Vertex> vertices;
   std::vector<u32> indices;
   std::vector<Holder<ImageHandle>> textures;
   std::vector<Material> materials;
+  std::vector<Animation> animations;
+  bool has_bones{};
 };
 
 struct DefaultMaterialData {

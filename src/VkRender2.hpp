@@ -55,8 +55,13 @@ enum MeshPass : u8 {
 };
 std::string to_string(MeshPass p);
 
+struct GPUInstanceData {
+  u32 material_id;
+  u32 instance_id;
+};
 struct StaticModelInstanceResources {
   std::vector<ObjectData> object_datas;
+  std::vector<GPUInstanceData> instance_datas;
   std::array<u32, MeshPass_Count> mesh_pass_draw_handles{UINT32_MAX};
   util::FreeListAllocator::Slot instance_data_slot;
   util::FreeListAllocator::Slot object_data_slot;
@@ -132,6 +137,7 @@ class VkRender2 final {
   bool load_model2(const std::filesystem::path& path, LoadedModelData& result);
   StaticModelInstanceResourcesHandle add_instance(ModelHandle model_handle, const mat4& transform);
   void update_transforms(LoadedInstanceData& instance, const std::vector<i32>& changed_nodes);
+  void update_animation(LoadedInstanceData& instance, float dt);
   void remove_instance(StaticModelInstanceResourcesHandle handle);
   void mark_dirty(InstanceHandle handle);
 
@@ -314,11 +320,6 @@ class VkRender2 final {
     Holder<ImageHandle> white_img;
   } default_data_;
   gfx::DefaultMaterialData default_mat_data_;
-
-  struct GPUInstanceData {
-    u32 material_id;
-    u32 instance_id;
-  };
 
   BufferCopyer object_data_buffer_copier_;
   std::vector<InstanceHandle> dirty_instances_;

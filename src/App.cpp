@@ -128,23 +128,29 @@ void App::run() {
   load_cam(cam_data);
   float last_time{};
   auto& renderer = VkRender2::get();
-  // VkRender2::get().load_scene(local_models_dir / "ABeautifulGame.glb", false,
-  //                             glm::scale(mat4{1}, vec3{10}));
 
   // instances_.emplace_back(
   //     ResourceManager::get().load_model("/Users/tony/Downloads/bistro/Exterior/exterior.glb"));
   // instances_.emplace_back(ResourceManager::get().load_model(
   //     "/Users/tony/models/Models/AlphaBlendModeTest/glTF/AlphaBlendModeTest.gltf"));
+
   instances_.emplace_back(ResourceManager::get().load_model(
-      "/Users/tony/models/Models/AlphaBlendModeTest/glTF/AlphaBlendModeTest.gltf"));
+      "/Users/tony/clone/3D-Graphics-Rendering-Cookbook-Second-Edition/data/meshes/"
+      "medieval_fantasy_book/scene.gltf"));
+  // instances_.emplace_back(ResourceManager::get().load_model(
+  //     "/Users/tony/models/Models/AnimatedCube/glTF/AnimatedCube.gltf"));
+  // instances_.emplace_back(ResourceManager::get().load_model(
+  //     "/Users/tony/models/Models/GlassBrokenWindow/glTF/GlassBrokenWindow.gltf"));
+  // instances_.emplace_back(ResourceManager::get().load_model(
+  //     "/Users/tony/models/Models/AlphaBlendModeTest/glTF/AlphaBlendModeTest.gltf"));
+
   // instances_.emplace_back(
   //     ResourceManager::get().load_model(local_models_dir / "Bistro_Godot_opt.glb"));
 
-  // VkRender2::get().load_model(local_models_dir / "Bistro_Godot.glb", false);
   // std::filesystem::path env_tex = local_models_dir / "quarry_04_puresky_4k.hdr";
   // std::filesystem::path env_tex = local_models_dir / "immenstadter_horn_2k.hdr";
 
-  // VkRender2::get().load_model(local_models_dir / "sponza.glb", false);
+  // instances_.emplace_back(ResourceManager::get().load_model(local_models_dir / "sponza.glb"));
 
   // instances_.emplace_back(
   //     ResourceManager::get().load_model(resource_dir / "models/Cube/glTF/Cube.gltf"));
@@ -171,6 +177,8 @@ void App::run() {
       static std::vector<i32> changed_nodes;
       for (auto& instance_handle : instances_) {
         auto* instance = ResourceManager::get().get_instance(instance_handle);
+        if (!instance || !instance->is_valid()) continue;
+        VkRender2::get().update_animation(*instance, dt);
         changed_nodes.clear();
         if (recalc_global_transforms(instance->scene_graph_data, &changed_nodes)) {
           VkRender2::get().update_transforms(*instance, changed_nodes);
@@ -335,8 +343,8 @@ void App::on_imgui() {
 
     if (ImGui::Button("add sponza")) {
       static int offset = 1;
-      ResourceManager::get().load_model(local_models_dir / "sponza.glb",
-                                        glm::translate(mat4{1}, vec3{0, 0, offset * 40}));
+      instances_.emplace_back(ResourceManager::get().load_model(
+          local_models_dir / "sponza.glb", glm::translate(mat4{1}, vec3{0, 0, offset * 40})));
       offset++;
     }
 
@@ -413,14 +421,21 @@ void App::scene_node_imgui(gfx::Scene2& scene, int node) {
     if (ImGui::DragFloat("z", &local_transform[3][2])) {
       mark_changed(scene, node);
     }
-    {
+    auto decomp = [&](const mat4& transform) {
       vec3 pos, scale;
       quat rot;
-      decompose_matrix(local_transform, pos, rot, scale);
+      decompose_matrix(transform, pos, rot, scale);
       ImGui::Text("Translation: %f %f %f", pos.x, pos.y, pos.z);
       ImGui::Text("rot: %f %f %f %f", rot.x, rot.y, rot.z, rot.w);
       ImGui::Text("scale: %f %f %f", scale.x, scale.y, scale.z);
-    }
+    };
+    ImGui::PushID(&local_transform);
+    decomp(local_transform);
+    ImGui::PopID();
+    ImGui::PushID(&scene.global_transforms[node]);
+    decomp(scene.global_transforms[node]);
+    ImGui::PopID();
+
     for (int c = scene.hierarchies[node].first_child; c != -1;
          c = scene.hierarchies[c].next_sibling) {
       scene_node_imgui(scene, c);

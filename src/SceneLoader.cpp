@@ -381,7 +381,8 @@ i32 add_node(Scene2& scene, i32 parent, i32 level) {
 }
 
 void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_material,
-              std::vector<Material>& materials) {
+              const std::vector<Material>& materials, LoadedSceneBaseData& result) {
+  std::vector<int> gltf_node_i_to_node_i(gltf.nodes.size(), -1);
   struct NodeStackEntry {
     int gltf_node_i;
     int parent_i;
@@ -417,6 +418,9 @@ void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_mate
 
     const auto& gltf_node = gltf.nodes[gltf_node_i];
     i32 new_node = add_node(scene, parent_i, level);
+    assert((size_t)gltf_node_i < gltf_node_i_to_node_i.size());
+    assert(gltf_node_i_to_node_i[gltf_node_i] == -1);
+    gltf_node_i_to_node_i[gltf_node_i] = new_node;
     set_node_transform_from_gltf_node(scene.local_transforms[new_node], gltf.nodes[gltf_node_i]);
     if (gltf_node.name.size() > 0) {
       scene.node_to_node_name_idx.emplace(new_node, scene.node_names.size());
@@ -442,12 +446,110 @@ void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_mate
                                    : default_material.get_pass_flags();
         primitive_i++;
       }
+
+      // if (gltf_node.skinIndex.has_value()) {
+      //   auto skin_i = gltf_node.skinIndex.value();
+      //   auto& skin = gltf.skins[skin_i];
+      //   for (auto joint_idx : skin.joints) {
+      //   }
+      //   if (skin.inverseBindMatrices.has_value()) {
+      //   }
+      //   if (skin.skeleton.has_value()) {
+      //
+      //   }
+      // }
     }
 
     for (const auto& gltf_child_i : gltf_node.children) {
       to_add_node_stack.emplace_back(NodeStackEntry{
           .gltf_node_i = static_cast<int>(gltf_child_i), .parent_i = new_node, .level = level + 1});
     }
+  }
+
+  auto& animations = result.animations;
+  animations.reserve(gltf.animations.size());
+  for (auto& animation : gltf.animations) {
+    Animation anim{};
+    for (auto& sampler : animation.samplers) {
+      AnimSampler new_sampler{};
+      auto& input_accessor = gltf.accessors[sampler.inputAccessor];
+      auto& inputs = new_sampler.inputs;
+      inputs.reserve(input_accessor.count);
+      fastgltf::iterateAccessor<float>(gltf, input_accessor,
+                                       [&](float t) { inputs.emplace_back(t); });
+      // TODO: reserve size?
+      auto& outputs_raw = new_sampler.outputs_raw;
+      auto& output_accessor = gltf.accessors[sampler.outputAccessor];
+      switch (output_accessor.type) {
+        case fastgltf::AccessorType::Vec3: {
+          fastgltf::iterateAccessor<vec3>(gltf, output_accessor, [&outputs_raw](vec3 v) {
+            for (int i = 0; i < 3; i++) {
+              outputs_raw.emplace_back(v[i]);
+            }
+          });
+          break;
+        }
+        case fastgltf::AccessorType::Vec4: {
+          fastgltf::iterateAccessor<vec4>(gltf, output_accessor, [&outputs_raw](vec4 v) {
+            for (int i = 0; i < 4; i++) {
+              outputs_raw.emplace_back(v[i]);
+            }
+          });
+          break;
+        }
+        case fastgltf::AccessorType::Scalar: {
+          fastgltf::iterateAccessor<float>(
+              gltf, output_accessor, [&outputs_raw](float v) { outputs_raw.emplace_back(v); });
+          break;
+        }
+        default:
+          assert(0 && "invalid accessor type for animation");
+          break;
+      }
+
+      anim.samplers.emplace_back(std::move(new_sampler));
+    }
+
+    anim.duration = 0.0f;
+    for (const auto& sampler : anim.samplers) {
+      if (!sampler.inputs.empty()) {
+        anim.duration = std::max(anim.duration, sampler.inputs.back());
+      }
+    }
+
+    for (auto& channel : animation.channels) {
+      Channel new_channel{};
+      // TODO: get actual node i
+      new_channel.node = channel.nodeIndex.value_or(-1);
+      new_channel.sampler_i = channel.samplerIndex;
+      switch (channel.path) {
+        case fastgltf::AnimationPath::Translation:
+          new_channel.anim_path = AnimationPath::Translation;
+          break;
+        case fastgltf::AnimationPath::Rotation:
+          new_channel.anim_path = AnimationPath::Rotation;
+          break;
+        case fastgltf::AnimationPath::Scale:
+          new_channel.anim_path = AnimationPath::Scale;
+          break;
+        case fastgltf::AnimationPath::Weights:
+          new_channel.anim_path = AnimationPath::Weights;
+          break;
+        default:
+          assert(0 && "unsupported animation path");
+      }
+      anim.channels.emplace_back(new_channel);
+    }
+    std::ranges::sort(anim.channels, [](const Channel& a, const Channel& b) {
+      if (a.node < b.node) {
+        return true;
+      }
+      if (b.node < a.node) {
+        return false;
+      }
+      return (int)a.anim_path < (int)b.anim_path;
+    });
+    result.animations.emplace_back(std::move(anim));
   }
 }
 
@@ -962,8 +1064,10 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
       }
     }
   }
-  traverse(result->scene_graph_data, gltf, Material{}, result->materials);
-  mark_changed(result->scene_graph_data,0);
+
+  // TODO: refactor
+  traverse(result->scene_graph_data, gltf, Material{}, result->materials, *result);
+  mark_changed(result->scene_graph_data, 0);
   recalc_global_transforms(result->scene_graph_data);
   return result;
 }
@@ -978,14 +1082,13 @@ std::optional<LoadedSceneData> load_gltf(const std::filesystem::path& path,
   }
 
   LoadedSceneBaseData& base_scene_data = base_scene_data_ret.value();
-  return LoadedSceneData{
-      .scene_graph_data = std::move(base_scene_data.scene_graph_data),
-      .materials = std::move(base_scene_data.materials),
-      .textures = std::move(base_scene_data.textures),
-      .mesh_draw_infos = std::move(base_scene_data.mesh_draw_infos),
-      .vertices = std::move(base_scene_data.vertices),
-      .indices = std::move(base_scene_data.indices),
-  };
+  return LoadedSceneData{.scene_graph_data = std::move(base_scene_data.scene_graph_data),
+                         .materials = std::move(base_scene_data.materials),
+                         .textures = std::move(base_scene_data.textures),
+                         .mesh_draw_infos = std::move(base_scene_data.mesh_draw_infos),
+                         .vertices = std::move(base_scene_data.vertices),
+                         .indices = std::move(base_scene_data.indices),
+                         .animations = std::move(base_scene_data.animations)};
 }
 
 namespace loader {
