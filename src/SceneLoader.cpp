@@ -518,10 +518,12 @@ void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_mate
     }
 
     for (auto& channel : animation.channels) {
-      Channel new_channel{};
-      // TODO: get actual node i
-      new_channel.node = channel.nodeIndex.value_or(-1);
-      new_channel.sampler_i = channel.samplerIndex;
+      Channel new_channel{
+          .node =
+              channel.nodeIndex.has_value() ? gltf_node_i_to_node_i[channel.nodeIndex.value()] : -1,
+          .sampler_i = static_cast<u32>(channel.samplerIndex),
+      };
+      assert(new_channel.node != -1);
       switch (channel.path) {
         case fastgltf::AnimationPath::Translation:
           new_channel.anim_path = AnimationPath::Translation;
@@ -547,6 +549,7 @@ void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_mate
       if (b.node < a.node) {
         return false;
       }
+      assert(a.anim_path != b.anim_path);
       return (int)a.anim_path < (int)b.anim_path;
     });
     result.animations.emplace_back(std::move(anim));
