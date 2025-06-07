@@ -17,6 +17,9 @@ struct ObjectData {
   // TODO: better padding
   vec4 aabb_min;
   vec4 aabb_max;
+  bool operator==(const ObjectData& other) const {
+    return model == other.model && aabb_min == other.aabb_min && aabb_max == other.aabb_max;
+  }
 };
 
 struct Vertex {
@@ -49,15 +52,25 @@ struct AnimSampler {
 struct Animation {
   std::vector<Channel> channels;
   std::vector<AnimSampler> samplers;
+  std::string name{"Animation"};
   float ticks_per_second{1.f};
   float duration{0.};
+};
+
+struct NodeTransform {
+  bool has_translation = false;
+  bool has_rotation = false;
+  bool has_scale = false;
+  vec3 translation{0.f};
+  quat rotation{glm::identity<glm::quat>()};
+  vec3 scale{1.f};
 };
 
 struct AnimationState {
   u32 anim_id = {UINT32_MAX};
   float curr_t = {0.f};
   bool play_once{false};
-  bool active{false};
+  bool active{true};
 };
 
 struct AnimatedVertex {

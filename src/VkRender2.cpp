@@ -9,7 +9,11 @@
 #include <algorithm>
 #include <cassert>
 #include <filesystem>
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/string_cast.hpp>
+#include <glm/mat4x4.hpp>
 #include <memory>
+#include <print>
 #include <tracy/Tracy.hpp>
 #include <tracy/TracyVulkan.hpp>
 #include <utility>
@@ -1879,6 +1883,8 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   auto base_material_id = resources->materials_slot.get_offset() / sizeof(Material);
 
   for (size_t node_i = 0; node_i < scene.hierarchies.size(); node_i++) {
+    // TODO: model wide?
+    instance_resources->node_to_instance_and_obj.emplace_back(-1);
     auto mesh_data_i = scene.node_mesh_indices[node_i];
     if (mesh_data_i == -1) continue;
     const auto& node_mesh_data = scene.mesh_datas[mesh_data_i];
@@ -1905,6 +1911,7 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
     scene_min = glm::min(scene_min, world_space_aabb.min);
     scene_max = glm::max(scene_max, world_space_aabb.max);
     u32 instance_id = base_instance_id + instance_resources->instance_datas.size();
+    instance_resources->node_to_instance_and_obj.back() = instance_resources->instance_datas.size();
     instance_resources->instance_datas.emplace_back(
         node_mesh_data.material_id + base_material_id,
         base_object_data_id + instance_resources->object_datas.size());
@@ -1912,7 +1919,6 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
         .model = model,
         .aabb_min = vec4(mesh.aabb.min, 0.),
         .aabb_max = vec4(mesh.aabb.max, 0.),
-
     });
 
     u32 draw_flags{};
@@ -2005,29 +2011,27 @@ void VkRender2::remove_instance(StaticModelInstanceResourcesHandle handle) {
   to_delete_static_model_instances_.emplace_back(handle);
 }
 
-void VkRender2::update_transforms(LoadedInstanceData& instance,
-                                  const std::vector<i32>& changed_nodes) {
+void VkRender2::update_transforms(LoadedInstanceData& instance, std::vector<i32>& changed_nodes) {
   ZoneScoped;
   auto* instance_resources = static_model_instance_pool_.get(instance.instance_resources_handle);
   assert(instance_resources);
   auto* model = ResourceManager::get().get_model(instance.model_handle);
+  assert(model);
   auto* model_resources = model_gpu_resources_pool_.get(model->gpu_resource_handle);
   auto& scene = instance.scene_graph_data;
-  u32 i = 0;
+  std::ranges::sort(changed_nodes);
   for (auto node_i : changed_nodes) {
     auto mesh_data_i = scene.node_mesh_indices[node_i];
     if (mesh_data_i == -1) continue;
     const auto& mesh_info =
         model_resources->mesh_draw_infos[scene.mesh_datas[mesh_data_i].mesh_idx];
+    auto instance_i = instance_resources->node_to_instance_and_obj[node_i];
     object_data_buffer_copier_.add_copy(
         object_datas_to_copy_.size() * sizeof(ObjectData),
-        (i * sizeof(ObjectData)) + instance_resources->object_data_slot.get_offset(),
+        (instance_i * sizeof(ObjectData)) + instance_resources->object_data_slot.get_offset(),
         sizeof(ObjectData));
     object_datas_to_copy_.emplace_back(scene.global_transforms[node_i],
                                        vec4{mesh_info.aabb.min, 0.}, vec4{mesh_info.aabb.max, 0.});
-    // TODO: use idx?
-    instance_resources->object_datas[i] = object_datas_to_copy_.back();
-    i++;
   }
 }
 
@@ -2049,6 +2053,10 @@ void VkRender2::update_animation(LoadedInstanceData& instance, float dt) {
   for (auto& animation : model->animations) {
     assert(animation.duration > 0.f);
     AnimationState& anim_state = instance.animation_states[anim_i];
+    if (!anim_state.active) {
+      anim_i++;
+      continue;
+    }
     anim_state.curr_t += animation.ticks_per_second * dt;
     if (anim_state.play_once && anim_state.curr_t > animation.duration) {
       // animation is over
@@ -2063,17 +2071,13 @@ void VkRender2::update_animation(LoadedInstanceData& instance, float dt) {
 
   // traverse from the root node? or iterate animations?
   anim_i = 0;
+  instance.node_transforms.clear();
   for (Animation& animation : model->animations) {
     const AnimationState& anim_state = instance.animation_states[anim_i];
-    vec3 interpolated_translation{0.f};
-    quat interpolated_rotation{0.f, 0.f, 0.f, 1.0};
-    vec3 interpolated_scale{1.f};
-    size_t channel_i = 0;
     for (const Channel& channel : animation.channels) {
       assert(channel.node != -1);
       assert(channel.sampler_i < animation.samplers.size());
       const AnimSampler& sampler = animation.samplers[channel.sampler_i];
-
       // binary search
       auto it = std::ranges::lower_bound(sampler.inputs, anim_state.curr_t);
       size_t time_i = 0;
@@ -2085,43 +2089,59 @@ void VkRender2::update_animation(LoadedInstanceData& instance, float dt) {
       assert(time_i < sampler.inputs.size());
       float interpolation_val =
           sampler.inputs.size() == 1
-              ? sampler.inputs[0]
+              ? 0.f
               : get_interpolation_value(sampler.inputs[time_i], sampler.inputs[next_time_i],
                                         anim_state.curr_t);
+
+      auto& nt = instance.node_transforms[channel.node];
       if (channel.anim_path == AnimationPath::Translation) {
         assert(sampler.outputs_raw.size() == sampler.inputs.size() * 3);
-        const vec3* positions = reinterpret_cast<const vec3*>(sampler.outputs_raw.data());
-        interpolated_translation =
-            sampler.outputs_raw.size() == 3
-                ? positions[0]
-                : glm::mix(positions[time_i], positions[next_time_i], interpolation_val);
+        assert(!nt.has_translation);
+        const vec3* translations = reinterpret_cast<const vec3*>(sampler.outputs_raw.data());
+        nt.has_translation = true;
+        nt.translation =
+            sampler.inputs.size() == 1
+                ? translations[0]
+                : glm::mix(translations[time_i], translations[next_time_i], interpolation_val);
       } else if (channel.anim_path == AnimationPath::Rotation) {
         assert(sampler.outputs_raw.size() == sampler.inputs.size() * 4);
+        assert(time_i < sampler.inputs.size());
+        assert(!nt.has_rotation);
         const quat* rotations = reinterpret_cast<const quat*>(sampler.outputs_raw.data());
-        interpolated_rotation =
-            sampler.outputs_raw.size() == 4
-                ? rotations[0]
-                : glm::normalize(
-                      glm::slerp(rotations[time_i], rotations[next_time_i], interpolation_val));
+        nt.has_rotation = true;
+        if (sampler.inputs.size() == 1) {
+          nt.rotation = rotations[0];
+        } else {
+          quat q0 = rotations[time_i];
+          quat q1 = rotations[next_time_i];
+          if (glm::dot(q0, q1) < 0.0f) q1 = -q1;  // ensure shortest path
+          nt.rotation = glm::normalize(glm::slerp(q0, q1, interpolation_val));
+        }
       } else if (channel.anim_path == AnimationPath::Scale) {
         assert(sampler.outputs_raw.size() == sampler.inputs.size() * 3);
+        assert(!nt.has_scale);
+        nt.has_scale = true;
         const vec3* scales = reinterpret_cast<const vec3*>(sampler.outputs_raw.data());
-        interpolated_scale = sampler.outputs_raw.size() == 3
-                                 ? scales[0]
-                                 : glm::mix(scales[time_i], scales[next_time_i], interpolation_val);
+        nt.scale = sampler.inputs.size() == 1
+                       ? scales[0]
+                       : glm::mix(scales[time_i], scales[next_time_i], interpolation_val);
       }
-      // channels sorted by node, so if next channel is for a new node, all channels for the current
-      // node are done and the transorm can be determined
-      if (channel_i + 1 >= animation.channels.size() ||
-          channel.node != animation.channels[channel_i + 1].node) {
-        assert(channel.node != -1 &&
-               channel.node < (int)instance.scene_graph_data.local_transforms.size());
-        instance.scene_graph_data.local_transforms[channel.node] =
-            glm::translate(mat4{1}, interpolated_translation) *
-            glm::mat4_cast(interpolated_rotation) * glm::scale(mat4{1}, interpolated_scale);
-        mark_changed(instance.scene_graph_data, channel.node);
+    }
+
+    // TODO: cache!!!!!!
+    for (auto& [node, nt] : instance.node_transforms) {
+      // TODO: cache!!!!!!!
+      vec3 pos, scale;
+      quat rot;
+      decompose_matrix(instance.scene_graph_data.local_transforms[node], pos, rot, scale);
+
+      mat4 t = glm::translate(mat4(1), nt.has_translation ? nt.translation : pos);
+      mat4 r = glm::mat4_cast(nt.has_rotation ? nt.rotation : rot);
+      mat4 s = glm::scale(mat4(1), nt.has_scale ? nt.scale : scale);
+      if (nt.has_translation || nt.has_rotation || nt.has_scale) {
+        instance.scene_graph_data.local_transforms[node] = t * r * s;
+        mark_changed(instance.scene_graph_data, node);
       }
-      channel_i++;
     }
 
     anim_i++;

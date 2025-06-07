@@ -53,10 +53,12 @@ struct Scene2 {
   std::unordered_map<i32, i32> node_to_node_name_idx;
   std::vector<i32> node_mesh_indices;
   std::vector<MeshData> mesh_datas;
-  static constexpr int max_node_depth{15};
+  static constexpr int max_node_depth{25};
   std::vector<u32> changed_this_frame[max_node_depth];
 };
 
+void validate_hierarchy(Scene2& scene);
+bool decompose_matrix(const glm::mat4& m, glm::vec3& pos, glm::quat& rot, glm::vec3& scale);
 void mark_changed(Scene2& scene, int node);
 bool recalc_global_transforms(Scene2& scene, std::vector<i32>* changed_nodes = nullptr);
 

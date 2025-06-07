@@ -6,6 +6,7 @@
 #include <vulkan/vk_enum_string_helper.h>
 #include <vulkan/vulkan_core.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -189,19 +190,17 @@ std::vector<uint8_t> read_file(const std::string& full_path) {
 }
 
 void set_node_transform_from_gltf_node(mat4& local_transform, const fastgltf::Node& gltf_node) {
-  std::visit(
-      fastgltf::visitor{
-          [&](fastgltf::TRS matrix) {
-            auto trans = glm::make_vec3(matrix.translation.data());
-            glm::quat rot(matrix.rotation[3], matrix.rotation[0], matrix.rotation[1],
-                          matrix.rotation[2]);
-            auto scale = glm::make_vec3(matrix.scale.data());
-            // T * R * S
-            local_transform =
-                glm::scale(glm::translate(glm::mat4{1}, trans) * glm::mat4_cast(rot), scale);
-          },
-          [&](fastgltf::math::fmat4x4 matrix) { local_transform = glm::make_mat4(matrix.data()); }},
-      gltf_node.transform);
+  if (std::holds_alternative<fastgltf::math::fmat4x4>(gltf_node.transform)) {
+    const auto& mat_data = std::get<fastgltf::math::fmat4x4>(gltf_node.transform);
+    local_transform = glm::make_mat4(mat_data.data());
+  } else {
+    const auto& trs = std::get<fastgltf::TRS>(gltf_node.transform);
+    glm::vec3 trans = glm::make_vec3(trs.translation.data());
+    glm::quat rot = glm::quat(trs.rotation[3], trs.rotation[0], trs.rotation[1], trs.rotation[2]);
+    glm::vec3 scale = glm::make_vec3(trs.scale.data());
+    local_transform = glm::translate(glm::mat4{1}, trans) * glm::mat4_cast(glm::normalize(rot)) *
+                      glm::scale(glm::mat4{1}, scale);
+  }
 }
 
 struct CpuImageData {
@@ -358,25 +357,26 @@ i32 add_node(Scene2& scene, i32 parent, i32 level) {
   scene.hierarchies.push_back(Hierarchy{.parent = parent});
   // if parent exists, update it
   if (parent > -1) {
-    i32 sibling = scene.hierarchies[parent].first_child;
-    if (sibling == -1) {
+    i32 first_child = scene.hierarchies[parent].first_child;
+    if (first_child == -1) {
       // no sibling, node is first child of parent and own last sibling
       scene.hierarchies[parent].first_child = node_i;
       scene.hierarchies[node_i].last_sibling = node_i;
     } else {
       // sibling exists, traverse to find last sibling
-      i32 dest = scene.hierarchies[sibling].last_sibling;
-      if (dest <= -1) {
-        for (dest = sibling; scene.hierarchies[dest].next_sibling != -1;
-             dest = scene.hierarchies[dest].next_sibling);
+      i32 last = scene.hierarchies[first_child].last_sibling;
+      if (last <= -1) {
+        for (last = first_child; scene.hierarchies[last].next_sibling != -1;
+             last = scene.hierarchies[last].next_sibling);
       }
-      scene.hierarchies[dest].next_sibling = node_i;
-      scene.hierarchies[sibling].last_sibling = node_i;
+      scene.hierarchies[last].next_sibling = node_i;
+      scene.hierarchies[first_child].last_sibling = node_i;
     }
   }
   scene.hierarchies[node_i].level = level;
   scene.hierarchies[node_i].next_sibling = -1;
   scene.hierarchies[node_i].first_child = -1;
+  scene.hierarchies[node_i].last_sibling = -1;
   return node_i;
 }
 
@@ -416,9 +416,9 @@ void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_mate
     int level = to_add_node_stack.back().level;
     to_add_node_stack.pop_back();
 
+    assert((size_t)gltf_node_i < gltf_node_i_to_node_i.size());
     const auto& gltf_node = gltf.nodes[gltf_node_i];
     i32 new_node = add_node(scene, parent_i, level);
-    assert((size_t)gltf_node_i < gltf_node_i_to_node_i.size());
     assert(gltf_node_i_to_node_i[gltf_node_i] == -1);
     gltf_node_i_to_node_i[gltf_node_i] = new_node;
     set_node_transform_from_gltf_node(scene.local_transforms[new_node], gltf.nodes[gltf_node_i]);
@@ -469,7 +469,7 @@ void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_mate
   auto& animations = result.animations;
   animations.reserve(gltf.animations.size());
   for (auto& animation : gltf.animations) {
-    Animation anim{};
+    Animation anim{.name = std::string{animation.name}};
     for (auto& sampler : animation.samplers) {
       AnimSampler new_sampler{};
       auto& input_accessor = gltf.accessors[sampler.inputAccessor];
@@ -489,11 +489,21 @@ void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_mate
           });
           break;
         }
-        case fastgltf::AccessorType::Vec4: {
-          fastgltf::iterateAccessor<vec4>(gltf, output_accessor, [&outputs_raw](vec4 v) {
-            for (int i = 0; i < 4; i++) {
+        case fastgltf::AccessorType::Vec2: {
+          fastgltf::iterateAccessor<vec2>(gltf, output_accessor, [&outputs_raw](vec2 v) {
+            for (int i = 0; i < 2; i++) {
               outputs_raw.emplace_back(v[i]);
             }
+          });
+          break;
+        }
+        case fastgltf::AccessorType::Vec4: {
+          fastgltf::iterateAccessor<vec4>(gltf, output_accessor, [&outputs_raw](vec4 v) {
+            quat q = glm::normalize(quat{v[3], v[0], v[1], v[2]});
+            outputs_raw.emplace_back(q[0]);
+            outputs_raw.emplace_back(q[1]);
+            outputs_raw.emplace_back(q[2]);
+            outputs_raw.emplace_back(q[3]);
           });
           break;
         }
@@ -513,7 +523,8 @@ void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_mate
     anim.duration = 0.0f;
     for (const auto& sampler : anim.samplers) {
       if (!sampler.inputs.empty()) {
-        anim.duration = std::max(anim.duration, sampler.inputs.back());
+        float max_time = *std::ranges::max_element(sampler.inputs);
+        anim.duration = std::max(anim.duration, max_time);
       }
     }
 
@@ -552,6 +563,7 @@ void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_mate
       assert(a.anim_path != b.anim_path);
       return (int)a.anim_path < (int)b.anim_path;
     });
+
     result.animations.emplace_back(std::move(anim));
   }
 }

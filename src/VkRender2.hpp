@@ -62,6 +62,7 @@ struct GPUInstanceData {
 struct StaticModelInstanceResources {
   std::vector<ObjectData> object_datas;
   std::vector<GPUInstanceData> instance_datas;
+  std::vector<int> node_to_instance_and_obj;
   std::array<u32, MeshPass_Count> mesh_pass_draw_handles{UINT32_MAX};
   util::FreeListAllocator::Slot instance_data_slot;
   util::FreeListAllocator::Slot object_data_slot;
@@ -136,7 +137,7 @@ class VkRender2 final {
 
   bool load_model2(const std::filesystem::path& path, LoadedModelData& result);
   StaticModelInstanceResourcesHandle add_instance(ModelHandle model_handle, const mat4& transform);
-  void update_transforms(LoadedInstanceData& instance, const std::vector<i32>& changed_nodes);
+  void update_transforms(LoadedInstanceData& instance, std::vector<i32>& changed_nodes);
   void update_animation(LoadedInstanceData& instance, float dt);
   void remove_instance(StaticModelInstanceResourcesHandle handle);
   void mark_dirty(InstanceHandle handle);
@@ -284,8 +285,12 @@ class VkRender2 final {
   std::vector<std::array<u32, MeshPass_Count>> shadow_mesh_pass_indices_;
 
   std::vector<StaticModelInstanceResourcesHandle> to_delete_static_model_instances_;
+
+ public:
   Pool<StaticModelInstanceResourcesHandle, StaticModelInstanceResources>
       static_model_instance_pool_;
+
+ private:
   void free(StaticModelInstanceResources& instance);
   void free(CmdEncoder& cmd, StaticModelInstanceResources& instance);
 
@@ -368,7 +373,7 @@ class VkRender2 final {
   u32 tonemap_type_{1};
   const char* tonemap_type_names_[2] = {"Optimized Filmic", "ACES Film"};
   struct FrustumCullSettings {
-    bool enabled{true};
+    bool enabled{false};
     bool paused{false};
   } frustum_cull_settings_;
   vec2 near_far_z_{.1, 10000.f};

@@ -119,6 +119,15 @@ void load_cam(Camera& cam) {
   }
 }
 
+template <typename T>
+int compare_vec(std::span<T> a, std::span<T> b) {
+  for (size_t i = 0; i < a.size(); i++) {
+    if (a[i] != b[i]) {
+      return i;
+    }
+  }
+  return -1;
+};
 }  // namespace
 
 void App::run() {
@@ -172,17 +181,20 @@ void App::run() {
     renderer.new_frame();
     update(dt);
     on_imgui();
-    {
-      ZoneScopedN("update transforms overall");
-      static std::vector<i32> changed_nodes;
-      for (auto& instance_handle : instances_) {
-        auto* instance = ResourceManager::get().get_instance(instance_handle);
-        if (!instance || !instance->is_valid()) continue;
-        VkRender2::get().update_animation(*instance, dt);
-        changed_nodes.clear();
-        if (recalc_global_transforms(instance->scene_graph_data, &changed_nodes)) {
-          VkRender2::get().update_transforms(*instance, changed_nodes);
-        }
+
+    ZoneScopedN("update transforms overall");
+    static std::vector<i32> changed_nodes;
+    for (auto& instance_handle : instances_) {
+      auto* instance = ResourceManager::get().get_instance(instance_handle);
+      if (!instance || !instance->is_valid()) continue;
+      auto* res =
+          VkRender2::get().static_model_instance_pool_.get(instance->instance_resources_handle);
+      assert(res);
+      VkRender2::get().update_animation(*instance, dt);
+      changed_nodes.clear();
+      validate_hierarchy(instance->scene_graph_data);
+      if (recalc_global_transforms(instance->scene_graph_data, &changed_nodes)) {
+        VkRender2::get().update_transforms(*instance, changed_nodes);
       }
     }
     renderer.draw(info_);
@@ -292,7 +304,7 @@ void App::on_imgui() {
       args.filterCount = glm::countof(filters);
       nfdu8char_t* outpath{};
       if (NFD_OpenDialogU8_With(&outpath, &args) == NFD_OKAY) {
-        ResourceManager::get().load_model(outpath);
+        instances_.emplace_back(ResourceManager::get().load_model(outpath));
         NFD_FreePathU8(outpath);
       }
     }
@@ -370,6 +382,19 @@ void App::on_imgui() {
           scene_node_imgui(instance->scene_graph_data, 0);
           ImGui::TreePop();
         }
+
+        for (size_t anim_i = 0; anim_i < instance->animation_states.size(); anim_i++) {
+          ImGui::PushID(anim_i);
+          auto& anim = model->animations[anim_i];
+          if (ImGui::TreeNode("%s", "%s", anim.name.c_str())) {
+            for (auto& channel : anim.channels) {
+              ImGui::Text("%i channel: %i", channel.node, channel.node);
+            }
+            ImGui::TreePop();
+          }
+          ImGui::PopID();
+        }
+
         ImGui::PopID();
         i++;
       }
@@ -398,19 +423,8 @@ void App::on_file_drop(int count, const char** paths) {
   }
 }
 
-namespace {
-
-void decompose_matrix(const glm::mat4& m, glm::vec3& pos, glm::quat& rot, glm::vec3& scale) {
-  pos = m[3];
-  for (int i = 0; i < 3; i++) scale[i] = glm::length(glm::vec3(m[i]));
-  const glm::mat3 rot_mtx(glm::vec3(m[0]) / scale[0], glm::vec3(m[1]) / scale[1],
-                          glm::vec3(m[2]) / scale[2]);
-  rot = glm::quat_cast(rot_mtx);
-}
-
-}  // namespace
-
 void App::scene_node_imgui(gfx::Scene2& scene, int node) {
+  assert(node != -1);
   auto it = scene.node_to_node_name_idx.find(node);
   ImGui::PushID(node);
   if (ImGui::TreeNode("%s", "%s",
@@ -418,6 +432,7 @@ void App::scene_node_imgui(gfx::Scene2& scene, int node) {
                           ? "Node"
                           : scene.node_names[it->second].c_str())) {
     auto& local_transform = scene.local_transforms[node];
+    ImGui::Text("node %i", node);
     if (ImGui::DragFloat("z", &local_transform[3][2])) {
       mark_changed(scene, node);
     }
