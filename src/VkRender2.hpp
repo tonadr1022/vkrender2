@@ -356,6 +356,7 @@ class VkRender2 final {
   PipelineHandle line_draw_pipeline_;
   PipelineHandle transparent_oit_pipeline_;
   PipelineHandle oit_comp_pipeline_;
+  PipelineHandle skinning_comp_pipeline_;
   Format gbuffer_a_format_{Format::R8G8B8A8Unorm};
   Format gbuffer_b_format_{Format::R8G8B8A8Unorm};
   Format gbuffer_c_format_{Format::R8G8B8A8Unorm};

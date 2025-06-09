@@ -9,6 +9,8 @@ struct Vertex {
     vec4 tangent;
 };
 
+#ifndef VERTEX_UNDEF
+
 #ifdef BDA
 layout(std430, buffer_reference) readonly buffer Vertices {
     Vertex vertices[];
@@ -25,6 +27,8 @@ Vertex get_vertex(uint vertex_buffer_idx) {
 Vertex get_vertex(uint vertex_buffer_idx, uint vertex_index) {
     return vertex_buffers[vertex_buffer_idx].vertices[vertex_index];
 }
+#endif
+
 #endif
 
 #endif

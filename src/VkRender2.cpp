@@ -342,6 +342,7 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
                   GraphicsPipelineCreateInfo::depth_enable(false, CompareOp::GreaterOrEqual),
               .name = "transparent_oit"},
           &transparent_oit_pipeline_)
+      .add_compute("animation/skinning.comp", &skinning_comp_pipeline_)
       .add_compute("oit/oit.comp", &oit_comp_pipeline_);
 
   GraphicsPipelineCreateInfo gbuffer_info{
