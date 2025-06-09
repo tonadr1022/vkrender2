@@ -693,7 +693,6 @@ void Device::acquire_next_image(CmdEncoder* cmd) {
       LERROR("vkAcquireNextImageKHR resulted in VK_TIMEOUT, retring");
     }
   } while (acquire_next_image_result == VK_TIMEOUT);
-
   if (acquire_next_image_result != VK_SUCCESS) {
     // handle outdated error
     if (acquire_next_image_result == VK_SUBOPTIMAL_KHR ||
@@ -712,11 +711,13 @@ void Device::acquire_next_image(CmdEncoder* cmd) {
       create_swapchain(swapchain_, desc);
       acquire_next_image(cmd);
     }
-    assert(0);
   }
   assert(swapchain_.release_semaphore);
-  cmd->submit_swapchains_.push_back(&swapchain_);
-  // TODO: barrier the swapchain?
+  // TODO: refactor this LOL
+  if (cmd->submit_swapchains_.empty()) {
+    cmd->submit_swapchains_.push_back(&swapchain_);
+  }
+  assert(cmd->submit_swapchains_.size() == 1);
 }
 
 void Device::begin_frame() { ZoneScoped; }
