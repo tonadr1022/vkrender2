@@ -120,6 +120,8 @@ struct SceneDrawInfo {
   float fov_degrees{70.f};
 };
 
+AABB transform_aabb(const glm::mat4& model, const AABB& aabb);
+
 class VkRender2 final {
  public:
   struct InitInfo {
@@ -174,6 +176,8 @@ class VkRender2 final {
 
   void draw_box(const mat4& model, const vec3& size, const vec4& color = vec4{1.f});
   void draw_box(const mat4& model, const AABB& aabb, const vec4& color = vec4{1.f});
+  void draw_sphere(const glm::vec3& center, float radius, const glm::vec4& color,
+                   int segments = 12);
 
  private:
   Device* device_;

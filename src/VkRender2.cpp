@@ -28,7 +28,6 @@
 #include "ThreadPool.hpp"
 #include "Types.hpp"
 #include "core/Logger.hpp"
-#include "glm/gtc/quaternion.hpp"
 #include "glm/packing.hpp"
 #include "imgui/imgui.h"
 #include "shaders/common.h.glsl"
@@ -498,7 +497,7 @@ void VkRender2::draw(const SceneDrawInfo& info) {
     for (const auto& entry : static_model_instance_pool_.get_entries()) {
       if (!entry.live_) continue;
       for (const auto& obj_data : entry.object.object_datas) {
-        draw_box(obj_data.model, AABB{obj_data.aabb_min, obj_data.aabb_max});
+        draw_box(mat4{1}, AABB{obj_data.aabb_min, obj_data.aabb_max});
       }
     }
   }
@@ -1634,17 +1633,17 @@ void VkRender2::draw_plane(const vec3& o, const vec3& v1, const vec3& v2, float 
 
 void VkRender2::draw_box(const mat4& model, const vec3& size, const vec4& color) {
   std::array<vec3, 8> pts{{
-      {-size.x, -size.y, -size.z},
-      {-size.x, -size.y, size.z},
-      {-size.x, size.y, -size.z},
-      {-size.x, size.y, size.z},
-      {size.x, -size.y, -size.z},
-      {size.x, -size.y, size.z},
-      {size.x, size.y, -size.z},
-      {size.x, size.y, size.z},
+      {-1, -1, -1},
+      {-1, -1, 1},
+      {-1, 1, -1},
+      {-1, 1, 1},
+      {1, -1, -1},
+      {1, -1, 1},
+      {1, 1, -1},
+      {1, 1, 1},
   }};
   for (auto& p : pts) {
-    p = model * vec4(p, 1.f);
+    p = model * vec4(p * size, 1.f);  // scale *after*
   }
   draw_line(pts[0], pts[1], color);
   draw_line(pts[0], pts[2], color);
@@ -1661,8 +1660,8 @@ void VkRender2::draw_box(const mat4& model, const vec3& size, const vec4& color)
 }
 
 void VkRender2::draw_box(const mat4& model, const AABB& aabb, const vec4& color) {
-  draw_box(model * glm::translate(mat4{1.f}, .5f * (aabb.min + aabb.max)),
-           .5f * (aabb.max - aabb.min), color);
+  draw_box(glm::translate(mat4{1.f}, .5f * (aabb.min + aabb.max)), .5f * (aabb.max - aabb.min),
+           color);
 }
 
 void VkRender2::free(StaticModelInstanceResources& instance) {
@@ -1892,21 +1891,6 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
     auto& mesh = resources->mesh_draw_infos[node_mesh_data.mesh_idx];
     // TODO: get rid
     const mat4 model = scene.global_transforms[node_i];
-    // https://stackoverflow.com/questions/6053522/how-to-recalculate-axis-aligned-bounding-box-after-translate-rotate/58630206#58630206
-    auto transform_aabb = [](const glm::mat4& model, const AABB& aabb) -> AABB {
-      AABB result;
-      result.min = glm::vec3(model[3]);  // translation part
-      result.max = result.min;
-      for (int i = 0; i < 3; ++i) {    // for each row (x, y, z in result)
-        for (int j = 0; j < 3; ++j) {  // for each column (x, y, z in input aabb)
-          float a = model[i][j] * aabb.min[j];
-          float b = model[i][j] * aabb.max[j];
-          result.min[i] += glm::min(a, b);
-          result.max[i] += glm::max(a, b);
-        }
-      }
-      return result;
-    };
     AABB world_space_aabb = transform_aabb(model, mesh.aabb);
     scene_min = glm::min(scene_min, world_space_aabb.min);
     scene_max = glm::max(scene_max, world_space_aabb.max);
@@ -1917,8 +1901,8 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
         base_object_data_id + instance_resources->object_datas.size());
     instance_resources->object_datas.emplace_back(gfx::ObjectData{
         .model = model,
-        .aabb_min = vec4(mesh.aabb.min, 0.),
-        .aabb_max = vec4(mesh.aabb.max, 0.),
+        .aabb_min = vec4(world_space_aabb.min, 0.),
+        .aabb_max = vec4(world_space_aabb.max, 0.),
     });
 
     u32 draw_flags{};
@@ -2019,7 +2003,6 @@ void VkRender2::update_transforms(LoadedInstanceData& instance, std::vector<i32>
   assert(model);
   auto* model_resources = model_gpu_resources_pool_.get(model->gpu_resource_handle);
   auto& scene = instance.scene_graph_data;
-  std::ranges::sort(changed_nodes);
   for (auto node_i : changed_nodes) {
     auto mesh_data_i = scene.node_mesh_indices[node_i];
     if (mesh_data_i == -1) continue;
@@ -2030,8 +2013,14 @@ void VkRender2::update_transforms(LoadedInstanceData& instance, std::vector<i32>
         object_datas_to_copy_.size() * sizeof(ObjectData),
         (instance_i * sizeof(ObjectData)) + instance_resources->object_data_slot.get_offset(),
         sizeof(ObjectData));
-    object_datas_to_copy_.emplace_back(scene.global_transforms[node_i],
-                                       vec4{mesh_info.aabb.min, 0.}, vec4{mesh_info.aabb.max, 0.});
+
+    AABB world_aabb = transform_aabb(scene.global_transforms[node_i], mesh_info.aabb);
+    object_datas_to_copy_.emplace_back(scene.global_transforms[node_i], vec4{world_aabb.min, 0.},
+                                       vec4{world_aabb.max, 0.});
+    // object_datas_to_copy_.emplace_back(scene.global_transforms[node_i],
+    //                                    vec4{mesh_info.aabb.min, 0.}, vec4{mesh_info.aabb.max,
+    //                                    0.});
+    instance_resources->object_datas[instance_i] = object_datas_to_copy_.back();
   }
 }
 
@@ -2071,13 +2060,15 @@ void VkRender2::update_animation(LoadedInstanceData& instance, float dt) {
 
   // traverse from the root node? or iterate animations?
   anim_i = 0;
-  instance.node_transforms.clear();
   for (Animation& animation : model->animations) {
     const AnimationState& anim_state = instance.animation_states[anim_i];
-    for (const Channel& channel : animation.channels) {
-      assert(channel.node != -1);
-      assert(channel.sampler_i < animation.samplers.size());
-      const AnimSampler& sampler = animation.samplers[channel.sampler_i];
+    for (size_t channel_i = 0; channel_i < animation.channels.nodes.size(); channel_i++) {
+      int channel_node_i = animation.get_channel_node(channel_i);
+      assert(channel_node_i >= 0);
+      u32 channel_sampler_i = animation.get_channel_sampler_i(channel_i);
+      assert(channel_sampler_i < animation.samplers.size());
+      AnimationPath channel_anim_path = animation.get_channel_anim_path(channel_i);
+      const AnimSampler& sampler = animation.samplers[channel_sampler_i];
       // binary search
       auto it = std::ranges::lower_bound(sampler.inputs, anim_state.curr_t);
       size_t time_i = 0;
@@ -2093,22 +2084,18 @@ void VkRender2::update_animation(LoadedInstanceData& instance, float dt) {
               : get_interpolation_value(sampler.inputs[time_i], sampler.inputs[next_time_i],
                                         anim_state.curr_t);
 
-      auto& nt = instance.node_transforms[channel.node];
-      if (channel.anim_path == AnimationPath::Translation) {
+      auto& nt = instance.scene_graph_data.node_transforms[channel_node_i];
+      if (channel_anim_path == AnimationPath::Translation) {
         assert(sampler.outputs_raw.size() == sampler.inputs.size() * 3);
-        assert(!nt.has_translation);
         const vec3* translations = reinterpret_cast<const vec3*>(sampler.outputs_raw.data());
-        nt.has_translation = true;
         nt.translation =
             sampler.inputs.size() == 1
                 ? translations[0]
                 : glm::mix(translations[time_i], translations[next_time_i], interpolation_val);
-      } else if (channel.anim_path == AnimationPath::Rotation) {
+      } else if (channel_anim_path == AnimationPath::Rotation) {
         assert(sampler.outputs_raw.size() == sampler.inputs.size() * 4);
         assert(time_i < sampler.inputs.size());
-        assert(!nt.has_rotation);
         const quat* rotations = reinterpret_cast<const quat*>(sampler.outputs_raw.data());
-        nt.has_rotation = true;
         if (sampler.inputs.size() == 1) {
           nt.rotation = rotations[0];
         } else {
@@ -2117,10 +2104,8 @@ void VkRender2::update_animation(LoadedInstanceData& instance, float dt) {
           if (glm::dot(q0, q1) < 0.0f) q1 = -q1;  // ensure shortest path
           nt.rotation = glm::normalize(glm::slerp(q0, q1, interpolation_val));
         }
-      } else if (channel.anim_path == AnimationPath::Scale) {
+      } else if (channel_anim_path == AnimationPath::Scale) {
         assert(sampler.outputs_raw.size() == sampler.inputs.size() * 3);
-        assert(!nt.has_scale);
-        nt.has_scale = true;
         const vec3* scales = reinterpret_cast<const vec3*>(sampler.outputs_raw.data());
         nt.scale = sampler.inputs.size() == 1
                        ? scales[0]
@@ -2128,24 +2113,65 @@ void VkRender2::update_animation(LoadedInstanceData& instance, float dt) {
       }
     }
 
-    // TODO: cache!!!!!!
-    for (auto& [node, nt] : instance.node_transforms) {
-      // TODO: cache!!!!!!!
-      vec3 pos, scale;
-      quat rot;
-      decompose_matrix(instance.scene_graph_data.local_transforms[node], pos, rot, scale);
-
-      mat4 t = glm::translate(mat4(1), nt.has_translation ? nt.translation : pos);
-      mat4 r = glm::mat4_cast(nt.has_rotation ? nt.rotation : rot);
-      mat4 s = glm::scale(mat4(1), nt.has_scale ? nt.scale : scale);
-      if (nt.has_translation || nt.has_rotation || nt.has_scale) {
-        instance.scene_graph_data.local_transforms[node] = t * r * s;
-        mark_changed(instance.scene_graph_data, node);
-      }
+    for (size_t channel_i = 0; channel_i < animation.channels.nodes.size(); channel_i++) {
+      auto node_i = animation.get_channel_node(channel_i);
+      const auto& nt = instance.scene_graph_data.node_transforms[node_i];
+      mat4 t = glm::translate(mat4(1), nt.translation);
+      mat4 r = glm::mat4_cast(nt.rotation);
+      mat4 s = glm::scale(mat4(1), nt.scale);
+      instance.scene_graph_data.local_transforms[node_i] = t * r * s;
+      mark_changed(instance.scene_graph_data, node_i);
     }
 
     anim_i++;
   }
 }
 
+// https://stackoverflow.com/questions/6053522/how-to-recalculate-axis-aligned-bounding-box-after-translate-rotate/58630206#58630206
+AABB transform_aabb(const glm::mat4& model, const AABB& aabb) {
+  AABB result;
+  result.min = glm::vec3(model[3]);  // translation part
+  result.max = result.min;
+  for (int i = 0; i < 3; ++i) {    // for each row (x, y, z in result)
+    for (int j = 0; j < 3; ++j) {  // for each column (x, y, z in input aabb)
+      float a = model[j][i] * aabb.min[j];
+      float b = model[j][i] * aabb.max[j];
+      result.min[i] += glm::min(a, b);
+      result.max[i] += glm::max(a, b);
+    }
+  }
+  return result;
+};
+
+void VkRender2::draw_sphere(const glm::vec3& center, float radius, const glm::vec4& color,
+                            int segments) {
+  float step = glm::two_pi<float>() / segments;
+
+  // XY plane
+  for (int i = 0; i < segments; ++i) {
+    float a0 = i * step;
+    float a1 = (i + 1) * step;
+    glm::vec3 p0 = center + radius * glm::vec3(cos(a0), sin(a0), 0);
+    glm::vec3 p1 = center + radius * glm::vec3(cos(a1), sin(a1), 0);
+    draw_line(p0, p1, color);
+  }
+
+  // XZ plane
+  for (int i = 0; i < segments; ++i) {
+    float a0 = i * step;
+    float a1 = (i + 1) * step;
+    glm::vec3 p0 = center + radius * glm::vec3(cos(a0), 0, sin(a0));
+    glm::vec3 p1 = center + radius * glm::vec3(cos(a1), 0, sin(a1));
+    draw_line(p0, p1, color);
+  }
+
+  // YZ plane
+  for (int i = 0; i < segments; ++i) {
+    float a0 = i * step;
+    float a1 = (i + 1) * step;
+    glm::vec3 p0 = center + radius * glm::vec3(0, cos(a0), sin(a0));
+    glm::vec3 p1 = center + radius * glm::vec3(0, cos(a1), sin(a1));
+    draw_line(p0, p1, color);
+  }
+}
 }  // namespace gfx

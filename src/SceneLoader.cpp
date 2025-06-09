@@ -189,17 +189,20 @@ std::vector<uint8_t> read_file(const std::string& full_path) {
   return buffer;
 }
 
-void set_node_transform_from_gltf_node(mat4& local_transform, const fastgltf::Node& gltf_node) {
+void set_node_transform_from_gltf_node(mat4& local_transform, NodeTransform& transform_data,
+                                       const fastgltf::Node& gltf_node) {
   if (std::holds_alternative<fastgltf::math::fmat4x4>(gltf_node.transform)) {
     const auto& mat_data = std::get<fastgltf::math::fmat4x4>(gltf_node.transform);
     local_transform = glm::make_mat4(mat_data.data());
+    decompose_matrix(local_transform, transform_data.translation, transform_data.rotation,
+                     transform_data.scale);
   } else {
     const auto& trs = std::get<fastgltf::TRS>(gltf_node.transform);
-    glm::vec3 trans = glm::make_vec3(trs.translation.data());
-    glm::quat rot = glm::quat(trs.rotation[3], trs.rotation[0], trs.rotation[1], trs.rotation[2]);
-    glm::vec3 scale = glm::make_vec3(trs.scale.data());
-    local_transform = glm::translate(glm::mat4{1}, trans) * glm::mat4_cast(glm::normalize(rot)) *
-                      glm::scale(glm::mat4{1}, scale);
+    transform_data.translation = glm::make_vec3(trs.translation.data());
+    transform_data.rotation =
+        glm::quat(trs.rotation[3], trs.rotation[0], trs.rotation[1], trs.rotation[2]);
+    transform_data.scale = glm::make_vec3(trs.scale.data());
+    transform_data.to_mat4(local_transform);
   }
 }
 
@@ -354,6 +357,7 @@ i32 add_node(Scene2& scene, i32 parent, i32 level) {
   scene.local_transforms.emplace_back(1);
   scene.global_transforms.emplace_back(1);
   scene.node_mesh_indices.emplace_back(-1);
+  scene.node_transforms.emplace_back();
   scene.hierarchies.push_back(Hierarchy{.parent = parent});
   // if parent exists, update it
   if (parent > -1) {
@@ -421,7 +425,8 @@ void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_mate
     i32 new_node = add_node(scene, parent_i, level);
     assert(gltf_node_i_to_node_i[gltf_node_i] == -1);
     gltf_node_i_to_node_i[gltf_node_i] = new_node;
-    set_node_transform_from_gltf_node(scene.local_transforms[new_node], gltf.nodes[gltf_node_i]);
+    set_node_transform_from_gltf_node(scene.local_transforms[new_node],
+                                      scene.node_transforms[new_node], gltf.nodes[gltf_node_i]);
     if (gltf_node.name.size() > 0) {
       scene.node_to_node_name_idx.emplace(new_node, scene.node_names.size());
       scene.node_names.emplace_back(gltf_node.name);
@@ -529,41 +534,29 @@ void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_mate
     }
 
     for (auto& channel : animation.channels) {
-      Channel new_channel{
-          .node =
-              channel.nodeIndex.has_value() ? gltf_node_i_to_node_i[channel.nodeIndex.value()] : -1,
-          .sampler_i = static_cast<u32>(channel.samplerIndex),
-      };
-      assert(new_channel.node != -1);
+      anim.channels.nodes.push_back(
+          channel.nodeIndex.has_value() ? gltf_node_i_to_node_i[channel.nodeIndex.value()] : -1);
+      anim.channels.sampler_indices.push_back(channel.samplerIndex);
+      assert(anim.channels.nodes.back() != -1);
+      AnimationPath anim_path{};
       switch (channel.path) {
         case fastgltf::AnimationPath::Translation:
-          new_channel.anim_path = AnimationPath::Translation;
+          anim_path = AnimationPath::Translation;
           break;
         case fastgltf::AnimationPath::Rotation:
-          new_channel.anim_path = AnimationPath::Rotation;
+          anim_path = AnimationPath::Rotation;
           break;
         case fastgltf::AnimationPath::Scale:
-          new_channel.anim_path = AnimationPath::Scale;
+          anim_path = AnimationPath::Scale;
           break;
         case fastgltf::AnimationPath::Weights:
-          new_channel.anim_path = AnimationPath::Weights;
+          anim_path = AnimationPath::Weights;
           break;
         default:
           assert(0 && "unsupported animation path");
       }
-      anim.channels.emplace_back(new_channel);
+      anim.channels.anim_paths.emplace_back(anim_path);
     }
-    std::ranges::sort(anim.channels, [](const Channel& a, const Channel& b) {
-      if (a.node < b.node) {
-        return true;
-      }
-      if (b.node < a.node) {
-        return false;
-      }
-      assert(a.anim_path != b.anim_path);
-      return (int)a.anim_path < (int)b.anim_path;
-    });
-
     result.animations.emplace_back(std::move(anim));
   }
 }

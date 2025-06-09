@@ -38,32 +38,30 @@ enum class AnimationPath : u8 {
   Weights = 4,
 };
 
-struct Channel {
-  int node{-1};
-  u32 sampler_i{};
-  AnimationPath anim_path{};
-};
-
 struct AnimSampler {
   std::vector<float> inputs;
   std::vector<float> outputs_raw;
 };
 
+struct Channels {
+  std::vector<int> nodes;
+  std::vector<u32> sampler_indices;
+  std::vector<AnimationPath> anim_paths;
+};
+
 struct Animation {
-  std::vector<Channel> channels;
+  Channels channels;
+  [[nodiscard]] int get_channel_node(u32 channel_i) const { return channels.nodes[channel_i]; }
+  [[nodiscard]] u32 get_channel_sampler_i(u32 channel_i) const {
+    return channels.sampler_indices[channel_i];
+  }
+  [[nodiscard]] AnimationPath get_channel_anim_path(u32 channel_i) const {
+    return channels.anim_paths[channel_i];
+  }
   std::vector<AnimSampler> samplers;
   std::string name{"Animation"};
   float ticks_per_second{1.f};
   float duration{0.};
-};
-
-struct NodeTransform {
-  bool has_translation = false;
-  bool has_rotation = false;
-  bool has_scale = false;
-  vec3 translation{0.f};
-  quat rotation{glm::identity<glm::quat>()};
-  vec3 scale{1.f};
 };
 
 struct AnimationState {

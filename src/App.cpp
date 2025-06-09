@@ -190,6 +190,7 @@ void App::run() {
       auto* res =
           VkRender2::get().static_model_instance_pool_.get(instance->instance_resources_handle);
       assert(res);
+      assert(res->instance_datas.size());
       VkRender2::get().update_animation(*instance, dt);
       changed_nodes.clear();
       validate_hierarchy(instance->scene_graph_data);
@@ -383,17 +384,17 @@ void App::on_imgui() {
           ImGui::TreePop();
         }
 
-        for (size_t anim_i = 0; anim_i < instance->animation_states.size(); anim_i++) {
-          ImGui::PushID(anim_i);
-          auto& anim = model->animations[anim_i];
-          if (ImGui::TreeNode("%s", "%s", anim.name.c_str())) {
-            for (auto& channel : anim.channels) {
-              ImGui::Text("%i channel: %i", channel.node, channel.node);
-            }
-            ImGui::TreePop();
-          }
-          ImGui::PopID();
-        }
+        // for (size_t anim_i = 0; anim_i < instance->animation_states.size(); anim_i++) {
+        //   ImGui::PushID(anim_i);
+        //   auto& anim = model->animations[anim_i];
+        //   if (ImGui::TreeNode("%s", "%s", anim.name.c_str())) {
+        //     for (auto& channel : anim.channels) {
+        //       ImGui::Text("%i channel: %i", channel.node, channel.node);
+        //     }
+        //     ImGui::TreePop();
+        //   }
+        //   ImGui::PopID();
+        // }
 
         ImGui::PopID();
         i++;
@@ -431,9 +432,9 @@ void App::scene_node_imgui(gfx::Scene2& scene, int node) {
                       it == scene.node_to_node_name_idx.end()
                           ? "Node"
                           : scene.node_names[it->second].c_str())) {
-    auto& local_transform = scene.local_transforms[node];
     ImGui::Text("node %i", node);
-    if (ImGui::DragFloat("z", &local_transform[3][2])) {
+    if (ImGui::DragFloat3("translation", &scene.node_transforms[node].translation.x)) {
+      scene.node_transforms[node].to_mat4(scene.local_transforms[node]);
       mark_changed(scene, node);
     }
     auto decomp = [&](const mat4& transform) {
@@ -444,6 +445,7 @@ void App::scene_node_imgui(gfx::Scene2& scene, int node) {
       ImGui::Text("rot: %f %f %f %f", rot.x, rot.y, rot.z, rot.w);
       ImGui::Text("scale: %f %f %f", scale.x, scale.y, scale.z);
     };
+    auto& local_transform = scene.local_transforms[node];
     ImGui::PushID(&local_transform);
     decomp(local_transform);
     ImGui::PopID();

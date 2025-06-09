@@ -81,4 +81,8 @@ bool decompose_matrix(const glm::mat4& m, glm::vec3& pos, glm::quat& rot, glm::v
   glm::vec4 perspective;
   return glm::decompose(m, scale, rot, pos, skew, perspective);
 }
+void NodeTransform::to_mat4(mat4& out) const {
+  out = glm::translate(glm::mat4{1}, translation) * glm::mat4_cast(glm::normalize(rotation)) *
+        glm::scale(glm::mat4{1}, scale);
+}
 }  // namespace gfx

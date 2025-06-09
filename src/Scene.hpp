@@ -34,6 +34,13 @@ struct Hierarchy {
   i32 level{0};
 };
 
+struct NodeTransform {
+  vec3 translation{0.f};
+  quat rotation{glm::identity<glm::quat>()};
+  vec3 scale{1.f};
+  void to_mat4(mat4& out) const;
+};
+
 struct Material {
   vec4 emissive_factors{0.};
   vec4 albedo_factors{1.};
@@ -46,6 +53,7 @@ struct Material {
 
 struct Scene2 {
   std::vector<mat4> local_transforms;
+  std::vector<NodeTransform> node_transforms;
   std::vector<mat4> global_transforms;
   std::vector<Hierarchy> hierarchies;
   std::vector<std::string> node_names;

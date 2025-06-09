@@ -9,7 +9,7 @@
 
 layout(local_size_x = 256) in;
 
-#define MODEL_SPACE_AABB 1
+// #define MODEL_SPACE_AABB 1
 
 // bool distance_cull = bool(bitfieldExtract(cull_data.enable_bits, DISTANCE_CULL_BIT, 1));
 // if (distance_cull) {
