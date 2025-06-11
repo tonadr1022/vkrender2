@@ -357,6 +357,7 @@ i32 add_node(Scene2& scene, i32 parent, i32 level) {
   scene.local_transforms.emplace_back(1);
   scene.global_transforms.emplace_back(1);
   scene.node_mesh_indices.emplace_back(-1);
+  scene.skin_indices.emplace_back(-1);
   scene.node_transforms.emplace_back();
   scene.hierarchies.push_back(Hierarchy{.parent = parent});
   // if parent exists, update it
@@ -386,6 +387,32 @@ i32 add_node(Scene2& scene, i32 parent, i32 level) {
 
 void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_material,
               const std::vector<Material>& materials, LoadedSceneBaseData& result) {
+  scene.skins.reserve(gltf.skins.size());
+  u32 curr_bone_offset{};
+  for (const auto& skin : gltf.skins) {
+    SkinData& skin_data = scene.skins.emplace_back();
+
+    if (skin.inverseBindMatrices.has_value()) {
+      const auto& accessor = gltf.accessors[skin.inverseBindMatrices.value()];
+      skin_data.bind_mats.reserve(accessor.count);
+      fastgltf::iterateAccessor<mat4>(
+          gltf, accessor, [&skin_data](const mat4& m) { skin_data.bind_mats.emplace_back(m); });
+      assert(accessor.count == skin.joints.size());
+    } else {
+      skin_data.bind_mats.resize(skin.joints.size(), mat4{1});
+    }
+
+    skin_data.bone_matrix_buffer_offset = curr_bone_offset;
+    curr_bone_offset += skin.joints.size();
+    skin_data.name = skin.name;
+    skin_data.skeleton_node_i = skin.skeleton.value_or(-1);
+    skin_data.joint_node_indices.reserve(skin.joints.size());
+    for (const auto& joint_i : skin.joints) {
+      skin_data.joint_node_indices.emplace_back(joint_i);
+    }
+  }
+  scene.global_bone_mats.resize(curr_bone_offset);
+
   std::vector<int> gltf_node_i_to_node_i(gltf.nodes.size(), -1);
   struct NodeStackEntry {
     int gltf_node_i;
@@ -414,6 +441,7 @@ void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_mate
         .gltf_node_i = static_cast<int>(gltf_node_i), .parent_i = root_node, .level = 1});
   }
 
+  std::vector<int> skinned_vertices;
   while (to_add_node_stack.size() > 0) {
     int gltf_node_i = to_add_node_stack.back().gltf_node_i;
     int parent_i = to_add_node_stack.back().parent_i;
@@ -452,6 +480,11 @@ void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_mate
         primitive_i++;
       }
 
+      // add skinned meshes to buffer
+      if (gltf_node.skinIndex.has_value()) {
+        auto skin_i = gltf_node.skinIndex.value();
+        scene.skin_indices[new_node] = skin_i;
+      }
       // if (gltf_node.skinIndex.has_value()) {
       //   auto skin_i = gltf_node.skinIndex.value();
       //   auto& skin = gltf.skins[skin_i];
@@ -918,11 +951,13 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
 
     u32 num_indices{};
     u32 num_vertices{};
+    u32 num_skinned_vertices{};
     {
       u32 primitive_idx{0};
       u32 mesh_idx{0};
       u32 index_offset{};
       u32 vertex_offset{};
+      u32 skinned_vertex_offset{};
       for (const auto& gltf_mesh : gltf.meshes) {
         for (const auto& gltf_prim : gltf_mesh.primitives) {
           u32 first_index = index_offset;
@@ -930,6 +965,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
           u32 index_count = index_accessor.count;
           index_offset += index_count;
           u32 first_vertex = vertex_offset;
+          u32 first_skinned_vertex = skinned_vertex_offset;
           const auto* pos_attrib = gltf_prim.findAttribute("POSITION");
           if (pos_attrib == gltf_prim.attributes.end()) {
             return {};
@@ -937,11 +973,19 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
           u32 vertex_count = gltf.accessors[pos_attrib->accessorIndex].count;
           vertex_offset += vertex_count;
           num_vertices += vertex_count;
+          num_skinned_vertices += vertex_count;
           num_indices += index_count;
+
+          const auto* joints_attrib = gltf_prim.findAttribute("JOINTS_0");
+          if (joints_attrib != gltf_prim.attributes.end()) {
+            assert(gltf.accessors[joints_attrib->accessorIndex].count == vertex_count);
+            skinned_vertex_offset += vertex_count;
+          }
           result->mesh_draw_infos[primitive_idx++] = {.first_index = first_index,
                                                       .index_count = index_count,
                                                       .first_vertex = first_vertex,
                                                       .vertex_count = vertex_count,
+                                                      .first_skinned_vertex = first_skinned_vertex,
                                                       .mesh_idx = mesh_idx};
         }
         mesh_idx++;
@@ -950,6 +994,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
 
     result->indices.resize(num_indices);
     result->vertices.resize(num_vertices);
+    result->skinned_vertices.resize(num_skinned_vertices);
 
     bool has_tangents = gltf.meshes[0].primitives[0].findAttribute("TANGENT") !=
                         gltf.meshes[0].primitives[0].attributes.end();
@@ -963,9 +1008,13 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
         loaded_tangents_from_disk = true;
       }
     }
+    // for instance in instances
+    // get output vertex offset
+    // get input vertex offset
     {
       futures.clear();
       u64 mesh_draw_idx = 0;
+      std::vector<int> primitive_i_to_skinned_vertices_i;
       for (u64 mesh_idx = 0; mesh_idx < gltf.meshes.size(); mesh_idx++) {
         for (u64 primitive_idx = 0; primitive_idx < gltf.meshes[mesh_idx].primitives.size();
              primitive_idx++, mesh_draw_idx++) {
@@ -986,9 +1035,72 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
             }
             u64 start_i = mesh_draw_info.first_vertex;
             const auto& pos_accessor = gltf.accessors[pos_attrib->accessorIndex];
-            fastgltf::iterateAccessorWithIndex<vec3>(
-                gltf, pos_accessor,
-                [&result, start_i](vec3 pos, u32 i) { result->vertices[start_i + i].pos = pos; });
+
+            const auto* joints_attr = primitive.findAttribute("JOINTS_0");
+            const auto* weights_attr = primitive.findAttribute("WEIGHTS_0");
+            const auto* normal_attrib = primitive.findAttribute("NORMAL");
+
+            if ((joints_attr != primitive.attributes.end() &&
+                 weights_attr != primitive.attributes.end())) {
+              const auto& joints_accessor = gltf.accessors[joints_attr->accessorIndex];
+              const auto& weights_accessor = gltf.accessors[weights_attr->accessorIndex];
+
+              assert(joints_accessor.count == weights_accessor.count);
+              assert(joints_accessor.componentType == fastgltf::ComponentType::UnsignedByte ||
+                     joints_accessor.componentType == fastgltf::ComponentType::UnsignedShort);
+              assert(weights_accessor.componentType == fastgltf::ComponentType::Float);
+
+              u32 start_skinned_i = mesh_draw_info.first_skinned_vertex;
+              u32 vertex_i = 0;
+
+              fastgltf::iterateAccessor<glm::uvec4>(
+                  gltf, joints_accessor, [&](const glm::uvec4& joints) {
+                    for (int k = 0; k < 4; ++k) {
+                      result->skinned_vertices[start_skinned_i + vertex_i].bone_id[k] = joints[k];
+                    }
+                    ++vertex_i;
+                  });
+
+              vertex_i = 0;
+              fastgltf::iterateAccessor<glm::vec4>(
+                  gltf, weights_accessor, [&](const glm::vec4& weights) {
+                    for (int k = 0; k < 4; ++k) {
+                      result->skinned_vertices[start_skinned_i + vertex_i].weights[k] = weights[k];
+                    }
+                    ++vertex_i;
+                  });
+
+              vertex_i = 0;
+              fastgltf::iterateAccessor<vec3>(
+                  gltf, pos_accessor, [&result, start_skinned_i, &vertex_i](vec3 pos) {
+                    result->skinned_vertices[start_skinned_i + vertex_i++].pos = vec4{pos, 0.f};
+                  });
+
+              vertex_i = 0;
+              if (normal_attrib != primitive.attributes.end()) {
+                const auto& normal_accessor = gltf.accessors[normal_attrib->accessorIndex];
+                assert(normal_accessor.count == pos_accessor.count);
+                auto range = fastgltf::iterateAccessor<glm::vec3>(gltf, normal_accessor);
+                for (const glm::vec3& normal : range) {
+                  result->skinned_vertices[start_skinned_i + vertex_i++].normal = vec4{normal, 0.f};
+                }
+              }
+
+            } else {
+              fastgltf::iterateAccessorWithIndex<vec3>(
+                  gltf, pos_accessor,
+                  [&result, start_i](vec3 pos, u32 i) { result->vertices[start_i + i].pos = pos; });
+
+              if (normal_attrib != primitive.attributes.end()) {
+                const auto& normal_accessor = gltf.accessors[normal_attrib->accessorIndex];
+                u64 i = start_i;
+                assert(normal_accessor.count == pos_accessor.count);
+                auto range = fastgltf::iterateAccessor<glm::vec3>(gltf, normal_accessor);
+                for (const glm::vec3& normal : range) {
+                  result->vertices[i++].normal = normal;
+                }
+              }
+            }
 
             glm::vec3 min;
             glm::vec3 max;
@@ -1047,17 +1159,6 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
               calc_tangents<u32>(
                   std::span(result->vertices.data() + (start_i), mesh_draw_info.vertex_count),
                   std::span(result->indices.data() + (start_idx), mesh_draw_info.index_count));
-            }
-
-            const auto* normal_attrib = primitive.findAttribute("NORMAL");
-            if (normal_attrib != primitive.attributes.end()) {
-              const auto& normal_accessor = gltf.accessors[normal_attrib->accessorIndex];
-              u64 i = start_i;
-              assert(normal_accessor.count == pos_accessor.count);
-              auto range = fastgltf::iterateAccessor<glm::vec3>(gltf, normal_accessor);
-              for (const glm::vec3& normal : range) {
-                result->vertices[i++].normal = normal;
-              }
             }
           }));
         }

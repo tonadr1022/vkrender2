@@ -143,9 +143,11 @@ void App::run() {
   // instances_.emplace_back(ResourceManager::get().load_model(
   //     "/Users/tony/models/Models/AlphaBlendModeTest/glTF/AlphaBlendModeTest.gltf"));
 
-  instances_.emplace_back(ResourceManager::get().load_model(
-      "/Users/tony/clone/3D-Graphics-Rendering-Cookbook-Second-Edition/data/meshes/"
-      "medieval_fantasy_book/scene.gltf"));
+  // instances_.emplace_back(ResourceManager::get().load_model(
+  //     "/Users/tony/clone/3D-Graphics-Rendering-Cookbook-Second-Edition/data/meshes/"
+  //     "medieval_fantasy_book/scene.gltf"));
+  instances_.emplace_back(
+      ResourceManager::get().load_model("/Users/tony/models/Models/Fox/glTF/Fox.gltf"));
   // instances_.emplace_back(ResourceManager::get().load_model(
   //     "/Users/tony/models/Models/AnimatedCube/glTF/AnimatedCube.gltf"));
   // instances_.emplace_back(ResourceManager::get().load_model(

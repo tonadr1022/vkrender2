@@ -107,6 +107,7 @@ class FreeListAllocator {
 
   // returns number of bytes freed
   u32 free(Slot slot);
+  [[nodiscard]] u32 get_used_size() const { return used_size_bytes_; }
 
   [[nodiscard]] u32 num_active_allocs() const { return num_active_allocs_; }
   [[nodiscard]] u32 max_seen_active_allocs() const { return max_seen_active_allocs_; }
@@ -116,6 +117,7 @@ class FreeListAllocator {
   u32 alignment_{0};
   u32 num_active_allocs_{0};
   u32 max_seen_active_allocs_{0};
+  u32 used_size_bytes_{0};
   u32 capacity_{};
 
   std::vector<Slot> allocs_;

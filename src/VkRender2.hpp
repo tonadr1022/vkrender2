@@ -40,6 +40,7 @@ struct ModelGPUResources {
   util::FreeListAllocator::Slot indices_slot;
   std::vector<Material> materials;
   u64 first_vertex;
+  u64 first_animated_vertex;
   u64 first_index;
   u64 num_vertices;
   u64 num_indices;
@@ -59,6 +60,13 @@ struct GPUInstanceData {
   u32 material_id;
   u32 instance_id;
 };
+
+struct SkinWorkItem {
+  u32 skinned_vertex_i;
+  u32 out_vertex_i;
+  u32 bone_matrix_start_i;
+};
+
 struct StaticModelInstanceResources {
   std::vector<ObjectData> object_datas;
   std::vector<GPUInstanceData> instance_datas;
@@ -67,8 +75,14 @@ struct StaticModelInstanceResources {
   util::FreeListAllocator::Slot instance_data_slot;
   util::FreeListAllocator::Slot object_data_slot;
   ModelHandle model_handle;
-  // owned by gpu resource
   const char* name;
+  bool is_animated{};
+  // Only if animated
+  Holder<BufferHandle> animated_vertex_buf;
+  Holder<BufferHandle> output_vertex_buf;
+  Holder<BufferHandle> instance_datas_buf;
+  Holder<BufferHandle> object_datas_buf;
+  std::array<Holder<BufferHandle>, MeshPass_Count> mesh_pass_draw_info_bufs;
 };
 
 using ModelGPUResourceHandle = GenerationalHandle<ModelGPUResources>;
@@ -210,6 +224,10 @@ class VkRender2 final {
   };
   SceneUniforms scene_uniform_cpu_data_;
 
+  FreeListBuffer bone_matrix_buf_;
+  FreeListBuffer skinned_vertex_buf_;
+  FreeListBuffer vtx_to_task_buf_;
+  FreeListBuffer skin_work_items_buf_;
   FreeListBuffer static_vertex_buf_;
   FreeListBuffer static_index_buf_;
   FreeListBuffer static_instance_data_buf_;
@@ -298,7 +316,10 @@ class VkRender2 final {
   void free(StaticModelInstanceResources& instance);
   void free(CmdEncoder& cmd, StaticModelInstanceResources& instance);
 
-  enum GPUDrawInfoFlags : u8 { GPUDrawInfoFlags_DoubleSided = (1 << 0) };
+  enum GPUDrawInfoFlags : u8 {
+    GPUDrawInfoFlags_DoubleSided = (1 << 0),
+    GPUDrawInfoFlags_Animated = (1 << 1)
+  };
 
   struct GPUDrawInfo {
     u32 index_cnt;

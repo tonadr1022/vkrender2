@@ -1,6 +1,7 @@
 #ifndef CULL_OBJECTS_COMMON_H
 #define CULL_OBJECTS_COMMON_H
 #define FRUSTUM_CULL_ENABLED_BIT (1 << 0)
+#define CULL_OBJECTS_IGNORE_ANIMATED_BIT (1 << 1)
 
 VK2_DECLARE_ARGUMENTS(CullObjectPushConstants){
 vec4 left;

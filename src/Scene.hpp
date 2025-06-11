@@ -23,6 +23,7 @@ enum PassFlagBits : PassFlags {
 struct MeshData {
   u32 mesh_idx;
   u32 material_id;
+  u32 skinned_mesh_data_idx{UINT32_MAX};
   PassFlags pass_flags{};
 };
 
@@ -51,15 +52,26 @@ struct Material {
   [[nodiscard]] bool is_double_sided() const;
 };
 
+struct SkinData {
+  std::vector<int> joint_node_indices;
+  std::vector<mat4> bind_mats;
+  std::string name;
+  u32 bone_matrix_buffer_offset{};
+  int skeleton_node_i{-1};
+};
+
 struct Scene2 {
   std::vector<mat4> local_transforms;
   std::vector<NodeTransform> node_transforms;
   std::vector<mat4> global_transforms;
+  std::vector<mat4> global_bone_mats;
   std::vector<Hierarchy> hierarchies;
   std::vector<std::string> node_names;
   // TODO: vector here
   std::unordered_map<i32, i32> node_to_node_name_idx;
   std::vector<i32> node_mesh_indices;
+  std::vector<i32> skin_indices;
+  std::vector<SkinData> skins;
   std::vector<MeshData> mesh_datas;
   static constexpr int max_node_depth{25};
   std::vector<u32> changed_this_frame[max_node_depth];

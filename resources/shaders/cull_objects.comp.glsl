@@ -108,6 +108,7 @@ VK2_DECLARE_STORAGE_BUFFERS_RO(ObjectBoundsBuffer){
 ObjectBounds bounds[];
 } object_bounds[];
 
+#define DRAW_INFO_FLAGS_ANIMATED_BIT (1 << 1)
 struct DrawInfo {
     uint index_cnt;
     uint first_index;
@@ -154,8 +155,13 @@ void main() {
     if (draw_info.index_cnt == 0) {
         return;
     }
+    bool is_animated = (draw_info.flags & DRAW_INFO_FLAGS_ANIMATED_BIT) != 0;
+    if ((is_animated && (flags & CULL_OBJECTS_IGNORE_ANIMATED_BIT != 0)) {
+        return;
+    }
+    bool obj_is_visible = is_animated || is_visible(object_bounds[object_bounds_buf_idx].bounds[draw_info.instance_id]);
     // get the object. test its frustum against the view frustum
-    if (is_visible(object_bounds[object_bounds_buf_idx].bounds[draw_info.instance_id])) {
+    if (obj_is_visible) {
         bool double_sided = (draw_info.flags & 0x1) != 0;
         uint out_idx;
         if (double_sided) {

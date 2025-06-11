@@ -29,7 +29,7 @@ struct Vertex {
   float uv_y;
   vec4 tangent;
 };
-inline constexpr u32 max_bones_per_vertex{8};
+inline constexpr u32 max_bones_per_vertex{4};
 
 enum class AnimationPath : u8 {
   Translation = 1,
@@ -72,11 +72,9 @@ struct AnimationState {
 };
 
 struct AnimatedVertex {
-  vec3 pos;
-  float uv_x;
-  vec3 normal;
-  float uv_y;
-  u32 bone_id[max_bones_per_vertex]{~0u, ~0u, ~0u, ~0u, ~0u, ~0u, ~0u, ~0u};
+  vec4 pos;
+  vec4 normal;
+  u32 bone_id[max_bones_per_vertex]{~0u, ~0u, ~0u, ~0u};
   float weights[max_bones_per_vertex]{};
 };
 
@@ -86,6 +84,7 @@ struct PrimitiveDrawInfo {
   u32 index_count;
   u32 first_vertex;
   u32 vertex_count;
+  u32 first_skinned_vertex{~0u};
   u32 mesh_idx;
 };
 
@@ -103,6 +102,7 @@ struct LoadedSceneBaseData {
   Scene2 scene_graph_data;
   std::vector<PrimitiveDrawInfo> mesh_draw_infos;
   std::vector<Vertex> vertices;
+  std::vector<AnimatedVertex> skinned_vertices;
   std::vector<u32> indices;
   std::vector<Holder<ImageHandle>> textures;
   std::vector<Material> materials;

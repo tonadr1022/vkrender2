@@ -79,6 +79,7 @@ FreeListAllocator::Slot FreeListAllocator::allocate(u32 size_bytes) {
   }
   auto res = allocs_.insert(smallest_free_alloc, new_alloc);
   Slot s{res->get_offset(), res->size_};
+  used_size_bytes_ = std::max(used_size_bytes_, res->size_ + res->get_offset());
   s.mark_used();
   return s;
 }

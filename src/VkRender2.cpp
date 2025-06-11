@@ -979,6 +979,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
             if (frustum_cull_settings_.enabled) {
               flags |= FRUSTUM_CULL_ENABLED_BIT;
             }
+            flags |= CULL_OBJECTS_IGNORE_ANIMATED_BIT;
             u32 count = static_cast<u32>(mgr.get_draw_info_buf()->size() / sizeof(GPUDrawInfo));
             CullObjectPushConstants pc{
                 left,
@@ -1000,6 +1001,29 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
           }
         }
       }
+    });
+  }
+  {
+    // skinning
+    auto& skin_pass = rg.add_pass("skinning", RenderGraphPass::Type::Compute);
+    skin_pass.set_execute_fn([this](CmdEncoder& cmd) {
+      u32 cnt = vtx_to_task_buf_.allocator.get_used_size();
+      struct {
+        u64 bone_matrix_buffer;
+        u64 out_vertex_buffer;
+        u64 skinned_vertex_buffer;
+        u64 vtx_to_task_buf;
+        u64 skin_work_items_buf;
+        u64 cnt;
+      } pc{bone_matrix_buf_.get_buffer()->device_addr(),
+           static_vertex_buf_.get_buffer()->device_addr(),
+           skinned_vertex_buf_.get_buffer()->device_addr(),
+           vtx_to_task_buf_.get_buffer()->device_addr(),
+           skin_work_items_buf_.get_buffer()->device_addr(),
+           cnt};
+      cmd.bind_pipeline(PipelineBindPoint::Compute, skinning_comp_pipeline_);
+      cmd.push_constants(sizeof(pc), &pc);
+      cmd.dispatch((cnt + 16) / 16, 1, 1);
     });
   }
 
@@ -1660,7 +1684,7 @@ void VkRender2::draw_box(const mat4& model, const vec3& size, const vec4& color)
   draw_line(pts[6], pts[7], color);
 }
 
-void VkRender2::draw_box(const mat4& model, const AABB& aabb, const vec4& color) {
+void VkRender2::draw_box(const mat4&, const AABB& aabb, const vec4& color) {
   draw_box(glm::translate(mat4{1.f}, .5f * (aabb.min + aabb.max)), .5f * (aabb.max - aabb.min),
            color);
 }
@@ -1826,9 +1850,11 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   static_draw_stats_.total_vertices += resources->num_vertices;
   static_draw_stats_.total_indices += resources->num_indices;
 
+  std::vector<SkinWorkItem> skin_work_items;
+  // for each skinned vertex set, add each vertex to items
+
   u32 pass_double_sided_draw_cnts[MeshPass_Count] = {};
   u32 pass_obj_counts[MeshPass_Count] = {};
-
   const auto& scene = model.scene_graph_data;
   assert(scene.hierarchies.size() == scene.node_mesh_indices.size());
   for (size_t node_i = 0; node_i < scene.hierarchies.size(); node_i++) {
@@ -1866,22 +1892,27 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   instance_resources->model_handle = model_handle;
   instance_resources->name = resources->name.c_str();
 
+  if (model.scene_graph_data.skins.size()) {
+    instance_resources->is_animated = true;
+  }
   instance_resources->object_datas.reserve(num_objs_tot);
   instance_resources->instance_datas.reserve(num_objs_tot);
 
   vec3 scene_min = vec3{std::numeric_limits<float>::max()};
   vec3 scene_max = vec3{std::numeric_limits<float>::lowest()};
   std::array<std::vector<GPUDrawInfo>, MeshPass_Count> pass_cmds;
-  instance_resources->instance_data_slot =
-      static_instance_data_buf_.allocator.allocate(num_objs_tot * sizeof(GPUInstanceData));
-  instance_resources->object_data_slot =
-      static_object_data_buf_.allocator.allocate(num_objs_tot * sizeof(ObjectData));
+  size_t instance_data_buf_size = num_objs_tot * sizeof(GPUInstanceData);
+  size_t obj_data_buf_size = num_objs_tot * sizeof(ObjectData);
 
+  instance_resources->instance_data_slot =
+      static_instance_data_buf_.allocator.allocate(instance_data_buf_size);
+  instance_resources->object_data_slot =
+      static_object_data_buf_.allocator.allocate(obj_data_buf_size);
   u32 base_instance_id =
       instance_resources->instance_data_slot.get_offset() / sizeof(GPUInstanceData);
   u32 base_object_data_id = instance_resources->object_data_slot.get_offset() / sizeof(ObjectData);
-  auto base_material_id = resources->materials_slot.get_offset() / sizeof(Material);
 
+  auto base_material_id = resources->materials_slot.get_offset() / sizeof(Material);
   for (size_t node_i = 0; node_i < scene.hierarchies.size(); node_i++) {
     // TODO: model wide?
     instance_resources->node_to_instance_and_obj.emplace_back(-1);
@@ -1909,6 +1940,10 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
     u32 draw_flags{};
     if (resources->materials[node_mesh_data.material_id].is_double_sided()) {
       draw_flags |= GPUDrawInfoFlags_DoubleSided;
+    }
+
+    if (instance_resources->is_animated) {
+      draw_flags |= GPUDrawInfoFlags_Animated;
     }
 
     GPUDrawInfo draw{.index_cnt = mesh.index_count,
@@ -1950,32 +1985,33 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
       staging.copy(instance_resources->object_datas.data(), obj_datas_size);
   u64 instance_datas_staging_offset =
       staging.copy(instance_resources->instance_datas.data(), instance_datas_size);
-  {
-    assert(obj_datas_size && instance_datas_size);
-    state_.reset(copy_cmd.transfer_cmd_buf);
-    for (int i = 0; i < MeshPass_Count; i++) {
-      auto& cmds = pass_cmds[i];
-      if (cmds.size()) {
-        instance_resources->mesh_pass_draw_handles[i] =
-            static_draw_mgrs_[i].add_draws(state_, copy_cmd, cmds.size() * sizeof(GPUDrawInfo),
-                                           cmds_staging_offsets[i], pass_double_sided_draw_cnts[i]);
-      }
+  assert(obj_datas_size && instance_datas_size);
+
+  state_.reset(copy_cmd.transfer_cmd_buf);
+
+  for (int i = 0; i < MeshPass_Count; i++) {
+    auto& cmds = pass_cmds[i];
+    if (cmds.size()) {
+      instance_resources->mesh_pass_draw_handles[i] =
+          static_draw_mgrs_[i].add_draws(state_, copy_cmd, cmds.size() * sizeof(GPUDrawInfo),
+                                         cmds_staging_offsets[i], pass_double_sided_draw_cnts[i]);
     }
-    copy_cmd.copy_buffer(device_, *static_object_data_buf_.get_buffer(), obj_datas_staging_offset,
-                         instance_resources->object_data_slot.get_offset(), obj_datas_size);
-    copy_cmd.copy_buffer(device_, *static_instance_data_buf_.get_buffer(),
-                         instance_datas_staging_offset,
-                         instance_resources->instance_data_slot.get_offset(), instance_datas_size);
-    state_
-        .buffer_barrier(
-            static_object_data_buf_.get_buffer()->buffer(),
-            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
-            VK_ACCESS_2_SHADER_READ_BIT)
-        .buffer_barrier(static_instance_data_buf_.get_buffer()->buffer(),
-                        VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT)
-        .flush_barriers();
-    device_->graphics_copy_allocator_.submit(copy_cmd);
   }
+  copy_cmd.copy_buffer(device_, *static_object_data_buf_.get_buffer(), obj_datas_staging_offset,
+                       instance_resources->object_data_slot.get_offset(), obj_datas_size);
+  copy_cmd.copy_buffer(device_, *static_instance_data_buf_.get_buffer(),
+                       instance_datas_staging_offset,
+                       instance_resources->instance_data_slot.get_offset(), instance_datas_size);
+  state_
+      .buffer_barrier(
+          static_object_data_buf_.get_buffer()->buffer(),
+          VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+          VK_ACCESS_2_SHADER_READ_BIT)
+      .buffer_barrier(static_instance_data_buf_.get_buffer()->buffer(),
+                      VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT)
+      .flush_barriers();
+  device_->graphics_copy_allocator_.submit(copy_cmd);
+
   return model_instance_resources_handle;
 }
 
@@ -2125,6 +2161,15 @@ void VkRender2::update_animation(LoadedInstanceData& instance, float dt) {
     }
 
     anim_i++;
+  }
+
+  for (auto& skin : instance.scene_graph_data.skins) {
+    for (size_t i = 0; i < skin.joint_node_indices.size(); i++) {
+      int node_i = skin.joint_node_indices[i];
+      const mat4& global_transform = instance.scene_graph_data.global_transforms[node_i];
+      const mat4& joint_mat = global_transform * skin.bind_mats[i];
+      instance.scene_graph_data.global_bone_mats[skin.bone_matrix_buffer_offset + i] = joint_mat;
+    }
   }
 }
 
