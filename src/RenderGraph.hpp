@@ -257,6 +257,7 @@ struct RenderGraph {
   std::vector<uint32_t> pass_stack_;
   std::vector<uint32_t> swapchain_writer_passes_;
   VoidResult traverse_dependencies_recursive(uint32_t pass_i, uint32_t stack_size);
+  std::unordered_set<u32> visited_;
 
   std::unordered_set<uint32_t> dup_prune_set_;
 

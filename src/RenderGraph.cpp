@@ -56,7 +56,9 @@ void get_vk_stage_access(Access access, VkAccessFlags2& out_access,
         VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
   }
   if (access & Access::DepthStencilRead) {
-    out_access |= VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    // TODO: fix
+    out_access |= VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                  VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     out_stages |=
         VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
   }
@@ -276,18 +278,6 @@ VoidResult RenderGraph::bake() {
 
   build_physical_resource_reqs();
 
-  // if (log_) {
-  //   for (auto& res : resources_) {
-  //     if (res.get_type() == RenderResource::Type::Texture) {
-  //       // LINFO("{} {}", res.name, res.physical_idx);
-  //       if (res.physical_idx < physical_resource_dims_.size()) {
-  //         // auto& dims = physical_resource_dims_[res.physical_idx];
-  //         // LINFO("{} {}", res.physical_idx, string_VkImageUsageFlags(dims.image_usage_flags));
-  //       }
-  //     }
-  //   }
-  // }
-
   {
     ZoneScopedN("build physical passes");
     physical_passes_.resize(passes_.size());
@@ -364,9 +354,6 @@ VoidResult RenderGraph::bake() {
         res.invalidated_stages |= invalidate.stages;
         res.initial_layout = invalidate.layout;
         res.final_layout = invalidate.layout;
-        // // pending flushes have been invalidated already
-        // res.flushed_stages = 0;
-        // res.flushed_accesses = 0;
       }
 
       for (auto& flush : phys_pass.flush_barriers) {
@@ -429,7 +416,7 @@ VoidResult RenderGraph::bake() {
           // access sets the last pass which the resource was used as a stage
           phys_pass.flush_barriers.emplace_back(Barrier{.resource_idx = resource_i,
                                                         .layout = res.final_layout,
-                                                        .access = 0,
+                                                        .access = res.invalidated_accesses,
                                                         .stages = res.invalidated_stages});
         }
       }
@@ -484,7 +471,7 @@ void RenderGraph::execute(CmdEncoder& cmd) {
       info.pImageMemoryBarriers = submission_state.image_barriers.data();
 
       if (log_) {
-        LINFO("barriers: {}", pass.get_name());
+        LINFO("print barriers: {}", pass.get_name());
         LINFO("buffers");
         for (auto& b : submission_state.buffer_barriers) {
           print_barrier(b);
@@ -514,9 +501,7 @@ void RenderGraph::execute(CmdEncoder& cmd) {
 
       vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
 
-      // LINFO("pre executed");
       pass.execute_(cmd);
-      // LINFO("executed");
     }
   }
 
@@ -918,6 +903,9 @@ VkImageLayout get_image_layout(Access access) {
   if (access & Access::FragmentRead) {
     return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   }
+  if (access & Access::DepthStencilRead) {
+    return VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+  }
   if (access & Access::DepthStencilRW) {
     return VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL_KHR;
   }
@@ -1190,8 +1178,8 @@ RenderGraph::ResourceState* RenderGraph::get_resource_pipeline_state(u32 idx) {
 
 void RenderGraph::print_pass_order() {
   LINFO("passes: \n");
-  for (auto& pass : physical_passes_) {
-    LINFO("{}", pass.name);
+  for (auto& pass : pass_stack_) {
+    LINFO("{}", passes_[pass].name_);
   }
   LINFO("");
 }

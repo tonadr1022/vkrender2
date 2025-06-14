@@ -51,6 +51,14 @@ struct Material {
   [[nodiscard]] bool is_double_sided() const;
 };
 
+struct SkinData {
+  std::string name;
+  std::vector<u32> joint_node_indices;
+  std::vector<mat4> inverse_bind_matrices;
+  u32 model_bone_mat_start_i{};
+  u32 skeleton_i{};
+};
+
 struct Scene2 {
   std::vector<mat4> local_transforms;
   std::vector<NodeTransform> node_transforms;
@@ -60,9 +68,16 @@ struct Scene2 {
   // TODO: vector here
   std::unordered_map<i32, i32> node_to_node_name_idx;
   std::vector<i32> node_mesh_indices;
+
+  enum NodeFlags : u8 {
+    NodeFlag_IsJointBit = 1 << 0,
+  };
+
+  std::vector<u32> node_flags;
   std::vector<MeshData> mesh_datas;
   static constexpr int max_node_depth{25};
   std::vector<u32> changed_this_frame[max_node_depth];
+  std::vector<SkinData> skins;
 };
 
 void validate_hierarchy(Scene2& scene);

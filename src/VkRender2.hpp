@@ -49,10 +49,17 @@ struct ModelGPUResources {
 
 enum MeshPass : u8 {
   MeshPass_Opaque,
+  MeshPass_OpaqueDoubleSided,
   MeshPass_OpaqueAlphaMask,
+  MeshPass_OpaqueAlphaMaskDoubleSided,
   MeshPass_Transparent,
+  MeshPass_TransparentDoubleSided,
   MeshPass_Count
 };
+
+CullMode get_cull_mode(MeshPass pass);
+MeshPass get_double_sided_pass(MeshPass pass);
+
 std::string to_string(MeshPass p);
 
 struct GPUInstanceData {
@@ -67,8 +74,8 @@ struct StaticModelInstanceResources {
   util::FreeListAllocator::Slot instance_data_slot;
   util::FreeListAllocator::Slot object_data_slot;
   ModelHandle model_handle;
-  // owned by gpu resource
-  const char* name;
+  const char* name;  // owned by gpu resource
+  bool is_animated{};
 };
 
 using ModelGPUResourceHandle = GenerationalHandle<ModelGPUResources>;
@@ -141,6 +148,7 @@ class VkRender2 final {
   StaticModelInstanceResourcesHandle add_instance(ModelHandle model_handle, const mat4& transform);
   void update_transforms(LoadedInstanceData& instance, std::vector<i32>& changed_nodes);
   void update_animation(LoadedInstanceData& instance, float dt);
+  bool update_skins(LoadedInstanceData& instance);
   void remove_instance(StaticModelInstanceResourcesHandle handle);
   void mark_dirty(InstanceHandle handle);
 
@@ -210,6 +218,19 @@ class VkRender2 final {
   };
   SceneUniforms scene_uniform_cpu_data_;
 
+  // animated models:
+  // animated vertices: all one buffer
+  // output vertex buffers: per frame in flight
+  // bone matrix buffers: per frame in flight
+  FreeListBuffer animated_vertex_buf_;
+  // per frame in flight
+  std::vector<Holder<BufferHandle>> animated_vertex_output_bufs_;
+  // per frame in flight
+  std::vector<Holder<BufferHandle>> bone_matrix_bufs_;
+  FreeListBuffer animated_instance_data_buf_;
+  FreeListBuffer animated_object_data_buf_;
+  std::vector<mat4> global_skin_matrices_;
+
   FreeListBuffer static_vertex_buf_;
   FreeListBuffer static_index_buf_;
   FreeListBuffer static_instance_data_buf_;
@@ -220,12 +241,15 @@ class VkRender2 final {
     u64 total_vertices;
     u64 total_indices;
     u32 vertices;
+    u32 animated_vertices;
     u32 indices;
     u32 textures;
     u32 materials;
   };
 
-  std::array<u32, 2> opaque_mesh_pass_idxs_{MeshPass_Opaque, MeshPass_OpaqueAlphaMask};
+  std::array<u32, 4> opaque_mesh_pass_idxs_{MeshPass_Opaque, MeshPass_OpaqueDoubleSided,
+                                            MeshPass_OpaqueAlphaMask,
+                                            MeshPass_OpaqueAlphaMaskDoubleSided};
 
   struct StaticMeshDrawManager {
     static constexpr u32 null_handle{UINT32_MAX};
@@ -238,16 +262,13 @@ class VkRender2 final {
 
     struct Alloc {
       util::FreeListAllocator::Slot draw_cmd_slot;
-      u32 num_double_sided_draws;
     };
 
     struct DrawPass {
-      explicit DrawPass(u32 num_single_sided_draws, u32 num_double_sided_draws,
-                        u32 frames_in_flight, Device* device);
-
-      std::array<std::vector<Holder<BufferHandle>>, 2> out_draw_cmds_bufs;
-      [[nodiscard]] BufferHandle get_frame_out_draw_cmd_buf_handle(bool double_sided) const;
-      [[nodiscard]] Buffer* get_frame_out_draw_cmd_buf(bool double_sided) const;
+      explicit DrawPass(u32 num_draws, u32 frames_in_flight, Device* device);
+      std::vector<Holder<BufferHandle>> out_draw_cmds_bufs;
+      [[nodiscard]] BufferHandle get_frame_out_draw_cmd_buf_handle() const;
+      [[nodiscard]] Buffer* get_frame_out_draw_cmd_buf() const;
       Device* device_;
       bool enabled{true};
     };
@@ -255,20 +276,16 @@ class VkRender2 final {
 
     // TODO: this is a little jank
     u32 add_draws(StateTracker& state, Device::CopyAllocator::CopyCmd& cmd, size_t size,
-                  size_t staging_offset, u32 num_double_sided_draws);
+                  size_t staging_offset);
     void remove_draws(StateTracker& state, CmdEncoder& cmd, u32 handle);
 
     [[nodiscard]] const std::string& get_name() const { return name_; }
-    [[nodiscard]] u32 get_num_draw_cmds(bool double_sided) const {
-      return num_draw_cmds_[double_sided];
-    }
+    [[nodiscard]] u32 get_num_draw_cmds() const { return num_draw_cmds_; }
     [[nodiscard]] BufferHandle get_draw_info_buf_handle() const;
     [[nodiscard]] Buffer* get_draw_info_buf() const;
 
     bool draw_enabled{true};
-    [[nodiscard]] bool should_draw() const {
-      return draw_enabled && (get_num_draw_cmds(false) > 0 || get_num_draw_cmds(true) > 0);
-    }
+    [[nodiscard]] bool should_draw() const { return draw_enabled && get_num_draw_cmds() > 0; }
 
     [[nodiscard]] const std::vector<DrawPass>& get_draw_passes() const { return draw_passes_; }
     [[nodiscard]] const DrawPass& get_draw_pass(u32 idx) const { return draw_passes_[idx]; }
@@ -280,14 +297,14 @@ class VkRender2 final {
     std::vector<Alloc> allocs_;
     std::vector<u32> free_alloc_indices_;
     FreeListBuffer draw_cmds_buf_;
-    u32 num_draw_cmds_[2] = {};  // idx 1 is double sided
+    FreeListBuffer animated_draw_cmds_buf_;
+    u32 num_draw_cmds_{};
     Device* device_{};
     MeshPass mesh_pass_{MeshPass_Count};
   };
 
   std::array<u32, MeshPass_Count> main_view_mesh_pass_indices_;
   std::vector<std::array<u32, MeshPass_Count>> shadow_mesh_pass_indices_;
-
   std::vector<StaticModelInstanceResourcesHandle> to_delete_static_model_instances_;
 
  public:
@@ -308,13 +325,18 @@ class VkRender2 final {
     u32 flags;
   };
 
-  DrawStats static_draw_stats_{};
+  DrawStats draw_stats_{};
 
   std::array<StaticMeshDrawManager, MeshPass_Count> static_draw_mgrs_;
+  std::array<StaticMeshDrawManager, MeshPass_Count> animated_draw_mgrs_;
+  StaticMeshDrawManager& get_mgr(MeshPass pass, bool is_animated) {
+    return is_animated ? animated_draw_mgrs_[pass] : static_draw_mgrs_[pass];
+  }
+
   std::vector<mat4> cull_vp_matrices_;
 
   [[nodiscard]] bool should_draw(const StaticMeshDrawManager& mgr) const;
-  void execute_static_geo_draws(CmdEncoder& cmd, bool double_sided, MeshPass pass);
+  void execute_static_geo_draws(CmdEncoder& cmd, MeshPass pass, bool is_animated = false);
   void execute_draw(CmdEncoder& cmd, BufferHandle buffer, u32 draw_count) const;
 
   AABB scene_aabb_{};

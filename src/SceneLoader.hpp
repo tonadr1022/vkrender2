@@ -73,9 +73,8 @@ struct AnimationState {
 
 struct AnimatedVertex {
   vec3 pos;
-  float uv_x;
-  vec3 normal;
-  float uv_y;
+  u32 instance_i;
+  vec4 normal;
   u32 bone_id[max_bones_per_vertex]{~0u, ~0u, ~0u, ~0u, ~0u, ~0u, ~0u, ~0u};
   float weights[max_bones_per_vertex]{};
 };
@@ -87,6 +86,7 @@ struct PrimitiveDrawInfo {
   u32 first_vertex;
   u32 vertex_count;
   u32 mesh_idx;
+  u32 first_animated_vertex;
 };
 
 struct LoadedSceneData {
@@ -95,6 +95,7 @@ struct LoadedSceneData {
   std::vector<Holder<ImageHandle>> textures;
   std::vector<PrimitiveDrawInfo> mesh_draw_infos;
   std::vector<Vertex> vertices;
+  std::vector<AnimatedVertex> animated_vertices;
   std::vector<u32> indices;
   std::vector<Animation> animations;
 };
@@ -103,6 +104,7 @@ struct LoadedSceneBaseData {
   Scene2 scene_graph_data;
   std::vector<PrimitiveDrawInfo> mesh_draw_infos;
   std::vector<Vertex> vertices;
+  std::vector<AnimatedVertex> animated_vertices;
   std::vector<u32> indices;
   std::vector<Holder<ImageHandle>> textures;
   std::vector<Material> materials;

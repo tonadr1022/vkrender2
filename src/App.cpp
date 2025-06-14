@@ -140,12 +140,15 @@ void App::run() {
 
   // instances_.emplace_back(
   //     ResourceManager::get().load_model("/Users/tony/Downloads/bistro/Exterior/exterior.glb"));
+  instances_.emplace_back(
+      ResourceManager::get().load_model("/Users/tony/models/Models/Fox/glTF/Fox.gltf"));
   // instances_.emplace_back(ResourceManager::get().load_model(
   //     "/Users/tony/models/Models/AlphaBlendModeTest/glTF/AlphaBlendModeTest.gltf"));
 
-  instances_.emplace_back(ResourceManager::get().load_model(
-      "/Users/tony/clone/3D-Graphics-Rendering-Cookbook-Second-Edition/data/meshes/"
-      "medieval_fantasy_book/scene.gltf"));
+  // instances_.emplace_back(ResourceManager::get().load_model(
+  //     "/Users/tony/clone/3D-Graphics-Rendering-Cookbook-Second-Edition/data/meshes/"
+  //     "medieval_fantasy_book/scene.gltf"));
+
   // instances_.emplace_back(ResourceManager::get().load_model(
   //     "/Users/tony/models/Models/AnimatedCube/glTF/AnimatedCube.gltf"));
   // instances_.emplace_back(ResourceManager::get().load_model(
@@ -194,7 +197,9 @@ void App::run() {
       VkRender2::get().update_animation(*instance, dt);
       changed_nodes.clear();
       validate_hierarchy(instance->scene_graph_data);
-      if (recalc_global_transforms(instance->scene_graph_data, &changed_nodes)) {
+      bool dirty_transforms = recalc_global_transforms(instance->scene_graph_data, &changed_nodes);
+      renderer.update_skins(*instance);
+      if (dirty_transforms) {
         VkRender2::get().update_transforms(*instance, changed_nodes);
       }
     }

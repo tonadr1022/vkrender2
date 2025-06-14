@@ -358,6 +358,7 @@ i32 add_node(Scene2& scene, i32 parent, i32 level) {
   scene.global_transforms.emplace_back(1);
   scene.node_mesh_indices.emplace_back(-1);
   scene.node_transforms.emplace_back();
+  scene.node_flags.emplace_back(0);
   scene.hierarchies.push_back(Hierarchy{.parent = parent});
   // if parent exists, update it
   if (parent > -1) {
@@ -558,6 +559,34 @@ void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_mate
       anim.channels.anim_paths.emplace_back(anim_path);
     }
     result.animations.emplace_back(std::move(anim));
+  }
+  auto& out_skins = result.scene_graph_data.skins;
+  u32 tot_matrices = 0;
+  for (auto& gltf_skin : gltf.skins) {
+    auto& new_skin = out_skins.emplace_back(SkinData{
+        .name = std::string{gltf_skin.name},
+        .skeleton_i = static_cast<u32>(gltf_skin.skeleton.value_or(0)),
+    });
+
+    if (gltf_skin.inverseBindMatrices.has_value()) {
+      auto& accessor = gltf.accessors[gltf_skin.inverseBindMatrices.value()];
+      new_skin.inverse_bind_matrices.reserve(gltf_skin.joints.size());
+      fastgltf::iterateAccessor<mat4>(gltf, accessor, [&new_skin](const mat4& m) {
+        new_skin.inverse_bind_matrices.emplace_back(m);
+      });
+    } else {
+      new_skin.inverse_bind_matrices.resize(gltf_skin.joints.size());
+    }
+    new_skin.model_bone_mat_start_i = tot_matrices;
+    tot_matrices += new_skin.inverse_bind_matrices.size();
+
+    // TODO: DOD
+    new_skin.joint_node_indices.reserve(gltf_skin.joints.size());
+    for (const auto& joint_node_index : gltf_skin.joints) {
+      int node_i = gltf_node_i_to_node_i[joint_node_index];
+      out_skins.back().joint_node_indices.emplace_back(node_i);
+      scene.node_flags[node_i] |= Scene2::NodeFlag_IsJointBit;
+    }
   }
 }
 
@@ -918,31 +947,40 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
 
     u32 num_indices{};
     u32 num_vertices{};
+    u32 num_animated_vertices{};
     {
       u32 primitive_idx{0};
       u32 mesh_idx{0};
-      u32 index_offset{};
-      u32 vertex_offset{};
+      u32 animated_vertex_offset{};
       for (const auto& gltf_mesh : gltf.meshes) {
         for (const auto& gltf_prim : gltf_mesh.primitives) {
-          u32 first_index = index_offset;
-          const auto& index_accessor = gltf.accessors[gltf_prim.indicesAccessor.value()];
-          u32 index_count = index_accessor.count;
-          index_offset += index_count;
-          u32 first_vertex = vertex_offset;
+          u32 first_index = num_indices;
+          u32 first_vertex = num_vertices;
+          u32 first_animated_vertex = animated_vertex_offset;
           const auto* pos_attrib = gltf_prim.findAttribute("POSITION");
           if (pos_attrib == gltf_prim.attributes.end()) {
             return {};
           }
+          const auto* joints_attrib = gltf_prim.findAttribute("JOINTS_0");
+          bool animated = joints_attrib != gltf_prim.attributes.end();
+
           u32 vertex_count = gltf.accessors[pos_attrib->accessorIndex].count;
-          vertex_offset += vertex_count;
           num_vertices += vertex_count;
+          if (animated) {
+            num_animated_vertices += vertex_count;
+          }
+
+          const auto& index_accessor = gltf.accessors[gltf_prim.indicesAccessor.value()];
+          u32 index_count = index_accessor.count;
           num_indices += index_count;
-          result->mesh_draw_infos[primitive_idx++] = {.first_index = first_index,
-                                                      .index_count = index_count,
-                                                      .first_vertex = first_vertex,
-                                                      .vertex_count = vertex_count,
-                                                      .mesh_idx = mesh_idx};
+
+          result->mesh_draw_infos[primitive_idx++] = {
+              .first_index = first_index,
+              .index_count = index_count,
+              .first_vertex = first_vertex,
+              .vertex_count = vertex_count,
+              .mesh_idx = mesh_idx,
+              .first_animated_vertex = first_animated_vertex};
         }
         mesh_idx++;
       };
@@ -950,6 +988,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
 
     result->indices.resize(num_indices);
     result->vertices.resize(num_vertices);
+    result->animated_vertices.resize(num_animated_vertices);
 
     bool has_tangents = gltf.meshes[0].primitives[0].findAttribute("TANGENT") !=
                         gltf.meshes[0].primitives[0].attributes.end();
@@ -969,97 +1008,143 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
       for (u64 mesh_idx = 0; mesh_idx < gltf.meshes.size(); mesh_idx++) {
         for (u64 primitive_idx = 0; primitive_idx < gltf.meshes[mesh_idx].primitives.size();
              primitive_idx++, mesh_draw_idx++) {
-          futures.emplace_back(threads::pool.submit_task([&gltf, mesh_idx, primitive_idx, &result,
-                                                          mesh_draw_idx,
-                                                          loaded_tangents_from_disk]() {
-            ZoneScopedN("gltf process primitives");
-            const auto& primitive = gltf.meshes[mesh_idx].primitives[primitive_idx];
-            const auto& index_accessor = gltf.accessors[primitive.indicesAccessor.value()];
-            auto& mesh_draw_info = result->mesh_draw_infos[mesh_draw_idx];
-            u32 start_idx = mesh_draw_info.first_index;
-            fastgltf::iterateAccessorWithIndex<u32>(
-                gltf, index_accessor,
-                [&](uint32_t index, u32 i) { result->indices[start_idx + i] = index; });
-            const auto* pos_attrib = primitive.findAttribute("POSITION");
-            if (pos_attrib == primitive.attributes.end()) {
-              assert(0);
-            }
-            u64 start_i = mesh_draw_info.first_vertex;
-            const auto& pos_accessor = gltf.accessors[pos_attrib->accessorIndex];
-            fastgltf::iterateAccessorWithIndex<vec3>(
-                gltf, pos_accessor,
-                [&result, start_i](vec3 pos, u32 i) { result->vertices[start_i + i].pos = pos; });
-
-            glm::vec3 min;
-            glm::vec3 max;
-
-            bool has_min = false, has_max = false;
-            if (pos_accessor.min.has_value()) {
-              has_min = true;
-              const auto& val = pos_accessor.min.value();
-              min = glm::vec3(val.get<double>(0), val.get<double>(1), val.get<double>(2));
-            }
-            if (pos_accessor.max.has_value()) {
-              has_max = true;
-              const auto& val = pos_accessor.max.value();
-              max = glm::vec3(val.get<double>(0), val.get<double>(1), val.get<double>(2));
-            }
-
-            // If min/max are available, calculate bounds directly
-            if (has_min && has_max) {
-              mesh_draw_info.aabb = {.min = min, .max = max};
-            } else {
-              assert(0 && "why does this gltf not have bounds lmao noob");
-              // calculate bounds from vertices if accessor min/max not set
-              calc_aabb(mesh_draw_info.aabb, &result->vertices[mesh_draw_info.first_vertex],
-                        pos_accessor.count, sizeof(gfx::Vertex), offsetof(gfx::Vertex, pos));
-            }
-
-            const auto* uv_attrib = primitive.findAttribute("TEXCOORD_0");
-            if (uv_attrib != primitive.attributes.end()) {
-              const auto& accessor = gltf.accessors[uv_attrib->accessorIndex];
-
-              assert(accessor.count == pos_accessor.count);
-              u64 i = start_i;
-              auto range = fastgltf::iterateAccessor<glm::vec2>(gltf, accessor);
-              for (const glm::vec2& uv : range) {
-                result->vertices[i].uv_x = uv.x;
-                result->vertices[i++].uv_y = uv.y;
-              }
-            }
-            const auto* tangent_attrib = primitive.findAttribute("TANGENT");
-            if (tangent_attrib != primitive.attributes.end()) {
-              const auto& accessor = gltf.accessors[tangent_attrib->accessorIndex];
-              u64 i = start_i;
-              assert(accessor.count == pos_accessor.count);
-              if (accessor.type == fastgltf::AccessorType::Vec3) {
-                auto range = fastgltf::iterateAccessor<glm::vec3>(gltf, accessor);
-                for (const glm::vec3& tangent : range) {
-                  result->vertices[i++].tangent = vec4(tangent, 0.);
+          futures.emplace_back(
+              threads::pool.submit_task([&gltf, mesh_idx, primitive_idx, &result, mesh_draw_idx,
+                                         loaded_tangents_from_disk]() {
+                ZoneScopedN("gltf process primitives");
+                const auto& primitive = gltf.meshes[mesh_idx].primitives[primitive_idx];
+                const auto& index_accessor = gltf.accessors[primitive.indicesAccessor.value()];
+                auto& mesh_draw_info = result->mesh_draw_infos[mesh_draw_idx];
+                u32 start_idx = mesh_draw_info.first_index;
+                fastgltf::iterateAccessorWithIndex<u32>(
+                    gltf, index_accessor,
+                    [&](uint32_t index, u32 i) { result->indices[start_idx + i] = index; });
+                const auto* pos_attrib = primitive.findAttribute("POSITION");
+                if (pos_attrib == primitive.attributes.end()) {
+                  assert(0);
                 }
-              } else if (accessor.type == fastgltf::AccessorType::Vec4) {
-                auto range = fastgltf::iterateAccessor<glm::vec4>(gltf, accessor);
-                for (const glm::vec4& tangent : range) {
-                  result->vertices[i++].tangent = tangent;
-                }
-              }
-            } else if (!loaded_tangents_from_disk) {
-              calc_tangents<u32>(
-                  std::span(result->vertices.data() + (start_i), mesh_draw_info.vertex_count),
-                  std::span(result->indices.data() + (start_idx), mesh_draw_info.index_count));
-            }
+                const auto* joints_attrib = primitive.findAttribute("JOINTS_0");
+                const auto* weights_attrib = primitive.findAttribute("WEIGHTS_0");
+                bool animated = joints_attrib != primitive.attributes.end();
+                const auto& pos_accessor = gltf.accessors[pos_attrib->accessorIndex];
+                u64 start_i_static = mesh_draw_info.first_vertex;
+                u64 start_i_animated = mesh_draw_info.first_animated_vertex;
 
-            const auto* normal_attrib = primitive.findAttribute("NORMAL");
-            if (normal_attrib != primitive.attributes.end()) {
-              const auto& normal_accessor = gltf.accessors[normal_attrib->accessorIndex];
-              u64 i = start_i;
-              assert(normal_accessor.count == pos_accessor.count);
-              auto range = fastgltf::iterateAccessor<glm::vec3>(gltf, normal_accessor);
-              for (const glm::vec3& normal : range) {
-                result->vertices[i++].normal = normal;
-              }
-            }
-          }));
+                if (animated) {
+                  fastgltf::iterateAccessorWithIndex<vec3>(
+                      gltf, pos_accessor, [&result, start_i_static](const vec3& pos, u32 i) {
+                        result->animated_vertices[start_i_static + i].pos = pos;
+                      });
+
+                  assert(weights_attrib != primitive.attributes.end());
+
+                  fastgltf::iterateAccessorWithIndex<uvec4>(
+                      gltf, gltf.accessors[joints_attrib->accessorIndex],
+                      [&result, start_i_animated](const uvec4& joints, size_t i) {
+                        for (u32 j = 0; j < 4; j++) {
+                          result->animated_vertices[start_i_animated + i].bone_id[j] = joints[j];
+                          assert(j + 4 < max_bones_per_vertex);
+                          result->animated_vertices[start_i_animated + i].bone_id[j + 4] = 0;
+                        }
+                      });
+
+                  fastgltf::iterateAccessorWithIndex<vec4>(
+                      gltf, gltf.accessors[weights_attrib->accessorIndex],
+                      [&result, start_i_animated](const vec4& joints, size_t i) {
+                        for (u32 j = 0; j < 4; j++) {
+                          result->animated_vertices[start_i_animated + i].weights[j] = joints[j];
+                          assert(j + 4 < max_bones_per_vertex);
+                          result->animated_vertices[start_i_animated + i].weights[j + 4] = 0;
+                        }
+                      });
+
+                } else {
+                  fastgltf::iterateAccessorWithIndex<vec3>(
+                      gltf, pos_accessor, [&result, start_i_animated](const vec3& pos, u32 i) {
+                        result->animated_vertices[start_i_animated + i].pos = pos;
+                      });
+                }
+
+                glm::vec3 min;
+                glm::vec3 max;
+
+                bool has_min = false, has_max = false;
+                if (pos_accessor.min.has_value()) {
+                  has_min = true;
+                  const auto& val = pos_accessor.min.value();
+                  min = glm::vec3(val.get<double>(0), val.get<double>(1), val.get<double>(2));
+                }
+                if (pos_accessor.max.has_value()) {
+                  has_max = true;
+                  const auto& val = pos_accessor.max.value();
+                  max = glm::vec3(val.get<double>(0), val.get<double>(1), val.get<double>(2));
+                }
+
+                // If min/max are available, calculate bounds directly
+                if (has_min && has_max) {
+                  mesh_draw_info.aabb = {.min = min, .max = max};
+                } else {
+                  assert(0 && "why does this gltf not have bounds lmao noob");
+                  // calculate bounds from vertices if accessor min/max not set
+                  calc_aabb(mesh_draw_info.aabb, &result->vertices[mesh_draw_info.first_vertex],
+                            pos_accessor.count, sizeof(gfx::Vertex), offsetof(gfx::Vertex, pos));
+                }
+
+                const auto* normal_attrib = primitive.findAttribute("NORMAL");
+                if (normal_attrib != primitive.attributes.end()) {
+                  const auto& normal_accessor = gltf.accessors[normal_attrib->accessorIndex];
+                  if (animated) {
+                    u64 i = start_i_animated;
+                    assert(normal_accessor.count == pos_accessor.count);
+                    auto range = fastgltf::iterateAccessor<glm::vec3>(gltf, normal_accessor);
+                    for (const glm::vec3& normal : range) {
+                      result->animated_vertices[i++].normal = vec4{normal, 0.};
+                    }
+                  } else {
+                    u64 i = start_i_static;
+                    assert(normal_accessor.count == pos_accessor.count);
+                    auto range = fastgltf::iterateAccessor<glm::vec3>(gltf, normal_accessor);
+                    for (const glm::vec3& normal : range) {
+                      result->vertices[i++].normal = normal;
+                    }
+                  }
+                }
+
+                const auto* uv_attrib = primitive.findAttribute("TEXCOORD_0");
+                if (uv_attrib != primitive.attributes.end()) {
+                  const auto& accessor = gltf.accessors[uv_attrib->accessorIndex];
+
+                  assert(accessor.count == pos_accessor.count);
+                  u64 i = start_i_static;
+                  auto range = fastgltf::iterateAccessor<glm::vec2>(gltf, accessor);
+                  for (const glm::vec2& uv : range) {
+                    result->vertices[i].uv_x = uv.x;
+                    result->vertices[i++].uv_y = uv.y;
+                  }
+                }
+                const auto* tangent_attrib = primitive.findAttribute("TANGENT");
+                if (tangent_attrib != primitive.attributes.end()) {
+                  const auto& accessor = gltf.accessors[tangent_attrib->accessorIndex];
+                  u64 i = start_i_static;
+                  assert(accessor.count == pos_accessor.count);
+                  if (accessor.type == fastgltf::AccessorType::Vec3) {
+                    auto range = fastgltf::iterateAccessor<glm::vec3>(gltf, accessor);
+                    for (const glm::vec3& tangent : range) {
+                      result->vertices[i++].tangent = vec4(tangent, 0.);
+                    }
+                  } else if (accessor.type == fastgltf::AccessorType::Vec4) {
+                    auto range = fastgltf::iterateAccessor<glm::vec4>(gltf, accessor);
+                    for (const glm::vec4& tangent : range) {
+                      result->vertices[i++].tangent = tangent;
+                    }
+                  }
+                } else if (!loaded_tangents_from_disk) {
+                  calc_tangents<u32>(
+                      std::span(result->vertices.data() + (start_i_static),
+                                mesh_draw_info.vertex_count),
+                      std::span(result->indices.data() + (start_idx), mesh_draw_info.index_count));
+                }
+              }));
         }
       }
       for (auto& f : futures) {
@@ -1077,6 +1162,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
   traverse(result->scene_graph_data, gltf, Material{}, result->materials, *result);
   mark_changed(result->scene_graph_data, 0);
   recalc_global_transforms(result->scene_graph_data);
+
   return result;
 }
 
@@ -1095,6 +1181,7 @@ std::optional<LoadedSceneData> load_gltf(const std::filesystem::path& path,
                          .textures = std::move(base_scene_data.textures),
                          .mesh_draw_infos = std::move(base_scene_data.mesh_draw_infos),
                          .vertices = std::move(base_scene_data.vertices),
+                         .animated_vertices = std::move(base_scene_data.animated_vertices),
                          .indices = std::move(base_scene_data.indices),
                          .animations = std::move(base_scene_data.animations)};
 }

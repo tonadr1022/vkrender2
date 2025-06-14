@@ -239,9 +239,20 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   }
 
   auto vertices_size = 10'000'000 * sizeof(gfx::Vertex);
+  auto animated_vertices_size = 1'000'000 * sizeof(gfx::AnimatedVertex);
   static_vertex_buf_.buffer = device_->create_buffer_holder(
       {BufferCreateInfo{.size = vertices_size, .usage = BufferUsage_Storage}});
   static_vertex_buf_.allocator.init(vertices_size, sizeof(Vertex));
+  animated_vertex_buf_.buffer = device_->create_buffer_holder(
+      {BufferCreateInfo{.size = animated_vertices_size, .usage = BufferUsage_Storage}});
+  animated_vertex_buf_.allocator.init(animated_vertices_size, sizeof(gfx::AnimatedVertex));
+  for (size_t i = 0; i < device_->get_frames_in_flight(); i++) {
+    animated_vertex_output_bufs_.emplace_back(device_->create_buffer_holder(
+        BufferCreateInfo{.size = animated_vertices_size, .usage = BufferUsage_Storage}));
+    // TODO: lol
+    bone_matrix_bufs_.emplace_back(device_->create_buffer_holder(
+        BufferCreateInfo{.size = 1000 * sizeof(mat4), .usage = BufferUsage_Storage}));
+  }
 
   auto indices_size = 10'000'000 * sizeof(u32);
   static_index_buf_.buffer = device_->create_buffer_holder(BufferCreateInfo{
@@ -249,8 +260,11 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
       .usage = BufferUsage_Index,
   });
   static_index_buf_.allocator.init(indices_size, sizeof(u32));
-  u64 max_static_draws = 100'000;
 
+  u64 max_static_draws = 100'000;
+  u64 max_animated_draws = 10'000;
+
+  // TODO: refactor
   auto static_materials_size = 1000 * sizeof(gfx::Material);
   static_materials_buf_.buffer = device_->create_buffer_holder(
       {BufferCreateInfo{.size = static_materials_size, .usage = BufferUsage_Storage}});
@@ -263,6 +277,19 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   static_instance_data_buf_.allocator.init(max_static_draws * sizeof(GPUInstanceData),
                                            sizeof(GPUInstanceData), 100);
 
+  animated_instance_data_buf_.buffer = device_->create_buffer_holder(BufferCreateInfo{
+      .size = max_animated_draws * sizeof(GPUInstanceData),
+      .usage = BufferUsage_Storage,
+  });
+  animated_instance_data_buf_.allocator.init(max_animated_draws * sizeof(GPUInstanceData),
+                                             sizeof(GPUInstanceData), 100);
+
+  animated_object_data_buf_.buffer = device_->create_buffer_holder(BufferCreateInfo{
+      .size = max_animated_draws * sizeof(ObjectData),
+      .usage = BufferUsage_Storage,
+  });
+  animated_object_data_buf_.allocator.init(max_static_draws * sizeof(ObjectData),
+                                           sizeof(ObjectData), 100);
   static_object_data_buf_.buffer = device_->create_buffer_holder(BufferCreateInfo{
       .size = max_static_draws * sizeof(ObjectData),
       .usage = BufferUsage_Storage,
@@ -364,38 +391,43 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   csm_ = std::make_unique<CSM>(
       &get_device(),
       [this](CmdEncoder& cmd, const mat4& vp, bool opaque_alpha, u32 cascade_i) {
-        u32 pass_i = opaque_alpha ? MeshPass_OpaqueAlphaMask : MeshPass_Opaque;
-        const StaticMeshDrawManager* mgr = &static_draw_mgrs_[pass_i];
-        if (!mgr->should_draw()) return;
-        ShadowDepthPushConstants pc{
-            vp,
-            static_vertex_buf_.get_buffer()->device_addr(),
-            static_instance_data_buf_.get_buffer()->device_addr(),
-            static_object_data_buf_.get_buffer()->device_addr(),
-            device_->get_buffer(curr_frame().scene_uniform_buf)->resource_info_->handle,
-            static_materials_buf_.get_buffer()->resource_info_->handle,
-            device_->get_bindless_idx(linear_sampler_),
-        };
-        cmd.push_constants(sizeof(pc), &pc);
-        cmd.bind_index_buffer(static_index_buf_.buffer.handle);
-        cmd.bind_index_buffer(static_index_buf_.buffer.handle);
-        for (int double_sided = 0; double_sided < 2; double_sided++) {
-          cmd.set_cull_mode(double_sided ? CullMode::None : CullMode::Back);
+        std::array<MeshPass, 2> mesh_passes;
+        if (opaque_alpha) {
+          mesh_passes = {MeshPass_OpaqueAlphaMaskDoubleSided, MeshPass_OpaqueAlphaMask};
+        } else {
+          mesh_passes = {MeshPass_Opaque, MeshPass_OpaqueDoubleSided};
+        }
+        for (auto pass : mesh_passes) {
+          const StaticMeshDrawManager& mgr = static_draw_mgrs_[pass];
+          if (!mgr.should_draw()) return;
+          ShadowDepthPushConstants pc{
+              vp,
+              static_vertex_buf_.get_buffer()->device_addr(),
+              static_instance_data_buf_.get_buffer()->device_addr(),
+              static_object_data_buf_.get_buffer()->device_addr(),
+              device_->get_buffer(curr_frame().scene_uniform_buf)->resource_info_->handle,
+              static_materials_buf_.get_buffer()->resource_info_->handle,
+              device_->get_bindless_idx(linear_sampler_),
+          };
+          cmd.push_constants(sizeof(pc), &pc);
+          cmd.bind_index_buffer(static_index_buf_.buffer.handle);
+          cmd.set_cull_mode(get_cull_mode(mgr.get_mesh_pass()));
           execute_draw(cmd,
-                       mgr->get_draw_pass(shadow_mesh_pass_indices_[cascade_i][pass_i])
-                           .get_frame_out_draw_cmd_buf_handle(double_sided),
-                       mgr->get_num_draw_cmds(double_sided));
+                       mgr.get_draw_pass(shadow_mesh_pass_indices_[cascade_i][pass])
+                           .get_frame_out_draw_cmd_buf_handle(),
+                       mgr.get_num_draw_cmds());
         }
       },
       [this](RenderGraphPass& pass) {
-        MeshPass opaque_passes[] = {MeshPass_Opaque, MeshPass_OpaqueAlphaMask};
+        MeshPass opaque_passes[] = {MeshPass_Opaque, MeshPass_OpaqueDoubleSided,
+                                    MeshPass_OpaqueAlphaMask, MeshPass_OpaqueAlphaMaskDoubleSided};
         for (size_t draw_pass_i = 0; draw_pass_i < COUNTOF(opaque_passes); draw_pass_i++) {
-          auto& mgr = static_draw_mgrs_[draw_pass_i];
-          if (mgr.should_draw()) {
-            for (u32 cascade_i = 0; cascade_i < csm_->get_num_cascade_levels(); cascade_i++) {
-              for (int double_sided = 0; double_sided < 2; double_sided++) {
+          for (int animated = 0; animated < 2; animated++) {
+            auto& mgr = get_mgr((MeshPass)draw_pass_i, animated);
+            if (mgr.should_draw()) {
+              for (u32 cascade_i = 0; cascade_i < csm_->get_num_cascade_levels(); cascade_i++) {
                 pass.add(mgr.get_draw_pass(shadow_mesh_pass_indices_[cascade_i][draw_pass_i])
-                             .get_frame_out_draw_cmd_buf_handle(double_sided),
+                             .get_frame_out_draw_cmd_buf_handle(),
                          Access::IndirectRead);
               }
             }
@@ -409,16 +441,23 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   loader.flush();
   ibl_->init_post_pipeline_load();
 
-  for (int i = 0; i < MeshPass_Count; i++) {
-    static_draw_mgrs_[i].init(static_cast<MeshPass>(i), 1000, device_, to_string((MeshPass)i));
-    main_view_mesh_pass_indices_[i] = static_draw_mgrs_[i].add_draw_pass();
+  for (int animated = 0; animated < 2; animated++) {
+    for (int i = 0; i < MeshPass_Count; i++) {
+      auto& mgr = get_mgr((MeshPass)i, animated);
+      mgr.init(static_cast<MeshPass>(i), 1000, device_,
+               to_string((MeshPass)i) + (animated ? " animated" : ""));
+      // TODO: split up, for now it works since both are parallel but this is terrible
+      main_view_mesh_pass_indices_[i] = mgr.add_draw_pass();
+    }
   }
 
   // main draw passes
   for (u32 i = 0; i < csm_->get_num_cascade_levels(); i++) {
     auto& state = shadow_mesh_pass_indices_.emplace_back();
     for (u32 pass_i : opaque_mesh_pass_idxs_) {
-      state[pass_i] = static_draw_mgrs_[pass_i].add_draw_pass();
+      for (int animated = 0; animated < 2; animated++) {
+        state[pass_i] = get_mgr((MeshPass)pass_i, animated).add_draw_pass();
+      }
     }
   }
   default_env_map_path_ = info.resource_dir / "hdr" / "newport_loft.hdr";
@@ -560,6 +599,7 @@ void VkRender2::draw(const SceneDrawInfo& info) {
     LERROR("bake error {}", res.error());
     exit(1);
   }
+  // rg_.print_pass_order();
 
   rg_.setup_attachments();
   rg_.execute(*cmd);
@@ -581,13 +621,14 @@ void VkRender2::on_imgui() {
     }
     if (ImGui::TreeNode("stats")) {
       if (ImGui::TreeNode("static geometry")) {
-        ImGui::Text("Total vertices: %lu", (size_t)static_draw_stats_.total_vertices);
-        ImGui::Text("Total indices: %lu", (size_t)static_draw_stats_.total_indices);
-        ImGui::Text("Total triangles: %lu", (size_t)static_draw_stats_.total_vertices / 3);
-        ImGui::Text("Vertices %u", static_draw_stats_.vertices);
-        ImGui::Text("Indices: %u", static_draw_stats_.indices);
-        ImGui::Text("Materials: %u", static_draw_stats_.materials);
-        ImGui::Text("Textures: %u", static_draw_stats_.textures);
+        ImGui::Text("Total vertices: %lu", (size_t)draw_stats_.total_vertices);
+        ImGui::Text("Total indices: %lu", (size_t)draw_stats_.total_indices);
+        ImGui::Text("Total triangles: %lu", (size_t)draw_stats_.total_vertices / 3);
+        ImGui::Text("Total animated vertices: %lu", (size_t)draw_stats_.animated_vertices);
+        ImGui::Text("Vertices %u", draw_stats_.vertices);
+        ImGui::Text("Indices: %u", draw_stats_.indices);
+        ImGui::Text("Materials: %u", draw_stats_.materials);
+        ImGui::Text("Textures: %u", draw_stats_.textures);
         ImGui::TreePop();
       }
       ImGui::TreePop();
@@ -618,16 +659,18 @@ void VkRender2::on_imgui() {
     }
 
     if (ImGui::TreeNodeEx("Static Geo", ImGuiTreeNodeFlags_DefaultOpen)) {
-      for (auto& mgr : static_draw_mgrs_) {
-        ImGui::PushID(&mgr);
-        if (ImGui::TreeNodeEx(mgr.get_name().c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
-          ImGui::Text("draws %u (%u double sided)",
-                      mgr.get_num_draw_cmds(false) + mgr.get_num_draw_cmds(true),
-                      mgr.get_num_draw_cmds(true));
-          ImGui::Checkbox("Enabled", &mgr.draw_enabled);
-          ImGui::TreePop();
+      ImGui::Text("TODO LMAO");
+      for (int mesh_pass = 0; mesh_pass < MeshPass_Count; mesh_pass++) {
+        for (int animated = 0; animated < 2; animated++) {
+          auto& mgr = get_mgr((MeshPass)mesh_pass, animated);
+          ImGui::PushID(&mgr);
+          if (ImGui::TreeNodeEx(mgr.get_name().c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Text("draws %u", mgr.get_num_draw_cmds());
+            ImGui::Checkbox("Enabled", &mgr.draw_enabled);
+            ImGui::TreePop();
+          }
+          ImGui::PopID();
         }
-        ImGui::PopID();
       }
 
       ImGui::TreePop();
@@ -894,24 +937,48 @@ void VkRender2::generate_mipmaps(CmdEncoder& ctx, ImageHandle handle) {
 
 void VkRender2::add_rendering_passes(RenderGraph& rg) {
   ZoneScoped;
+  if (draw_stats_.animated_vertices > 0) {
+    auto& skinning = rg.add_pass("skinning");
+    skinning.add(animated_vertex_output_bufs_[device_->curr_frame_in_flight()].handle,
+                 Access::ComputeWrite);
+    skinning.set_execute_fn([this](CmdEncoder& cmd) {
+      cmd.bind_pipeline(PipelineBindPoint::Compute, skinning_comp_pipeline_);
+      struct {
+        u64 bone_mat_buf;
+        u64 out_vertex_buf;
+        u64 skinned_vertex_buf;
+        // u64 instance_data_buf;
+      } pc{
+          device_->get_buffer(bone_matrix_bufs_[device_->curr_frame_in_flight()])->device_addr(),
+          device_->get_buffer(animated_vertex_output_bufs_[device_->curr_frame_in_flight()])
+              ->device_addr(),
+          device_->get_buffer(animated_vertex_buf_.buffer)->device_addr(),
+      };
+      cmd.push_constants(sizeof(pc), &pc);
+      // num vertices
+      cmd.dispatch(draw_stats_.animated_vertices, 1, 1);
+    });
+  }
   {
     auto& clear_buff = rg.add_pass("clear_draw_cnt_buf");
-
-    for (auto& mgr : static_draw_mgrs_) {
-      if (mgr.should_draw()) {
-        for (const auto& draw_pass : mgr.get_draw_passes()) {
-          clear_buff.add(draw_pass.get_frame_out_draw_cmd_buf_handle(false), Access::TransferWrite);
-          clear_buff.add(draw_pass.get_frame_out_draw_cmd_buf_handle(true), Access::TransferWrite);
+    for (int animated = 0; animated < 2; animated++) {
+      for (int i = 0; i < MeshPass_Count; i++) {
+        auto& mgr = get_mgr((MeshPass)i, animated);
+        if (mgr.should_draw()) {
+          for (const auto& draw_pass : mgr.get_draw_passes()) {
+            clear_buff.add(draw_pass.get_frame_out_draw_cmd_buf_handle(), Access::TransferWrite);
+          }
         }
       }
     }
 
     clear_buff.set_execute_fn([this](CmdEncoder& cmd) {
-      for (auto& mgr : static_draw_mgrs_) {
-        if (!mgr.should_draw()) continue;
-        for (const auto& draw_pass : mgr.get_draw_passes()) {
-          for (int double_sided = 0; double_sided < 2; double_sided++) {
-            auto buf = draw_pass.get_frame_out_draw_cmd_buf_handle(double_sided);
+      for (int animated = 0; animated < 2; animated++) {
+        for (int i = 0; i < MeshPass_Count; i++) {
+          auto& mgr = get_mgr((MeshPass)i, animated);
+          if (!mgr.should_draw()) continue;
+          for (const auto& draw_pass : mgr.get_draw_passes()) {
+            auto buf = draw_pass.get_frame_out_draw_cmd_buf_handle();
             if (!device_->is_supported(DeviceFeature::DrawIndirectCount)) {
               // TODO: only fill the unfilled portion after culling?
               // fill whole buffer with 0 since can't use draw indirect count.
@@ -927,76 +994,85 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
 
   {
     auto& cull = rg.add_pass("cull");
-    for (const auto& mgr : static_draw_mgrs_) {
-      if (mgr.should_draw()) {
-        for (const auto& draw_pass : mgr.get_draw_passes()) {
-          cull.add(draw_pass.get_frame_out_draw_cmd_buf_handle(false), Access::ComputeRW);
-          cull.add(draw_pass.get_frame_out_draw_cmd_buf_handle(true), Access::ComputeRW);
+    for (int animated = 0; animated < 2; animated++) {
+      for (int i = 0; i < MeshPass_Count; i++) {
+        auto& mgr = get_mgr((MeshPass)i, animated);
+        if (mgr.should_draw()) {
+          for (const auto& draw_pass : mgr.get_draw_passes()) {
+            cull.add(draw_pass.get_frame_out_draw_cmd_buf_handle(), Access::ComputeRW);
+          }
         }
       }
     }
     cull.set_execute_fn([this](CmdEncoder& cmd) {
       cmd.bind_pipeline(PipelineBindPoint::Compute, cull_objs_pipeline_);
-      for (const auto& mgr : static_draw_mgrs_) {
-        if (mgr.should_draw()) {
-          for (u32 i = 0; i < mgr.get_draw_passes().size(); i++) {
-            assert(i < cull_vp_matrices_.size());
-            if (i >= cull_vp_matrices_.size()) break;
-            const auto& draw_pass = mgr.get_draw_passes()[i];
-            // extract frustum planes
-            auto extract_planes_from_projmat = [](const mat4& mat, vec4& left, vec4& right,
-                                                  vec4& bottom, vec4& top, vec4& near, vec4& far) {
-              for (int i = 4; i--;) {
-                left[i] = mat[i][3] + mat[i][0];
+      for (int animated = 0; animated < 2; animated++) {
+        for (int i = 0; i < MeshPass_Count; i++) {
+          auto& mgr = get_mgr((MeshPass)i, animated);
+          if (mgr.should_draw()) {
+            for (u32 i = 0; i < mgr.get_draw_passes().size(); i++) {
+              assert(i < cull_vp_matrices_.size());
+              if (i >= cull_vp_matrices_.size()) break;
+              // extract frustum planes
+              auto extract_planes_from_projmat = [](const mat4& mat, vec4& left, vec4& right,
+                                                    vec4& bottom, vec4& top, vec4& near,
+                                                    vec4& far) {
+                for (int i = 4; i--;) {
+                  left[i] = mat[i][3] + mat[i][0];
+                }
+                for (int i = 4; i--;) {
+                  right[i] = mat[i][3] - mat[i][0];
+                }
+                for (int i = 4; i--;) {
+                  bottom[i] = mat[i][3] + mat[i][1];
+                }
+                for (int i = 4; i--;) {
+                  top[i] = mat[i][3] - mat[i][1];
+                }
+                for (int i = 4; i--;) {
+                  near[i] = mat[i][3] + mat[i][2];
+                }
+                for (int i = 4; i--;) {
+                  far[i] = mat[i][3] - mat[i][2];
+                }
+                auto normalize_plane = [](vec4& plane) { plane /= glm::length(vec3(plane)); };
+                normalize_plane(left);
+                normalize_plane(right);
+                normalize_plane(bottom);
+                normalize_plane(top);
+                normalize_plane(near);
+                normalize_plane(far);
+              };
+              vec4 left, right, bottom, top, near, far;
+              const auto& vp = cull_vp_matrices_[i];
+              extract_planes_from_projmat(vp, left, right, bottom, top, near, far);
+              u32 flags{};
+              if (frustum_cull_settings_.enabled) {
+                flags |= FRUSTUM_CULL_ENABLED_BIT;
               }
-              for (int i = 4; i--;) {
-                right[i] = mat[i][3] - mat[i][0];
-              }
-              for (int i = 4; i--;) {
-                bottom[i] = mat[i][3] + mat[i][1];
-              }
-              for (int i = 4; i--;) {
-                top[i] = mat[i][3] - mat[i][1];
-              }
-              for (int i = 4; i--;) {
-                near[i] = mat[i][3] + mat[i][2];
-              }
-              for (int i = 4; i--;) {
-                far[i] = mat[i][3] - mat[i][2];
-              }
-              auto normalize_plane = [](vec4& plane) { plane /= glm::length(vec3(plane)); };
-              normalize_plane(left);
-              normalize_plane(right);
-              normalize_plane(bottom);
-              normalize_plane(top);
-              normalize_plane(near);
-              normalize_plane(far);
-            };
-            vec4 left, right, bottom, top, near, far;
-            const auto& vp = cull_vp_matrices_[i];
-            extract_planes_from_projmat(vp, left, right, bottom, top, near, far);
-            u32 flags{};
-            if (frustum_cull_settings_.enabled) {
-              flags |= FRUSTUM_CULL_ENABLED_BIT;
+              // TODO: diff count here, actual draw cnt
+              u32 count = static_cast<u32>(mgr.get_draw_info_buf()->size() / sizeof(GPUDrawInfo));
+              const auto& draw_pass = mgr.get_draw_passes()[i];
+              auto& obj_data_buf = static_object_data_buf_;
+              // auto& obj_data_buf = animated ? animated_object_data_buf_ :
+              // static_object_data_buf_;
+              CullObjectPushConstants pc{
+                  left,
+                  right,
+                  bottom,
+                  top,
+                  near,
+                  far,
+                  device_->get_buffer(curr_frame().scene_uniform_buf)->device_addr(),
+                  count,
+                  mgr.get_draw_info_buf()->resource_info_->handle,
+                  draw_pass.get_frame_out_draw_cmd_buf()->resource_info_->handle,
+                  obj_data_buf.get_buffer()->resource_info_->handle,
+                  flags,
+              };
+              cmd.push_constants(sizeof(pc), &pc);
+              cmd.dispatch((count + 256) / 256, 1, 1);
             }
-            u32 count = static_cast<u32>(mgr.get_draw_info_buf()->size() / sizeof(GPUDrawInfo));
-            CullObjectPushConstants pc{
-                left,
-                right,
-                bottom,
-                top,
-                near,
-                far,
-                device_->get_buffer(curr_frame().scene_uniform_buf)->device_addr(),
-                count,
-                mgr.get_draw_info_buf()->resource_info_->handle,
-                draw_pass.get_frame_out_draw_cmd_buf(false)->resource_info_->handle,
-                draw_pass.get_frame_out_draw_cmd_buf(true)->resource_info_->handle,
-                static_object_data_buf_.get_buffer()->resource_info_->handle,
-                flags,
-            };
-            cmd.push_constants(sizeof(pc), &pc);
-            cmd.dispatch((count + 256) / 256, 1, 1);
           }
         }
       }
@@ -1013,23 +1089,16 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
     auto rg_final_out_handle =
         forward.add("draw_out", {.format = draw_img_format_}, Access::ColorWrite);
 
-    for (int double_sided = 0; double_sided < 2; double_sided++) {
-      for (int pass_i = 0; pass_i < MeshPass_Count; pass_i++) {
-        auto& mgr = static_draw_mgrs_[pass_i];
+    for (int pass_i = 0; pass_i < MeshPass_Count; pass_i++) {
+      for (int animated = 0; animated < 2; animated++) {
+        auto& mgr = get_mgr((MeshPass)pass_i, animated);
         if (mgr.should_draw()) {
           forward.add(mgr.get_draw_pass(main_view_mesh_pass_indices_[pass_i])
-                          .get_frame_out_draw_cmd_buf_handle(double_sided),
+                          .get_frame_out_draw_cmd_buf_handle(),
                       Access::IndirectRead);
         }
       }
     }
-    // for (const auto& mgr : static_draw_mgrs_) {
-    //   if (mgr.should_draw()) {
-    //     forward.add(
-    //         mgr->get_draw_pass()[main_mesh_pass_idx_].get_frame_out_draw_cmd_buf_handle(false),
-    //         Access::IndirectRead);
-    //   }
-    // }
     if (csm_enabled.get()) {
       forward.add(csm_->get_shadow_data_buffer(device_->curr_frame_num()), Access::FragmentRead);
       forward.add("shadow_map_img", csm_->get_shadow_map_att_info(), Access::FragmentRead);
@@ -1065,7 +1134,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
       // TODO: double sided
       cmd.bind_pipeline(PipelineBindPoint::Graphics, draw_pipeline_);
       for (int pass_i = 0; pass_i < MeshPass_Count; pass_i++) {
-        execute_static_geo_draws(cmd, false, static_cast<MeshPass>(pass_i));
+        execute_static_geo_draws(cmd, static_cast<MeshPass>(pass_i));
       }
       draw_skybox(cmd);
       cmd.end_rendering();
@@ -1079,13 +1148,17 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
           gbuffer.add("gbuffer_b", {.format = gbuffer_b_format_}, Access::ColorWrite);
       auto rg_gbuffer_c =
           gbuffer.add("gbuffer_c", {.format = gbuffer_c_format_}, Access::ColorWrite);
+      if (draw_stats_.animated_vertices > 0) {
+        gbuffer.add(animated_vertex_output_bufs_[device_->curr_frame_in_flight()].handle,
+                    (Access)(Access::VertexRead | Access::ComputeRead));
+      }
 
-      for (int double_sided = 0; double_sided < 2; double_sided++) {
+      for (int animated = 0; animated < 2; animated++) {
         for (u32 pass_i : opaque_mesh_pass_idxs_) {
-          auto& mgr = static_draw_mgrs_[pass_i];
+          auto& mgr = get_mgr((MeshPass)pass_i, animated);
           if (mgr.should_draw()) {
             gbuffer.add(mgr.get_draw_pass(main_view_mesh_pass_indices_[pass_i])
-                            .get_frame_out_draw_cmd_buf_handle(double_sided),
+                            .get_frame_out_draw_cmd_buf_handle(),
                         Access::IndirectRead);
           }
         }
@@ -1094,6 +1167,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
           gbuffer.add("depth", {.format = depth_img_format_}, Access::DepthStencilWrite);
       gbuffer.set_execute_fn(
           [&rg, rg_gbuffer_a, rg_gbuffer_b, rg_gbuffer_c, this, rg_depth_handle](CmdEncoder& cmd) {
+            cmd.begin_region("gbuffer");
             auto gbuffer_a = rg.get_texture_handle(rg_gbuffer_a);
             auto gbuffer_b = rg.get_texture_handle(rg_gbuffer_b);
             auto gbuffer_c = rg.get_texture_handle(rg_gbuffer_c);
@@ -1107,29 +1181,33 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
 
             cmd.set_viewport_and_scissor(extent);
 
-            cmd.bind_pipeline(PipelineBindPoint::Graphics, gbuffer_pipeline_);
-            GBufferPushConstants pc{
-                static_vertex_buf_.get_buffer()->device_addr(),
-                device_->get_buffer(curr_frame().scene_uniform_buf)->device_addr(),
-                static_instance_data_buf_.get_buffer()->device_addr(),
-                static_object_data_buf_.get_buffer()->device_addr(),
-                static_materials_buf_.get_buffer()->device_addr(),
-                device_->get_bindless_idx(linear_sampler_),
-            };
-            cmd.push_constants(sizeof(pc), &pc);
-            cmd.set_cull_mode(CullMode::Back);
-            execute_static_geo_draws(cmd, false, MeshPass_Opaque);
-            cmd.set_cull_mode(CullMode::None);
-            execute_static_geo_draws(cmd, true, MeshPass_Opaque);
-            if (gbuffer_alpha_mask_pipeline_ == gbuffer_pipeline_) {
-              exit(1);
+            // TODO: pipeline binding should be on the outside
+            for (int animated = 0; animated < 2; animated++) {
+              if (animated && draw_stats_.animated_vertices > 0) {
+                continue;
+              }
+              GBufferPushConstants pc{
+                  animated ? animated_vertex_buf_.get_buffer()->device_addr()
+                           : static_vertex_buf_.get_buffer()->device_addr(),
+                  device_->get_buffer(curr_frame().scene_uniform_buf)->device_addr(),
+                  static_instance_data_buf_.get_buffer()->device_addr(),
+                  static_object_data_buf_.get_buffer()->device_addr(),
+                  static_materials_buf_.get_buffer()->device_addr(),
+                  device_->get_bindless_idx(linear_sampler_),
+              };
+              cmd.push_constants(sizeof(pc), &pc);
+              cmd.bind_pipeline(PipelineBindPoint::Graphics, gbuffer_pipeline_);
+              execute_static_geo_draws(cmd, MeshPass_Opaque, animated);
+              execute_static_geo_draws(cmd, MeshPass_OpaqueDoubleSided, animated);
+              if (gbuffer_alpha_mask_pipeline_ == gbuffer_pipeline_) {
+                exit(1);
+              }
+              cmd.bind_pipeline(PipelineBindPoint::Graphics, gbuffer_alpha_mask_pipeline_);
+              execute_static_geo_draws(cmd, MeshPass_OpaqueAlphaMask, animated);
+              execute_static_geo_draws(cmd, MeshPass_OpaqueAlphaMaskDoubleSided, animated);
             }
-            cmd.bind_pipeline(PipelineBindPoint::Graphics, gbuffer_alpha_mask_pipeline_);
-            cmd.set_cull_mode(CullMode::Back);
-            execute_static_geo_draws(cmd, false, MeshPass_OpaqueAlphaMask);
-            cmd.set_cull_mode(CullMode::None);
-            execute_static_geo_draws(cmd, true, MeshPass_OpaqueAlphaMask);
             cmd.end_rendering();
+            cmd.end_region();
           });
     }
     {
@@ -1183,10 +1261,10 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
     {
       auto& skybox = rg.add_pass("skybox");
       auto draw_tex = skybox.add("draw_out", {.format = draw_img_format_}, Access::ColorRW);
-      auto depth_handle =
-          skybox.add("depth", {.format = depth_img_format_}, Access::DepthStencilRead);
+      auto depth_handle = skybox.add_image_access("depth", (Access)(Access::DepthStencilRead));
 
       skybox.set_execute_fn([this, &rg, draw_tex, depth_handle](CmdEncoder& cmd) {
+        cmd.begin_region("skybox");
         auto tex = rg.get_texture_handle(draw_tex);
 
         auto dims = device_->get_image(tex)->size();
@@ -1198,10 +1276,18 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
 
         draw_skybox(cmd);
         cmd.end_rendering();
+        cmd.end_region();
       });
     }
   }
-  bool oit_pass_needed = oit_enabled_ && static_draw_mgrs_[MeshPass_Transparent].should_draw();
+
+  bool oit_pass_needed = oit_enabled_;
+  for (int animated = 0; animated < 2; animated++) {
+    oit_pass_needed = oit_pass_needed ||
+                      get_mgr(MeshPass_TransparentDoubleSided, animated).should_draw() ||
+                      get_mgr(MeshPass_Transparent, animated).should_draw();
+  }
+
   const char* post_process_input_img_name = "draw_out";
   if (oit_pass_needed) {
     post_process_input_img_name = "oit_out";
@@ -1222,12 +1308,16 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
     {
       auto& transparent_draw_pass = rg.add_pass("transparent_draw");
       // draw cmd inputs
-      for (int double_sided = 0; double_sided < 2; double_sided++) {
-        auto& mgr = static_draw_mgrs_[MeshPass_Transparent];
-        transparent_draw_pass.add(
-            mgr.get_draw_pass(main_view_mesh_pass_indices_[MeshPass_Transparent])
-                .get_frame_out_draw_cmd_buf_handle(double_sided),
-            Access::IndirectRead);
+      MeshPass passes[2] = {MeshPass_Transparent, MeshPass_TransparentDoubleSided};
+      for (auto pass : passes) {
+        for (int animated = 0; animated < 2; animated++) {
+          auto& mgr = get_mgr(pass, animated);
+          if (mgr.should_draw()) {
+            transparent_draw_pass.add(mgr.get_draw_pass(main_view_mesh_pass_indices_[pass])
+                                          .get_frame_out_draw_cmd_buf_handle(),
+                                      Access::IndirectRead);
+          }
+        }
       }
 
       // reads depth buffer after opaque
@@ -1238,6 +1328,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
                                 (Access)(Access::ComputeRead | Access::ComputeWrite));
       transparent_draw_pass.add(oit_fragment_buffer_.handle, Access::ComputeWrite);
       transparent_draw_pass.set_execute_fn([&rg, rg_depth_handle, this](CmdEncoder& cmd) {
+        cmd.begin_region("oit draw");
         auto dims = rg.get_texture(rg_depth_handle)->size();
         state_
             .buffer_barrier(*device_->get_buffer(oit_atomic_counter_buf_),
@@ -1250,12 +1341,10 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
                 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                 VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_SHADER_READ_BIT)
             .flush_barriers();
-        cmd.begin_region("oit draw");
 
         cmd.begin_rendering({.extent = dims},
                             {RenderingAttachmentInfo::depth_stencil_att(
                                 rg.get_texture_handle(rg_depth_handle), LoadOp::Load)});
-
         cmd.set_viewport_and_scissor(dims);
         cmd.bind_pipeline(PipelineBindPoint::Graphics, transparent_oit_pipeline_);
 
@@ -1284,9 +1373,9 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
                                                    SubresourceType::Shader)};
         cmd.push_constants(sizeof(pc), &pc);
         cmd.set_cull_mode(CullMode::Back);
-        execute_static_geo_draws(cmd, false, MeshPass_Transparent);
+        execute_static_geo_draws(cmd, MeshPass_Transparent);
         cmd.set_cull_mode(CullMode::None);
-        execute_static_geo_draws(cmd, true, MeshPass_Transparent);
+        execute_static_geo_draws(cmd, MeshPass_TransparentDoubleSided);
 
         cmd.end_rendering();
         cmd.end_region();
@@ -1387,6 +1476,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
     auto rg_depth_handle = imgui_p.add_image_access("depth", Access::DepthStencilRead);
     imgui_p.set_execute_fn(
         [this, rg_color_handle, &rg, csm_debug_img_handle, rg_depth_handle](CmdEncoder& cmd) {
+          cmd.begin_region("ui");
           if (csm_enabled.get() && csm_->get_debug_render_enabled()) {
             assert(csm_debug_img_handle.is_valid());
             csm_->imgui_pass(cmd, linear_sampler_, rg.get_texture_handle(csm_debug_img_handle));
@@ -1412,6 +1502,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
                               {RenderingAttachmentInfo::color_att(color_handle)});
           device_->render_imgui(cmd);
           cmd.end_rendering();
+          cmd.end_region();
         });
   }
 }
@@ -1434,17 +1525,8 @@ void VkRender2::StaticMeshDrawManager::remove_draws(StateTracker&, CmdEncoder& c
   }
   assert(handle < allocs_.size());
   Alloc& a = allocs_[handle];
-  for (int double_sided = 0; double_sided < 2; double_sided++) {
-    u32 num_double_sided_draws = a.num_double_sided_draws;
-    u32 num_draws = a.draw_cmd_slot.get_size() / sizeof(GPUDrawInfo);
-    if (double_sided) {
-      assert(num_draw_cmds_[double_sided] >= num_double_sided_draws);
-      num_draw_cmds_[double_sided] -= num_double_sided_draws;
-    } else {
-      assert(num_draw_cmds_[double_sided] >= num_draws - num_double_sided_draws);
-      num_draw_cmds_[double_sided] -= num_draws - num_double_sided_draws;
-    }
-  }
+  u32 num_draws = a.draw_cmd_slot.get_size() / sizeof(GPUDrawInfo);
+  num_draw_cmds_ -= num_draws;
   cmd.fill_buffer(draw_cmds_buf_.buffer.handle, a.draw_cmd_slot.get_offset(),
                   a.draw_cmd_slot.get_size(), 0);
   draw_cmds_buf_.allocator.free(a.draw_cmd_slot);
@@ -1453,14 +1535,12 @@ void VkRender2::StaticMeshDrawManager::remove_draws(StateTracker&, CmdEncoder& c
 
 u32 VkRender2::StaticMeshDrawManager::add_draws(StateTracker& state,
                                                 Device::CopyAllocator::CopyCmd& cmd, size_t size,
-                                                size_t staging_offset, u32 num_double_sided_draws) {
+                                                size_t staging_offset) {
   assert(size > 0);
   Alloc a{};
-  a.num_double_sided_draws = num_double_sided_draws;
   a.draw_cmd_slot = draw_cmds_buf_.allocator.allocate(size);
-  u32 num_single_sided_draws = (size / sizeof(GPUDrawInfo)) - num_double_sided_draws;
-  num_draw_cmds_[0] += num_single_sided_draws;
-  num_draw_cmds_[1] += a.num_double_sided_draws;
+  u32 num_draws = (size / sizeof(GPUDrawInfo));
+  num_draw_cmds_ += num_draws;
 
   // resize draw cmd bufs
   size_t curr_tot_draw_cmd_buf_size = device_->get_buffer(draw_cmds_buf_.buffer)->size();
@@ -1468,17 +1548,14 @@ u32 VkRender2::StaticMeshDrawManager::add_draws(StateTracker& state,
                                    a.draw_cmd_slot.get_offset() + a.draw_cmd_slot.get_size());
   for (auto& draw_pass : draw_passes_) {
     // resize output draw cmd buffers
-    for (int double_sided = 0; double_sided < 2; double_sided++) {
-      for (auto& handle : draw_pass.out_draw_cmds_bufs[double_sided]) {
-        u32 required_size =
-            sizeof(u32) + (num_draw_cmds_[double_sided] * sizeof(VkDrawIndexedIndirectCommand));
-        auto* buf = device_->get_buffer(handle);
-        if (required_size > buf->size()) {
-          handle = device_->create_buffer_holder(BufferCreateInfo{
-              .size = new_size + sizeof(u32),
-              .usage = BufferUsage_Indirect | BufferUsage_Storage,
-          });
-        }
+    for (auto& handle : draw_pass.out_draw_cmds_bufs) {
+      u32 required_size = sizeof(u32) + (num_draw_cmds_ * sizeof(VkDrawIndexedIndirectCommand));
+      auto* buf = device_->get_buffer(handle);
+      if (required_size > buf->size()) {
+        handle = device_->create_buffer_holder(BufferCreateInfo{
+            .size = new_size + sizeof(u32),
+            .usage = BufferUsage_Indirect | BufferUsage_Storage,
+        });
       }
     }
   }
@@ -1535,48 +1612,41 @@ BufferHandle VkRender2::StaticMeshDrawManager::get_draw_info_buf_handle() const 
   return draw_cmds_buf_.buffer.handle;
 }
 
-void VkRender2::execute_static_geo_draws(CmdEncoder& cmd, bool double_sided, MeshPass pass) {
+void VkRender2::execute_static_geo_draws(CmdEncoder& cmd, MeshPass pass, bool is_animated) {
   cmd.bind_index_buffer(static_index_buf_.buffer.handle);
-  auto& mgr = static_draw_mgrs_[pass];
-  if (mgr.should_draw() && mgr.get_num_draw_cmds(double_sided) > 0) {
-    execute_draw(cmd,
-                 mgr.get_draw_pass(main_view_mesh_pass_indices_[pass])
-                     .get_frame_out_draw_cmd_buf_handle(double_sided),
-                 mgr.get_num_draw_cmds(double_sided));
+  cmd.set_cull_mode(get_cull_mode(pass));
+  auto& mgr = is_animated ? animated_draw_mgrs_[pass] : static_draw_mgrs_[pass];
+  if (mgr.should_draw() && mgr.get_num_draw_cmds() > 0) {
+    execute_draw(
+        cmd,
+        mgr.get_draw_pass(main_view_mesh_pass_indices_[pass]).get_frame_out_draw_cmd_buf_handle(),
+        mgr.get_num_draw_cmds());
   }
 }
 
-VkRender2::StaticMeshDrawManager::DrawPass::DrawPass(u32 num_single_sided_draws,
-                                                     u32 num_double_sided_draws,
-                                                     u32 frames_in_flight, Device* device)
+VkRender2::StaticMeshDrawManager::DrawPass::DrawPass(u32 num_draws, u32 frames_in_flight,
+                                                     Device* device)
     : device_(device) {
   for (u32 i = 0; i < frames_in_flight; i++) {
-    for (int double_sided = 0; double_sided < 2; double_sided++) {
-      u32 count = double_sided ? num_double_sided_draws : num_single_sided_draws;
-      out_draw_cmds_bufs[double_sided].emplace_back(device_->create_buffer_holder(BufferCreateInfo{
-          .size = (count * sizeof(VkDrawIndexedIndirectCommand)) + sizeof(u32),
-          .usage = BufferUsage_Indirect | BufferUsage_Storage,
-      }));
-    }
+    out_draw_cmds_bufs.emplace_back(device_->create_buffer_holder(BufferCreateInfo{
+        .size = (num_draws * sizeof(VkDrawIndexedIndirectCommand)) + sizeof(u32),
+        .usage = BufferUsage_Indirect | BufferUsage_Storage,
+    }));
   }
 }
 
 u32 VkRender2::StaticMeshDrawManager::add_draw_pass() {
   auto idx = draw_passes_.size();
-  draw_passes_.emplace_back(num_draw_cmds_[0], num_draw_cmds_[1], device_->get_frames_in_flight(),
-                            device_);
+  draw_passes_.emplace_back(num_draw_cmds_, device_->get_frames_in_flight(), device_);
   return idx;
 }
 
-BufferHandle VkRender2::StaticMeshDrawManager::DrawPass::get_frame_out_draw_cmd_buf_handle(
-    bool double_sided) const {
-  return out_draw_cmds_bufs[double_sided][VkRender2::get().curr_frame_in_flight_num()].handle;
+BufferHandle VkRender2::StaticMeshDrawManager::DrawPass::get_frame_out_draw_cmd_buf_handle() const {
+  return out_draw_cmds_bufs[VkRender2::get().curr_frame_in_flight_num()].handle;
 }
 
-Buffer* VkRender2::StaticMeshDrawManager::DrawPass::get_frame_out_draw_cmd_buf(
-    bool double_sided) const {
-  return device_->get_buffer(
-      out_draw_cmds_bufs[double_sided][VkRender2::get().curr_frame_in_flight_num()]);
+Buffer* VkRender2::StaticMeshDrawManager::DrawPass::get_frame_out_draw_cmd_buf() const {
+  return device_->get_buffer(out_draw_cmds_bufs[VkRender2::get().curr_frame_in_flight_num()]);
 }
 
 void VkRender2::draw_line(const vec3& p1, const vec3& p2, const vec4& color) {
@@ -1661,13 +1731,16 @@ void VkRender2::draw_box(const mat4& model, const vec3& size, const vec4& color)
 }
 
 void VkRender2::draw_box(const mat4& model, const AABB& aabb, const vec4& color) {
-  draw_box(glm::translate(mat4{1.f}, .5f * (aabb.min + aabb.max)), .5f * (aabb.max - aabb.min),
-           color);
+  draw_box(model * glm::translate(mat4{1}, .5f * (aabb.min + aabb.max)),
+           .5f * (aabb.max - aabb.min), color);
 }
 
 void VkRender2::free(StaticModelInstanceResources& instance) {
-  static_instance_data_buf_.allocator.free(instance.instance_data_slot);
-  static_object_data_buf_.allocator.free(instance.object_data_slot);
+  auto& instance_buf =
+      instance.is_animated ? animated_instance_data_buf_ : static_instance_data_buf_;
+  auto& obj_data_buf = instance.is_animated ? animated_object_data_buf_ : static_object_data_buf_;
+  instance_buf.allocator.free(instance.instance_data_slot);
+  obj_data_buf.allocator.free(instance.object_data_slot);
   // free the draws (need to clear to 0)
   auto* pmodel = ResourceManager::get().get_model(instance.model_handle);
   assert(pmodel);
@@ -1681,10 +1754,10 @@ void VkRender2::free(StaticModelInstanceResources& instance) {
   }
   resources->ref_count--;
   if (resources->ref_count == 0) {
-    static_draw_stats_.vertices -= resources->num_vertices;
-    static_draw_stats_.indices -= resources->num_indices;
-    static_draw_stats_.materials -= resources->materials_slot.get_size() / sizeof(Material);
-    static_draw_stats_.textures -= resources->textures.size();
+    draw_stats_.vertices -= resources->num_vertices;
+    draw_stats_.indices -= resources->num_indices;
+    draw_stats_.materials -= resources->materials_slot.get_size() / sizeof(Material);
+    draw_stats_.textures -= resources->textures.size();
     static_materials_buf_.allocator.free(resources->materials_slot);
     static_vertex_buf_.allocator.free(resources->vertices_slot);
     static_index_buf_.allocator.free(resources->indices_slot);
@@ -1693,7 +1766,8 @@ void VkRender2::free(StaticModelInstanceResources& instance) {
 }
 
 void VkRender2::free(CmdEncoder& cmd, StaticModelInstanceResources& instance) {
-  for (auto& mgr : static_draw_mgrs_) {
+  auto& mgrs = instance.is_animated ? animated_draw_mgrs_ : static_draw_mgrs_;
+  for (auto& mgr : mgrs) {
     mgr.remove_draws(state_, cmd, instance.mesh_pass_draw_handles[mgr.get_mesh_pass()]);
   }
   free(instance);
@@ -1748,20 +1822,31 @@ bool VkRender2::load_model2(const std::filesystem::path& path, LoadedModelData& 
     u64 material_data_size = res.materials.size() * sizeof(gfx::Material);
     u64 vertices_size = res.vertices.size() * sizeof(gfx::Vertex);
     u64 indices_size = res.indices.size() * sizeof(u32);
+    u64 animated_vertices_size = res.animated_vertices.size() * sizeof(gfx::AnimatedVertex);
+    util::FreeListAllocator::Slot animated_vertices_gpu_slot{};
+    if (animated_vertices_size) {
+      animated_vertices_gpu_slot = animated_vertex_buf_.allocator.allocate(animated_vertices_size);
+    }
     auto vertices_gpu_slot = static_vertex_buf_.allocator.allocate(vertices_size);
     auto indices_gpu_slot = static_index_buf_.allocator.allocate(indices_size);
 
-    auto copy_cmd = device_->graphics_copy_allocator_.allocate(material_data_size + vertices_size +
-                                                               indices_size);
+    auto copy_cmd = device_->graphics_copy_allocator_.allocate(
+        material_data_size + vertices_size + animated_vertices_size + indices_size);
     auto staging = LinearCopyer{device_->get_buffer(copy_cmd.staging_buffer)->mapped_data()};
     u64 material_data_staging_offset = staging.copy(res.materials.data(), material_data_size);
     u64 vertices_staging_offset = staging.copy(res.vertices.data(), vertices_size);
+    u64 animated_vertices_staging_offset{};
+    if (animated_vertices_size) {
+      animated_vertices_staging_offset =
+          staging.copy(res.animated_vertices.data(), animated_vertices_size);
+    }
     u64 indices_staging_offset = staging.copy(res.indices.data(), indices_size);
 
-    static_draw_stats_.vertices += res.vertices.size();
-    static_draw_stats_.indices += res.indices.size();
-    static_draw_stats_.textures += res.textures.size();
-    static_draw_stats_.materials += res.materials.size();
+    draw_stats_.vertices += res.vertices.size();
+    draw_stats_.animated_vertices += res.animated_vertices.size();
+    draw_stats_.indices += res.indices.size();
+    draw_stats_.textures += res.textures.size();
+    draw_stats_.materials += res.materials.size();
     auto materials_gpu_slot = static_materials_buf_.allocator.allocate(material_data_size);
     {
       state_.reset(copy_cmd.transfer_cmd_buf);
@@ -1771,8 +1856,18 @@ bool VkRender2::load_model2(const std::filesystem::path& path, LoadedModelData& 
           .buffer_barrier(static_index_buf_.get_buffer()->buffer(),
                           VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
           .buffer_barrier(static_materials_buf_.get_buffer()->buffer(),
-                          VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
-          .flush_barriers();
+                          VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+      if (animated_vertices_size) {
+        state_.buffer_barrier(animated_vertex_buf_.get_buffer()->buffer(),
+                              VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+      }
+      state_.flush_barriers();
+
+      if (animated_vertices_size) {
+        copy_cmd.copy_buffer(device_, *device_->get_buffer(animated_vertex_buf_.buffer),
+                             animated_vertices_staging_offset,
+                             animated_vertices_gpu_slot.get_offset(), animated_vertices_size);
+      }
       copy_cmd.copy_buffer(device_, *device_->get_buffer(static_materials_buf_.buffer),
                            material_data_staging_offset, materials_gpu_slot.get_offset(),
                            material_data_size);
@@ -1780,15 +1875,24 @@ bool VkRender2::load_model2(const std::filesystem::path& path, LoadedModelData& 
                            vertices_gpu_slot.get_offset(), vertices_size);
       copy_cmd.copy_buffer(device_, *static_index_buf_.get_buffer(), indices_staging_offset,
                            indices_gpu_slot.get_offset(), indices_size);
+
       state_
-          .buffer_barrier(static_vertex_buf_.get_buffer()->buffer(),
-                          VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
-                          VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT)
+          .buffer_barrier(
+              static_vertex_buf_.get_buffer()->buffer(),
+              VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
+              VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT)
           .buffer_barrier(static_index_buf_.get_buffer()->buffer(),
                           VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT, VK_ACCESS_2_INDEX_READ_BIT)
           .buffer_barrier(static_materials_buf_.get_buffer()->buffer(),
-                          VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT)
-          .flush_barriers();
+                          VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+      if (animated_vertices_size) {
+        state_.buffer_barrier(
+            animated_vertex_buf_.get_buffer()->buffer(),
+            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
+            VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT);
+      }
+      state_.flush_barriers();
+
       device_->graphics_copy_allocator_.submit(copy_cmd);
     }
 
@@ -1823,35 +1927,33 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   auto& model = *pmodel;
   auto* resources = model_gpu_resources_pool_.get(model.gpu_resource_handle);
   assert(resources);
-  static_draw_stats_.total_vertices += resources->num_vertices;
-  static_draw_stats_.total_indices += resources->num_indices;
+  draw_stats_.total_vertices += resources->num_vertices;
+  draw_stats_.total_indices += resources->num_indices;
 
-  u32 pass_double_sided_draw_cnts[MeshPass_Count] = {};
   u32 pass_obj_counts[MeshPass_Count] = {};
 
   const auto& scene = model.scene_graph_data;
+  u32 num_new_skin_mats{};
+  for (const auto& skin : scene.skins) {
+    num_new_skin_mats += skin.inverse_bind_matrices.size();
+  }
+  global_skin_matrices_.resize(global_skin_matrices_.size() + num_new_skin_mats);
+
   assert(scene.hierarchies.size() == scene.node_mesh_indices.size());
   for (size_t node_i = 0; node_i < scene.hierarchies.size(); node_i++) {
     auto mesh_data_i = scene.node_mesh_indices[node_i];
     if (mesh_data_i == -1) continue;
     const auto& mesh_indices = scene.mesh_datas[mesh_data_i];
     bool double_sided = resources->materials[mesh_indices.material_id].is_double_sided();
+    MeshPass pass{MeshPass_Count};
     if (mesh_indices.pass_flags & PassFlags_Opaque) {
-      if (double_sided) {
-        pass_double_sided_draw_cnts[MeshPass_Opaque]++;
-      }
-      pass_obj_counts[MeshPass_Opaque]++;
+      pass = MeshPass_Opaque;
     } else if (mesh_indices.pass_flags & PassFlags_OpaqueAlpha) {
-      if (double_sided) {
-        pass_double_sided_draw_cnts[MeshPass_OpaqueAlphaMask]++;
-      }
-      pass_obj_counts[MeshPass_OpaqueAlphaMask]++;
+      pass = MeshPass_OpaqueAlphaMask;
     } else if (mesh_indices.pass_flags & PassFlags_Transparent) {
-      if (double_sided) {
-        pass_double_sided_draw_cnts[MeshPass_Transparent]++;
-      }
-      pass_obj_counts[MeshPass_Transparent]++;
+      pass = MeshPass_Transparent;
     }
+    pass_obj_counts[double_sided ? get_double_sided_pass(pass) : pass]++;
   }
   resources->ref_count++;
 
@@ -1865,18 +1967,26 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   std::ranges::fill(instance_resources->mesh_pass_draw_handles, StaticMeshDrawManager::null_handle);
   instance_resources->model_handle = model_handle;
   instance_resources->name = resources->name.c_str();
-
   instance_resources->object_datas.reserve(num_objs_tot);
   instance_resources->instance_datas.reserve(num_objs_tot);
+
+  if (model.scene_graph_data.skins.size()) {
+    instance_resources->is_animated = true;
+  }
+  // FreeListBuffer& instance_data_buf =
+  //     instance_resources->is_animated ? animated_instance_data_buf_ : static_instance_data_buf_;
+  // FreeListBuffer& object_data_buf =
+  //     instance_resources->is_animated ? animated_object_data_buf_ : static_object_data_buf_;
+  FreeListBuffer& instance_data_buf = static_instance_data_buf_;
+  FreeListBuffer& object_data_buf = static_object_data_buf_;
 
   vec3 scene_min = vec3{std::numeric_limits<float>::max()};
   vec3 scene_max = vec3{std::numeric_limits<float>::lowest()};
   std::array<std::vector<GPUDrawInfo>, MeshPass_Count> pass_cmds;
   instance_resources->instance_data_slot =
-      static_instance_data_buf_.allocator.allocate(num_objs_tot * sizeof(GPUInstanceData));
+      instance_data_buf.allocator.allocate(num_objs_tot * sizeof(GPUInstanceData));
   instance_resources->object_data_slot =
-      static_object_data_buf_.allocator.allocate(num_objs_tot * sizeof(ObjectData));
-
+      object_data_buf.allocator.allocate(num_objs_tot * sizeof(ObjectData));
   u32 base_instance_id =
       instance_resources->instance_data_slot.get_offset() / sizeof(GPUInstanceData);
   u32 base_object_data_id = instance_resources->object_data_slot.get_offset() / sizeof(ObjectData);
@@ -1907,7 +2017,8 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
     });
 
     u32 draw_flags{};
-    if (resources->materials[node_mesh_data.material_id].is_double_sided()) {
+    bool double_sided = resources->materials[node_mesh_data.material_id].is_double_sided();
+    if (double_sided) {
       draw_flags |= GPUDrawInfoFlags_DoubleSided;
     }
 
@@ -1916,13 +2027,24 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
                      .vertex_offset = static_cast<u32>(resources->first_vertex + mesh.first_vertex),
                      .instance_id = instance_id,
                      .flags = draw_flags};
-
     if (node_mesh_data.pass_flags & PassFlags_Opaque) {
-      pass_cmds[MeshPass_Opaque].emplace_back(draw);
+      if (double_sided) {
+        pass_cmds[MeshPass_OpaqueDoubleSided].emplace_back(draw);
+      } else {
+        pass_cmds[MeshPass_Opaque].emplace_back(draw);
+      }
     } else if (node_mesh_data.pass_flags & PassFlags_OpaqueAlpha) {
-      pass_cmds[MeshPass_OpaqueAlphaMask].emplace_back(draw);
+      if (double_sided) {
+        pass_cmds[MeshPass_OpaqueAlphaMaskDoubleSided].emplace_back(draw);
+      } else {
+        pass_cmds[MeshPass_OpaqueAlphaMask].emplace_back(draw);
+      }
     } else if (node_mesh_data.pass_flags & PassFlags_Transparent) {
-      pass_cmds[MeshPass_Transparent].emplace_back(draw);
+      if (double_sided) {
+        pass_cmds[MeshPass_TransparentDoubleSided].emplace_back(draw);
+      } else {
+        pass_cmds[MeshPass_Transparent].emplace_back(draw);
+      }
     }
   }
 
@@ -1956,22 +2078,21 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
     for (int i = 0; i < MeshPass_Count; i++) {
       auto& cmds = pass_cmds[i];
       if (cmds.size()) {
-        instance_resources->mesh_pass_draw_handles[i] =
-            static_draw_mgrs_[i].add_draws(state_, copy_cmd, cmds.size() * sizeof(GPUDrawInfo),
-                                           cmds_staging_offsets[i], pass_double_sided_draw_cnts[i]);
+        auto& mgr = get_mgr((MeshPass)i, instance_resources->is_animated);
+        instance_resources->mesh_pass_draw_handles[i] = mgr.add_draws(
+            state_, copy_cmd, cmds.size() * sizeof(GPUDrawInfo), cmds_staging_offsets[i]);
       }
     }
-    copy_cmd.copy_buffer(device_, *static_object_data_buf_.get_buffer(), obj_datas_staging_offset,
+    copy_cmd.copy_buffer(device_, *object_data_buf.get_buffer(), obj_datas_staging_offset,
                          instance_resources->object_data_slot.get_offset(), obj_datas_size);
-    copy_cmd.copy_buffer(device_, *static_instance_data_buf_.get_buffer(),
-                         instance_datas_staging_offset,
+    copy_cmd.copy_buffer(device_, *instance_data_buf.get_buffer(), instance_datas_staging_offset,
                          instance_resources->instance_data_slot.get_offset(), instance_datas_size);
     state_
         .buffer_barrier(
-            static_object_data_buf_.get_buffer()->buffer(),
+            object_data_buf.get_buffer()->buffer(),
             VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
             VK_ACCESS_2_SHADER_READ_BIT)
-        .buffer_barrier(static_instance_data_buf_.get_buffer()->buffer(),
+        .buffer_barrier(instance_data_buf.get_buffer()->buffer(),
                         VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT)
         .flush_barriers();
     device_->graphics_copy_allocator_.submit(copy_cmd);
@@ -1983,10 +2104,16 @@ std::string to_string(MeshPass p) {
   switch (p) {
     case MeshPass_Opaque:
       return "MeshPass_Opaque";
+    case MeshPass_OpaqueDoubleSided:
+      return "MeshPass_OpaqueDoubleSided";
     case MeshPass_OpaqueAlphaMask:
       return "MeshPass_OpaqueAlphaMask";
+    case MeshPass_OpaqueAlphaMaskDoubleSided:
+      return "MeshPass_OpaqueAlphaMaskDoubleSided";
     case MeshPass_Transparent:
       return "MeshPass_Transparent";
+    case MeshPass_TransparentDoubleSided:
+      return "MeshPass_TransparentDoubleSided";
     case MeshPass_Count:
       return "MeshPass_Count";
   }
@@ -2175,4 +2302,51 @@ void VkRender2::draw_sphere(const glm::vec3& center, float radius, const glm::ve
     draw_line(p0, p1, color);
   }
 }
+
+CullMode get_cull_mode(MeshPass pass) {
+  switch (pass) {
+    case MeshPass_OpaqueDoubleSided:
+    case MeshPass_OpaqueAlphaMaskDoubleSided:
+    case MeshPass_TransparentDoubleSided:
+      return CullMode::None;
+    default:
+      return CullMode::Back;
+  }
+  return CullMode::Back;
+}
+MeshPass get_double_sided_pass(MeshPass pass) {
+  switch (pass) {
+    case MeshPass_Opaque:
+    case MeshPass_OpaqueDoubleSided:
+      return MeshPass_OpaqueDoubleSided;
+    case MeshPass_OpaqueAlphaMask:
+    case MeshPass_OpaqueAlphaMaskDoubleSided:
+      return MeshPass_OpaqueAlphaMaskDoubleSided;
+    case MeshPass_Transparent:
+    case MeshPass_TransparentDoubleSided:
+      return MeshPass_TransparentDoubleSided;
+    default:
+      return MeshPass_Count;
+  }
+  assert(0);
+  return MeshPass_Count;
+}
+
+bool VkRender2::update_skins(LoadedInstanceData& instance) {
+  ZoneScoped;
+  const auto& skins = instance.scene_graph_data.skins;
+  for (size_t skin_i = 0; skin_i < skins.size(); skin_i++) {
+    const auto& skin = skins[skin_i];
+    for (size_t joint_i = 0; joint_i < skin.joint_node_indices.size(); joint_i++) {
+      int joint_node = skin.joint_node_indices[joint_i];
+      const mat4& inv_bind_mat = skin.inverse_bind_matrices[joint_i];
+      const mat4& global_transform_mat = instance.scene_graph_data.global_transforms[joint_node];
+      assert(skin.model_bone_mat_start_i + skin_i < global_skin_matrices_.size());
+      global_skin_matrices_[instance.global_bone_mat_start_i + skin.model_bone_mat_start_i +
+                            joint_i] = global_transform_mat * inv_bind_mat;
+    }
+  }
+  return skins.size() > 0;
+}
+
 }  // namespace gfx

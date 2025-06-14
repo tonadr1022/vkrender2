@@ -16,6 +16,7 @@ struct LoadedInstanceData {
   ModelHandle model_handle;
   gfx::Scene2 scene_graph_data;
   std::vector<gfx::AnimationState> animation_states;
+  u32 global_bone_mat_start_i{};
   // std::unordered_map<int, gfx::NodeTransform> node_transforms;
   gfx::StaticModelInstanceResourcesHandle instance_resources_handle;
   [[nodiscard]] bool is_valid() const { return model_handle.is_valid(); }

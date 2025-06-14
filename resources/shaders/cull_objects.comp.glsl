@@ -156,23 +156,13 @@ void main() {
     }
     // get the object. test its frustum against the view frustum
     if (is_visible(object_bounds[object_bounds_buf_idx].bounds[draw_info.instance_id])) {
-        bool double_sided = (draw_info.flags & 0x1) != 0;
-        uint out_idx;
-        if (double_sided) {
-            out_idx = atomicAdd(out_cmds[out_draw_cmds_buf_double_sided_idx].cnt, 1);
-        } else {
-            out_idx = atomicAdd(out_cmds[out_draw_cmds_buf_idx].cnt, 1);
-        }
+        uint out_idx = atomicAdd(out_cmds[out_draw_cmds_buf_idx].cnt, 1);
         DrawCmd cmd;
         cmd.first_instance = draw_info.instance_id;
         cmd.index_cnt = draw_info.index_cnt;
         cmd.first_index = draw_info.first_index;
         cmd.vertex_offset = int(draw_info.vertex_offset);
         cmd.instance_cnt = 1;
-        if (double_sided) {
-            out_cmds[out_draw_cmds_buf_double_sided_idx].cmds[out_idx] = cmd;
-        } else {
-            out_cmds[out_draw_cmds_buf_idx].cmds[out_idx] = cmd;
-        }
+        out_cmds[out_draw_cmds_buf_idx].cmds[out_idx] = cmd;
     }
 }
