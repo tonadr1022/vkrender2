@@ -140,8 +140,12 @@ void App::run() {
 
   // instances_.emplace_back(
   //     ResourceManager::get().load_model("/Users/tony/Downloads/bistro/Exterior/exterior.glb"));
-  instances_.emplace_back(
-      ResourceManager::get().load_model("/Users/tony/models/Models/Fox/glTF/Fox.gltf"));
+  // instances_.emplace_back(ResourceManager::get().load_model(
+  //     "/Users/tony/Downloads/secret_of_the_mimic_-_mimic/scene.gltf"));
+  instances_.emplace_back(ResourceManager::get().load_model(
+      "/Users/tony/Downloads/killer_clown_balatro_style/scene.gltf"));
+  // instances_.emplace_back(
+  //     ResourceManager::get().load_model("/Users/tony/models/Models/Fox/glTF/Fox.gltf"));
   // instances_.emplace_back(ResourceManager::get().load_model(
   //     "/Users/tony/models/Models/AlphaBlendModeTest/glTF/AlphaBlendModeTest.gltf"));
 

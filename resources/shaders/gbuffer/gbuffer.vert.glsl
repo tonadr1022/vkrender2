@@ -41,7 +41,6 @@ void main() {
     gl_Position = SceneDatas(scene_buffer).data.view_proj * pos;
     out_frag_pos = vec3(pos);
 
-    // TODO: something else lol
     out_normal = normalize(vec3(model * vec4(v.normal, 0.)));
     vec3 T = normalize(vec3(model * vec4(v.tangent.xyz, 0.)));
     vec3 N = out_normal;

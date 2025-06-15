@@ -108,26 +108,37 @@ void save_tangents(const std::string& path, const std::vector<Vertex>& vertices)
   file.write(reinterpret_cast<const char*>(tangents.data()), sizeof(glm::vec3) * tangents.size());
 }
 
-template <typename IndexType>
-void calc_tangents(std::span<Vertex> vertices, std::span<IndexType> indices) {
+struct CalcTangentsVertexInfo {
+  struct BaseOffset {
+    void* base;
+    u32 offset;
+    u32 stride;
+  };
+  BaseOffset pos;
+  BaseOffset normal;
+  BaseOffset uv_x;
+  BaseOffset uv_y;
+  BaseOffset tangent;
+};
+
+template <typename IndexT>
+void calc_tangents(const CalcTangentsVertexInfo& info, std::span<IndexT> indices) {
   ZoneScoped;
   SMikkTSpaceContext ctx{};
   SMikkTSpaceInterface interface{};
   ctx.m_pInterface = &interface;
 
   struct MyCtx {
-    MyCtx(std::span<Vertex> vertices, std::span<IndexType>& indices)
-        : vertices(vertices), indices(indices), num_faces(indices.size() / 3) {}
-    std::span<Vertex> vertices;
-    std::span<IndexType> indices;
+    MyCtx(const CalcTangentsVertexInfo& info, std::span<IndexT>& indices)
+        : info(info), indices(indices), num_faces(indices.size() / 3) {}
+    CalcTangentsVertexInfo info;
+    std::span<IndexT> indices;
     size_t num_faces{};
     int face_size = 3;
-    Vertex& get_vertex(int face_idx, int vert_idx) {
-      return vertices[indices[(face_idx * face_size) + vert_idx]];
-    }
+    int get_index(int face_i, int vert_i) { return indices[(face_i * face_size) + vert_i]; }
   };
 
-  MyCtx my_ctx{vertices, indices};
+  MyCtx my_ctx{info, indices};
   ctx.m_pUserData = &my_ctx;
 
   interface.m_getNumFaces = [](const SMikkTSpaceContext* ctx) -> int {
@@ -141,37 +152,60 @@ void calc_tangents(std::span<Vertex> vertices, std::span<IndexType> indices) {
   interface.m_getPosition = [](const SMikkTSpaceContext* ctx, float fvPosOut[], const int iFace,
                                const int iVert) {
     MyCtx& my_ctx = *reinterpret_cast<MyCtx*>(ctx->m_pUserData);
-    Vertex& vertex = my_ctx.get_vertex(iFace, iVert);
-    fvPosOut[0] = vertex.pos.x;
-    fvPosOut[1] = vertex.pos.y;
-    fvPosOut[2] = vertex.pos.z;
+    u32 idx = my_ctx.get_index(iFace, iVert);
+    vec3* pos_ptr =
+        reinterpret_cast<vec3*>(reinterpret_cast<char*>(my_ctx.info.pos.base) +
+                                (idx * my_ctx.info.pos.stride) + my_ctx.info.pos.offset);
+    vec3& pos = *pos_ptr;
+    fvPosOut[0] = pos.x;
+    fvPosOut[1] = pos.y;
+    fvPosOut[2] = pos.z;
   };
+
   interface.m_getNormal = [](const SMikkTSpaceContext* ctx, float fvNormOut[], const int iFace,
                              const int iVert) {
     MyCtx& my_ctx = *reinterpret_cast<MyCtx*>(ctx->m_pUserData);
-    Vertex& vertex = my_ctx.get_vertex(iFace, iVert);
-    fvNormOut[0] = vertex.normal.x;
-    fvNormOut[1] = vertex.normal.y;
-    fvNormOut[2] = vertex.normal.z;
+    u32 idx = my_ctx.get_index(iFace, iVert);
+    vec3* normal_ptr =
+        reinterpret_cast<vec3*>(reinterpret_cast<char*>(my_ctx.info.normal.base) +
+                                (idx * my_ctx.info.normal.stride) + my_ctx.info.normal.offset);
+    vec3& normal = *normal_ptr;
+    fvNormOut[0] = normal.x;
+    fvNormOut[1] = normal.y;
+    fvNormOut[2] = normal.z;
   };
   interface.m_getTexCoord = [](const SMikkTSpaceContext* ctx, float fvTexcOut[], const int iFace,
                                const int iVert) {
     MyCtx& my_ctx = *reinterpret_cast<MyCtx*>(ctx->m_pUserData);
-    Vertex& vertex = my_ctx.get_vertex(iFace, iVert);
-    fvTexcOut[0] = vertex.uv_x;
-    fvTexcOut[1] = vertex.uv_y;
+    u32 idx = my_ctx.get_index(iFace, iVert);
+    auto* uv_x_ptr =
+        reinterpret_cast<float*>(reinterpret_cast<char*>(my_ctx.info.uv_x.base) +
+                                 (idx * my_ctx.info.uv_x.stride) + my_ctx.info.uv_x.offset);
+    auto* uv_y_ptr =
+        reinterpret_cast<float*>(reinterpret_cast<char*>(my_ctx.info.uv_y.base) +
+                                 (idx * my_ctx.info.uv_y.stride) + my_ctx.info.uv_y.offset);
+    fvTexcOut[0] = *uv_x_ptr;
+    fvTexcOut[1] = *uv_y_ptr;
   };
+
   interface.m_setTSpaceBasic = [](const SMikkTSpaceContext* ctx, const float fvTangent[],
                                   const float, const int iFace, const int iVert) {
     MyCtx& my_ctx = *reinterpret_cast<MyCtx*>(ctx->m_pUserData);
-    Vertex& vertex = my_ctx.get_vertex(iFace, iVert);
-    vertex.tangent.x = fvTangent[0];
-    vertex.tangent.y = fvTangent[1];
-    vertex.tangent.z = fvTangent[2];
-    // vertex.tangent.w = fSign;
+    u32 idx = my_ctx.get_index(iFace, iVert);
+    vec3* tangent_ptr =
+        reinterpret_cast<vec3*>(reinterpret_cast<char*>(my_ctx.info.tangent.base) +
+                                (idx * my_ctx.info.tangent.stride) + my_ctx.info.tangent.offset);
+    vec3& tangent = *tangent_ptr;
+    tangent.x = fvTangent[0];
+    tangent.y = fvTangent[1];
+    tangent.z = fvTangent[2];
+    // Note: fSign parameter available if you need to store tangent handedness
+    // For vec4 tangents: tangent.w = fSign;
   };
+
   genTangSpaceDefault(&ctx);
 }
+
 std::vector<uint8_t> read_file(const std::string& full_path) {
   std::ifstream file(full_path, std::ios::binary | std::ios::ate);
   if (!file) {
@@ -572,7 +606,8 @@ void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_mate
       new_skin.inverse_bind_matrices.resize(gltf_skin.joints.size());
     }
     new_skin.model_bone_mat_start_i = tot_matrices;
-    tot_matrices += new_skin.inverse_bind_matrices.size();
+    tot_matrices += gltf_skin.joints.size();
+    // tot_matrices += new_skin.inverse_bind_matrices.size();
 
     new_skin.joint_node_indices.reserve(gltf_skin.joints.size());
     for (const auto& joint_node_index : gltf_skin.joints) {
@@ -959,12 +994,11 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
     {
       u32 primitive_idx{0};
       u32 mesh_idx{0};
-      u32 animated_vertex_offset{};
       for (const auto& gltf_mesh : gltf.meshes) {
         for (const auto& gltf_prim : gltf_mesh.primitives) {
           u32 first_index = num_indices;
           u32 first_vertex = num_vertices;
-          u32 first_animated_vertex = animated_vertex_offset;
+          u32 first_animated_vertex = num_animated_vertices;
           const auto* pos_attrib = gltf_prim.findAttribute("POSITION");
           if (pos_attrib == gltf_prim.attributes.end()) {
             return {};
@@ -1048,27 +1082,25 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
           const auto& pos_accessor = gltf.accessors[pos_attrib->accessorIndex];
           u64 start_i_static = mesh_draw_info.first_vertex;
           u64 start_i_animated = mesh_draw_info.first_animated_vertex;
-          u32 o = 0;
-          if (gltf.nodes[gltf_node_i].skinIndex.has_value()) {
-            o = result->scene_graph_data.skins[gltf.nodes[gltf_node_i].skinIndex.value()]
-                    .model_bone_mat_start_i;
-          }
+          // u32 o = 0;
+          // if (gltf.nodes[gltf_node_i].skinIndex.has_value()) {
+          //   o = result->scene_graph_data.skins[gltf.nodes[gltf_node_i].skinIndex.value()]
+          //           .model_bone_mat_start_i;
+          // }
 
           if (animated) {
             fastgltf::iterateAccessorWithIndex<vec3>(
-                gltf, pos_accessor, [&result, start_i_static](const vec3& pos, u32 i) {
-                  result->animated_vertices[start_i_static + i].pos = pos;
+                gltf, pos_accessor, [&result, start_i_animated](const vec3& pos, u32 i) {
+                  result->animated_vertices[start_i_animated + i].pos = pos;
                 });
 
             assert(weights_attrib != primitive.attributes.end());
 
             fastgltf::iterateAccessorWithIndex<uvec4>(
                 gltf, gltf.accessors[joints_attrib->accessorIndex],
-                [&result, start_i_animated, &o](const uvec4& joints, size_t i) {
+                [&result, start_i_animated](const uvec4& joints, size_t i) {
                   for (u32 j = 0; j < 4; j++) {
-                    result->animated_vertices[start_i_animated + i].bone_id[j] = joints[j] + o;
-                    assert(j + 4 < max_bones_per_vertex);
-                    result->animated_vertices[start_i_animated + i].bone_id[j + 4] = 0;
+                    result->animated_vertices[start_i_animated + i].bone_id[j] = joints[j];
                   }
                 });
 
@@ -1077,8 +1109,6 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
                 [&result, start_i_animated](const vec4& weights, size_t i) {
                   for (u32 j = 0; j < 4; j++) {
                     result->animated_vertices[start_i_animated + i].weights[j] = weights[j];
-                    assert(j + 4 < max_bones_per_vertex);
-                    result->animated_vertices[start_i_animated + i].weights[j + 4] = 0;
                   }
                 });
 
@@ -1149,23 +1179,79 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
           const auto* tangent_attrib = primitive.findAttribute("TANGENT");
           if (tangent_attrib != primitive.attributes.end()) {
             const auto& accessor = gltf.accessors[tangent_attrib->accessorIndex];
-            u64 i = start_i_static;
-            assert(accessor.count == pos_accessor.count);
-            if (accessor.type == fastgltf::AccessorType::Vec3) {
-              auto range = fastgltf::iterateAccessor<glm::vec3>(gltf, accessor);
-              for (const glm::vec3& tangent : range) {
-                result->vertices[i++].tangent = vec4(tangent, 0.);
+            if (animated) {
+              u64 i = start_i_animated;
+              assert(accessor.count == pos_accessor.count);
+              if (accessor.type == fastgltf::AccessorType::Vec3) {
+                auto range = fastgltf::iterateAccessor<glm::vec3>(gltf, accessor);
+                for (const glm::vec3& tangent : range) {
+                  result->animated_vertices[i++].tangent = vec4(tangent, 0.);
+                }
+              } else if (accessor.type == fastgltf::AccessorType::Vec4) {
+                auto range = fastgltf::iterateAccessor<glm::vec4>(gltf, accessor);
+                for (const glm::vec4& tangent : range) {
+                  result->animated_vertices[i++].tangent = tangent;
+                }
               }
-            } else if (accessor.type == fastgltf::AccessorType::Vec4) {
-              auto range = fastgltf::iterateAccessor<glm::vec4>(gltf, accessor);
-              for (const glm::vec4& tangent : range) {
-                result->vertices[i++].tangent = tangent;
+            } else {
+              u64 i = start_i_static;
+              assert(accessor.count == pos_accessor.count);
+              if (accessor.type == fastgltf::AccessorType::Vec3) {
+                auto range = fastgltf::iterateAccessor<glm::vec3>(gltf, accessor);
+                for (const glm::vec3& tangent : range) {
+                  result->vertices[i++].tangent = vec4(tangent, 0.);
+                }
+              } else if (accessor.type == fastgltf::AccessorType::Vec4) {
+                auto range = fastgltf::iterateAccessor<glm::vec4>(gltf, accessor);
+                for (const glm::vec4& tangent : range) {
+                  result->vertices[i++].tangent = tangent;
+                }
               }
             }
           } else if (!loaded_tangents_from_disk) {
-            calc_tangents<u32>(
-                std::span(result->vertices.data() + (start_i_static), mesh_draw_info.vertex_count),
-                std::span(result->indices.data() + (start_idx), mesh_draw_info.index_count));
+            if (animated) {
+              auto& verts = result->animated_vertices;
+              CalcTangentsVertexInfo info{
+                  .pos = {.base = verts.data() + (start_i_animated),
+                          .offset = offsetof(AnimatedVertex, pos),
+                          .stride = sizeof(AnimatedVertex)},
+                  .normal = {.base = verts.data() + (start_i_animated),
+                             .offset = offsetof(AnimatedVertex, normal),
+                             .stride = sizeof(AnimatedVertex)},
+                  .uv_x = {.base = result->vertices.data() + (start_i_static),
+                           .offset = offsetof(Vertex, uv_x),
+                           .stride = sizeof(Vertex)},
+                  .uv_y = {.base = result->vertices.data() + (start_i_static),
+                           .offset = offsetof(Vertex, uv_y),
+                           .stride = sizeof(Vertex)},
+                  .tangent = {.base = verts.data() + (start_i_animated),
+                              .offset = offsetof(AnimatedVertex, tangent),
+                              .stride = sizeof(AnimatedVertex)},
+              };
+
+              calc_tangents<u32>(info, std::span(result->indices.data() + (start_idx),
+                                                 mesh_draw_info.index_count));
+            } else {
+              CalcTangentsVertexInfo info{
+                  .pos = {.base = result->vertices.data() + (start_i_static),
+                          .offset = offsetof(Vertex, pos),
+                          .stride = sizeof(Vertex)},
+                  .normal = {.base = result->vertices.data() + (start_i_animated),
+                             .offset = offsetof(Vertex, normal),
+                             .stride = sizeof(Vertex)},
+                  .uv_x = {.base = result->vertices.data() + (start_i_static),
+                           .offset = offsetof(Vertex, uv_x),
+                           .stride = sizeof(Vertex)},
+                  .uv_y = {.base = result->vertices.data() + (start_i_static),
+                           .offset = offsetof(Vertex, uv_y),
+                           .stride = sizeof(Vertex)},
+                  .tangent = {.base = result->vertices.data() + (start_i_animated),
+                              .offset = offsetof(Vertex, tangent),
+                              .stride = sizeof(Vertex)},
+              };
+              calc_tangents<u32>(info, std::span(result->indices.data() + (start_idx),
+                                                 mesh_draw_info.index_count));
+            }
           }
         }));
       }

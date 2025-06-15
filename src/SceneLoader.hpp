@@ -29,7 +29,6 @@ struct Vertex {
   float uv_y;
   vec4 tangent;
 };
-inline constexpr u32 max_bones_per_vertex{8};
 
 enum class AnimationPath : u8 {
   Translation = 1,
@@ -71,11 +70,14 @@ struct AnimationState {
   bool active{true};
 };
 
+inline constexpr u32 max_bones_per_vertex{4};
+
 struct AnimatedVertex {
   vec3 pos;
   u32 instance_i;
   vec4 normal;
-  u32 bone_id[max_bones_per_vertex]{~0u, ~0u, ~0u, ~0u, ~0u, ~0u, ~0u, ~0u};
+  vec4 tangent;
+  u32 bone_id[max_bones_per_vertex]{~0u, ~0u, ~0u, ~0u};
   float weights[max_bones_per_vertex]{};
 };
 

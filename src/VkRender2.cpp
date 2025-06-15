@@ -261,7 +261,7 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   static_index_buf_.allocator.init(indices_size, sizeof(u32));
 
   u64 max_static_draws = 100'000;
-  u64 max_animated_draws = 10'000;
+  u64 max_animated_draws = 10'0000;
 
   // TODO: refactor
   auto static_materials_size = 1000 * sizeof(gfx::Material);
@@ -970,12 +970,14 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
         u64 bone_mat_buf;
         u64 out_vertex_buf;
         u64 skinned_vertex_buf;
+        u64 cnt;
         // u64 instance_data_buf;
       } pc{
           device_->get_buffer(bone_matrix_bufs_[device_->curr_frame_in_flight()])->device_addr(),
           device_->get_buffer(animated_vertex_output_bufs_[device_->curr_frame_in_flight()])
               ->device_addr(),
           device_->get_buffer(animated_vertex_buf_.buffer)->device_addr(),
+          draw_stats_.animated_vertices,
       };
       cmd.push_constants(sizeof(pc), &pc);
       // num vertices
@@ -1894,6 +1896,11 @@ bool VkRender2::load_model2(const std::filesystem::path& path, LoadedModelData& 
       if (animated_vertices_size) {
         state_.buffer_barrier(animated_vertex_buf_.get_buffer()->buffer(),
                               VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+
+        for (size_t i = 0; i < device_->get_frames_in_flight(); i++) {
+          state_.buffer_barrier(device_->get_buffer(animated_vertex_output_bufs_[i])->buffer(),
+                                VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        }
       }
       state_.flush_barriers();
 
@@ -1901,6 +1908,11 @@ bool VkRender2::load_model2(const std::filesystem::path& path, LoadedModelData& 
         copy_cmd.copy_buffer(device_, *device_->get_buffer(animated_vertex_buf_.buffer),
                              animated_vertices_staging_offset,
                              animated_vertices_gpu_slot.get_offset(), animated_vertices_size);
+        for (size_t i = 0; i < device_->get_frames_in_flight(); i++) {
+          copy_cmd.copy_buffer(
+              device_, *device_->get_buffer(animated_vertex_output_bufs_[i].handle),
+              vertices_staging_offset, vertices_gpu_slot.get_offset(), vertices_size);
+        }
       }
       copy_cmd.copy_buffer(device_, *device_->get_buffer(static_materials_buf_.buffer),
                            material_data_staging_offset, materials_gpu_slot.get_offset(),
@@ -1924,6 +1936,12 @@ bool VkRender2::load_model2(const std::filesystem::path& path, LoadedModelData& 
             animated_vertex_buf_.get_buffer()->buffer(),
             VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
             VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT);
+        for (size_t i = 0; i < device_->get_frames_in_flight(); i++) {
+          state_.buffer_barrier(
+              device_->get_buffer(animated_vertex_output_bufs_[i])->buffer(),
+              VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
+              VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT);
+        }
       }
       state_.flush_barriers();
 
@@ -2343,6 +2361,7 @@ CullMode get_cull_mode(MeshPass pass) {
   }
   return CullMode::Back;
 }
+
 MeshPass get_double_sided_pass(MeshPass pass) {
   switch (pass) {
     case MeshPass_Opaque:
@@ -2370,11 +2389,11 @@ bool VkRender2::update_skins(LoadedInstanceData& instance) {
       int joint_node = skin.joint_node_indices[joint_i];
       const mat4& inv_bind_mat = skin.inverse_bind_matrices[joint_i];
       const mat4& global_transform_mat = instance.scene_graph_data.global_transforms[joint_node];
-
+      mat4 inv_skel = glm::inverse(instance.scene_graph_data.global_transforms[skin.skeleton_i]);
       assert(instance.global_bone_mat_start_i + skin.model_bone_mat_start_i + skin_i <
              global_skin_matrices_.size());
       global_skin_matrices_[instance.global_bone_mat_start_i + skin.model_bone_mat_start_i +
-                            joint_i] = global_transform_mat * inv_bind_mat;
+                            joint_i] = inv_skel * global_transform_mat * inv_bind_mat;
     }
   }
   return skins.size() > 0;
