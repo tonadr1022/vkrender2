@@ -389,17 +389,13 @@ void App::on_imgui() {
           ImGui::TreePop();
         }
 
-        // for (size_t anim_i = 0; anim_i < instance->animation_states.size(); anim_i++) {
-        //   ImGui::PushID(anim_i);
-        //   auto& anim = model->animations[anim_i];
-        //   if (ImGui::TreeNode("%s", "%s", anim.name.c_str())) {
-        //     for (auto& channel : anim.channels) {
-        //       ImGui::Text("%i channel: %i", channel.node, channel.node);
-        //     }
-        //     ImGui::TreePop();
-        //   }
-        //   ImGui::PopID();
-        // }
+        for (size_t anim_i = 0; anim_i < instance->animation_states.size(); anim_i++) {
+          ImGui::PushID(anim_i);
+          auto& anim = model->animations[anim_i];
+          auto& state = instance->animation_states[anim_i];
+          ImGui::Checkbox(anim.name.c_str(), &state.active);
+          ImGui::PopID();
+        }
 
         ImGui::PopID();
         i++;

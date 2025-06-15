@@ -234,7 +234,6 @@ class Device {
                        u64 size) const;
     };
     CopyCmd allocate(u64 size);
-    CmdEncoder* allocate2(u64 size);
     void submit(CopyCmd cmd);
     void destroy();
 

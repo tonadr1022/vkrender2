@@ -250,8 +250,7 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
     animated_vertex_output_bufs_.emplace_back(device_->create_buffer_holder(
         BufferCreateInfo{.size = animated_vertices_size, .usage = BufferUsage_Storage}));
     // TODO: lol
-    bone_matrix_bufs_.emplace_back(device_->create_buffer_holder(
-        BufferCreateInfo{.size = 1000 * sizeof(mat4), .usage = BufferUsage_Storage}));
+    bone_matrix_bufs_.emplace_back();
   }
 
   auto indices_size = 10'000'000 * sizeof(u32);
@@ -529,6 +528,30 @@ void VkRender2::draw(const SceneDrawInfo& info) {
       });
       object_datas_to_copy_.clear();
       object_data_buffer_copier_.copies.clear();
+    }
+  }
+  {
+    // upload skin matrices
+    if (global_skin_matrices_.size()) {
+      auto copy_size = global_skin_matrices_.size() * sizeof(mat4);
+      Buffer* curr_mat_buf =
+          device_->get_buffer(bone_matrix_bufs_[device_->curr_frame_in_flight()]);
+      if (!curr_mat_buf) {
+        bone_matrix_bufs_[device_->curr_frame_in_flight()] = device_->create_buffer_holder(
+            BufferCreateInfo{.size = copy_size, .usage = BufferUsage_Storage});
+        curr_mat_buf = device_->get_buffer(bone_matrix_bufs_[device_->curr_frame_in_flight()]);
+        LINFO("made buffer");
+      }
+      auto copy_cmd = device_->graphics_copy_allocator_.allocate(copy_size);
+      state_.reset(copy_cmd.transfer_cmd_buf);
+      memcpy(device_->get_buffer(copy_cmd.staging_buffer)->mapped_data(),
+             global_skin_matrices_.data(), copy_size);
+      copy_cmd.copy_buffer(device_, *curr_mat_buf, 0, 0, copy_size);
+      state_
+          .buffer_barrier(curr_mat_buf->buffer(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                          VK_ACCESS_2_SHADER_READ_BIT)
+          .flush_barriers();
+      device_->graphics_copy_allocator_.submit(copy_cmd);
     }
   }
 
@@ -1165,50 +1188,53 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
       }
       auto rg_depth_handle =
           gbuffer.add("depth", {.format = depth_img_format_}, Access::DepthStencilWrite);
-      gbuffer.set_execute_fn(
-          [&rg, rg_gbuffer_a, rg_gbuffer_b, rg_gbuffer_c, this, rg_depth_handle](CmdEncoder& cmd) {
-            cmd.begin_region("gbuffer");
-            auto gbuffer_a = rg.get_texture_handle(rg_gbuffer_a);
-            auto gbuffer_b = rg.get_texture_handle(rg_gbuffer_b);
-            auto gbuffer_c = rg.get_texture_handle(rg_gbuffer_c);
-            uvec2 extent = device_->get_image(gbuffer_a)->size();
-            cmd.begin_rendering({.extent = extent},
-                                {RenderingAttachmentInfo::color_att(gbuffer_a, LoadOp::Clear),
-                                 RenderingAttachmentInfo::color_att(gbuffer_b, LoadOp::Clear),
-                                 RenderingAttachmentInfo::color_att(gbuffer_c, LoadOp::Clear),
-                                 RenderingAttachmentInfo::depth_stencil_att(
-                                     rg.get_texture_handle(rg_depth_handle), LoadOp::Clear)});
+      gbuffer.set_execute_fn([&rg, rg_gbuffer_a, rg_gbuffer_b, rg_gbuffer_c, this,
+                              rg_depth_handle](CmdEncoder& cmd) {
+        cmd.begin_region("gbuffer");
+        auto gbuffer_a = rg.get_texture_handle(rg_gbuffer_a);
+        auto gbuffer_b = rg.get_texture_handle(rg_gbuffer_b);
+        auto gbuffer_c = rg.get_texture_handle(rg_gbuffer_c);
+        uvec2 extent = device_->get_image(gbuffer_a)->size();
+        cmd.begin_rendering({.extent = extent},
+                            {RenderingAttachmentInfo::color_att(gbuffer_a, LoadOp::Clear),
+                             RenderingAttachmentInfo::color_att(gbuffer_b, LoadOp::Clear),
+                             RenderingAttachmentInfo::color_att(gbuffer_c, LoadOp::Clear),
+                             RenderingAttachmentInfo::depth_stencil_att(
+                                 rg.get_texture_handle(rg_depth_handle), LoadOp::Clear)});
 
-            cmd.set_viewport_and_scissor(extent);
+        cmd.set_viewport_and_scissor(extent);
 
-            // TODO: pipeline binding should be on the outside
-            for (int animated = 0; animated < 2; animated++) {
-              if (animated && draw_stats_.animated_vertices > 0) {
-                continue;
-              }
-              GBufferPushConstants pc{
-                  animated ? animated_vertex_buf_.get_buffer()->device_addr()
-                           : static_vertex_buf_.get_buffer()->device_addr(),
-                  device_->get_buffer(curr_frame().scene_uniform_buf)->device_addr(),
-                  static_instance_data_buf_.get_buffer()->device_addr(),
-                  static_object_data_buf_.get_buffer()->device_addr(),
-                  static_materials_buf_.get_buffer()->device_addr(),
-                  device_->get_bindless_idx(linear_sampler_),
-              };
-              cmd.push_constants(sizeof(pc), &pc);
-              cmd.bind_pipeline(PipelineBindPoint::Graphics, gbuffer_pipeline_);
-              execute_static_geo_draws(cmd, MeshPass_Opaque, animated);
-              execute_static_geo_draws(cmd, MeshPass_OpaqueDoubleSided, animated);
-              if (gbuffer_alpha_mask_pipeline_ == gbuffer_pipeline_) {
-                exit(1);
-              }
-              cmd.bind_pipeline(PipelineBindPoint::Graphics, gbuffer_alpha_mask_pipeline_);
-              execute_static_geo_draws(cmd, MeshPass_OpaqueAlphaMask, animated);
-              execute_static_geo_draws(cmd, MeshPass_OpaqueAlphaMaskDoubleSided, animated);
-            }
-            cmd.end_rendering();
-            cmd.end_region();
-          });
+        // TODO: pipeline binding should be on the outside
+        for (int animated = 0; animated < 2; animated++) {
+          if (animated && draw_stats_.animated_vertices == 0) {
+            continue;
+          }
+          GBufferPushConstants pc{
+              animated
+                  ? device_
+                        ->get_buffer(animated_vertex_output_bufs_[device_->curr_frame_in_flight()])
+                        ->device_addr()
+                  : static_vertex_buf_.get_buffer()->device_addr(),
+              device_->get_buffer(curr_frame().scene_uniform_buf)->device_addr(),
+              static_instance_data_buf_.get_buffer()->device_addr(),
+              static_object_data_buf_.get_buffer()->device_addr(),
+              static_materials_buf_.get_buffer()->device_addr(),
+              device_->get_bindless_idx(linear_sampler_),
+          };
+          cmd.push_constants(sizeof(pc), &pc);
+          cmd.bind_pipeline(PipelineBindPoint::Graphics, gbuffer_pipeline_);
+          execute_static_geo_draws(cmd, MeshPass_Opaque, animated);
+          execute_static_geo_draws(cmd, MeshPass_OpaqueDoubleSided, animated);
+          if (gbuffer_alpha_mask_pipeline_ == gbuffer_pipeline_) {
+            exit(1);
+          }
+          cmd.bind_pipeline(PipelineBindPoint::Graphics, gbuffer_alpha_mask_pipeline_);
+          execute_static_geo_draws(cmd, MeshPass_OpaqueAlphaMask, animated);
+          execute_static_geo_draws(cmd, MeshPass_OpaqueAlphaMaskDoubleSided, animated);
+        }
+        cmd.end_rendering();
+        cmd.end_region();
+      });
     }
     {
       auto& shade = rg.add_pass("shade");
@@ -1842,6 +1868,14 @@ bool VkRender2::load_model2(const std::filesystem::path& path, LoadedModelData& 
     }
     u64 indices_staging_offset = staging.copy(res.indices.data(), indices_size);
 
+    // TODO: per instance
+    {
+      u32 num_new_skin_mats{};
+      for (const auto& skin : res.scene_graph_data.skins) {
+        num_new_skin_mats += skin.inverse_bind_matrices.size();
+      }
+      global_skin_matrices_.resize(global_skin_matrices_.size() + num_new_skin_mats);
+    }
     draw_stats_.vertices += res.vertices.size();
     draw_stats_.animated_vertices += res.animated_vertices.size();
     draw_stats_.indices += res.indices.size();
@@ -1933,11 +1967,6 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   u32 pass_obj_counts[MeshPass_Count] = {};
 
   const auto& scene = model.scene_graph_data;
-  u32 num_new_skin_mats{};
-  for (const auto& skin : scene.skins) {
-    num_new_skin_mats += skin.inverse_bind_matrices.size();
-  }
-  global_skin_matrices_.resize(global_skin_matrices_.size() + num_new_skin_mats);
 
   assert(scene.hierarchies.size() == scene.node_mesh_indices.size());
   for (size_t node_i = 0; node_i < scene.hierarchies.size(); node_i++) {
@@ -2341,7 +2370,9 @@ bool VkRender2::update_skins(LoadedInstanceData& instance) {
       int joint_node = skin.joint_node_indices[joint_i];
       const mat4& inv_bind_mat = skin.inverse_bind_matrices[joint_i];
       const mat4& global_transform_mat = instance.scene_graph_data.global_transforms[joint_node];
-      assert(skin.model_bone_mat_start_i + skin_i < global_skin_matrices_.size());
+
+      assert(instance.global_bone_mat_start_i + skin.model_bone_mat_start_i + skin_i <
+             global_skin_matrices_.size());
       global_skin_matrices_[instance.global_bone_mat_start_i + skin.model_bone_mat_start_i +
                             joint_i] = global_transform_mat * inv_bind_mat;
     }
