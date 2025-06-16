@@ -173,6 +173,10 @@ void App::run() {
   std::filesystem::path env_tex = local_models_dir / "newport_loft.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/quarry_04_puresky_4k.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/golden_gate_hills_4k.hdr";
+  for (int i = 0; i < 10; i++) {
+    instances_.emplace_back(
+        ResourceManager::get().load_model("/Users/tony/models/Models/Fox/glTF/Fox.gltf"));
+  }
 
   VkRender2::get().set_env_map(env_tex);
   while (running_ && !glfwWindowShouldClose(window)) {
@@ -230,6 +234,18 @@ void App::update(float dt) {
   info_.view = cam_data.get_view();
   info_.view_pos = cam_data.pos;
   info_.light_dir = glm::normalize(light_dir_);
+
+  int i = 0;
+  static float offset{10.f};
+  ImGui::DragFloat("offset", &offset);
+  for (auto& instance_h : instances_) {
+    auto* instance = ResourceManager::get().get_instance(instance_h);
+    if (instance) {
+      instance->scene_graph_data.local_transforms[0] =
+          glm::translate(mat4{1}, vec3{i++ * offset, 0, 0});
+      mark_changed(instance->scene_graph_data, 0);
+    }
+  }
   // static glm::quat rot = glm::quat(1, 0, 0, 0);
   // glm::quat delta_rot = glm::angleAxis(dt, glm::vec3(0., 1., 0.));
   // rot = glm::normalize(delta_rot * rot);  // Accumulate rotation

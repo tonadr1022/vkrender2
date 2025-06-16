@@ -2,6 +2,7 @@
 
 #include <tracy/Tracy.hpp>
 
+#include "Scene.hpp"
 #include "ThreadPool.hpp"
 #include "VkRender2.hpp"
 #include "core/Logger.hpp"
@@ -14,21 +15,34 @@ InstanceHandle ResourceManager::load_model(const std::filesystem::path& path,
     return {};
   }
 
+  std::shared_lock lock(model_name_mtx_);
   auto model_handle_it = model_name_to_handle_.find(path);
   auto instance_handle = instance_pool_.alloc();
-
   if (model_handle_it != model_name_to_handle_.end()) {
     std::scoped_lock lock(instance_load_req_mtx_);
     instance_load_requests_.emplace_back(transform, instance_handle, model_handle_it->second);
   } else {
     threads::pool.submit_task([this, path, transform, instance_handle]() {
-      auto model_handle = loaded_model_pool_.alloc();
-      auto* d = loaded_model_pool_.get(model_handle);
-      if (!gfx::VkRender2::get().load_model2(path, *d)) {
-        assert(0 && "todo handle error");
-        return;
+      ModelHandle model_handle{};
+      {
+        std::unique_lock lock(model_name_mtx_);
+        auto it = model_name_to_handle_.find(path);
+        if (it != model_name_to_handle_.end()) {
+          model_handle = it->second;
+        } else {
+          model_handle = loaded_model_pool_.alloc();
+          auto* d = loaded_model_pool_.get(model_handle);
+          d->path = path;
+          if (!gfx::VkRender2::get().load_model2(path, *d)) {
+            assert(0 && "todo handle error");
+            return;
+          }
+        }
       }
-      d->path = path;
+      {
+        std::unique_lock lock(model_name_mtx_);
+        model_name_to_handle_.emplace(path, model_handle);
+      }
       std::scoped_lock lock(instance_load_req_mtx_);
       instance_load_requests_.emplace_back(transform, instance_handle, model_handle);
     });
@@ -58,9 +72,9 @@ ResourceManager& ResourceManager::get() {
 }
 
 void ResourceManager::add_instance(ModelHandle model_handle, InstanceHandle instance_handle,
-                                   const mat4& transform) {
+                                   const mat4&) {
   auto* instance = instance_pool_.get(instance_handle);
-  instance->instance_resources_handle = gfx::VkRender2::get().add_instance(model_handle, transform);
+  instance->instance_resources_handle = gfx::VkRender2::get().add_instance(model_handle);
   auto* model = loaded_model_pool_.get(model_handle);
   assert(model);
   // TODO: maybe not do this here?

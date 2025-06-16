@@ -1962,7 +1962,7 @@ bool VkRender2::load_model2(const std::filesystem::path& path, LoadedModelData& 
 }
 
 // TODO: thread safe
-StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_handle, const mat4&) {
+StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_handle) {
   auto* pmodel = ResourceManager::get().get_model(model_handle);
   assert(pmodel);
   if (!pmodel) {

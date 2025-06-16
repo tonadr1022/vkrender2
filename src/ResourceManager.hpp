@@ -1,6 +1,8 @@
 #pragma once
 
 // TODO: not include this
+#include <unordered_set>
+
 #include "SceneLoader.hpp"
 #include "SceneResources.hpp"
 #include "Types.hpp"
@@ -31,7 +33,10 @@ class ResourceManager {
   InstanceHandle load_model(const std::filesystem::path& path, const mat4& transform = mat4{1});
   void remove_model(InstanceHandle handle);
   LoadedModelData* get_model(ModelHandle handle) { return loaded_model_pool_.get(handle); }
-  LoadedInstanceData* get_instance(InstanceHandle handle) { return instance_pool_.get(handle); }
+  LoadedInstanceData* get_instance(InstanceHandle handle) {
+    auto* instance = instance_pool_.get(handle);
+    return instance && instance->is_valid() ? instance : nullptr;
+  }
 
  private:
   void add_instance(ModelHandle model_handle, InstanceHandle instance_handle,
@@ -45,10 +50,11 @@ class ResourceManager {
   std::mutex scene_load_mtx_;
   Pool<ModelHandle, LoadedModelData> loaded_model_pool_;
   Pool<InstanceHandle, LoadedInstanceData> instance_pool_;
+  std::shared_mutex model_name_mtx_;
   std::unordered_map<std::string, ModelHandle> model_name_to_handle_;
 
   struct InstanceLoadRequest {
-    mat4 transform;
+    mat4 transform{mat4{1}};
     InstanceHandle instance_handle;
     ModelHandle model_handle;
   };

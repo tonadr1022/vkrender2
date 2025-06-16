@@ -157,7 +157,7 @@ class VkRender2 final {
   ~VkRender2();
 
   bool load_model2(const std::filesystem::path& path, LoadedModelData& result);
-  StaticModelInstanceResourcesHandle add_instance(ModelHandle model_handle, const mat4& transform);
+  StaticModelInstanceResourcesHandle add_instance(ModelHandle model_handle);
   void update_transforms(LoadedInstanceData& instance, std::vector<i32>& changed_nodes);
   void update_animation(LoadedInstanceData& instance, float dt);
   bool update_skins(LoadedInstanceData& instance);
