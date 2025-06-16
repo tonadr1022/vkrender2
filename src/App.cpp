@@ -144,8 +144,8 @@ void App::run() {
   //     "/Users/tony/Downloads/secret_of_the_mimic_-_mimic/scene.gltf"));
   instances_.emplace_back(ResourceManager::get().load_model(
       "/Users/tony/Downloads/killer_clown_balatro_style/scene.gltf"));
-  // instances_.emplace_back(
-  //     ResourceManager::get().load_model("/Users/tony/models/Models/Fox/glTF/Fox.gltf"));
+  instances_.emplace_back(
+      ResourceManager::get().load_model("/Users/tony/models/Models/Fox/glTF/Fox.gltf"));
   // instances_.emplace_back(ResourceManager::get().load_model(
   //     "/Users/tony/models/Models/AlphaBlendModeTest/glTF/AlphaBlendModeTest.gltf"));
 
@@ -194,10 +194,6 @@ void App::run() {
     for (auto& instance_handle : instances_) {
       auto* instance = ResourceManager::get().get_instance(instance_handle);
       if (!instance || !instance->is_valid()) continue;
-      auto* res =
-          VkRender2::get().static_model_instance_pool_.get(instance->instance_resources_handle);
-      assert(res);
-      assert(res->instance_datas.size());
       VkRender2::get().update_animation(*instance, dt);
       changed_nodes.clear();
       validate_hierarchy(instance->scene_graph_data);
@@ -357,7 +353,6 @@ void App::on_imgui() {
 
       light_dir_.x = std::sin(light_angle_);
       light_dir_.z = std::cos(light_angle_);
-      // scene_data.light_dir =
     }
 
     ImGui::ColorEdit3("Sunlight Color", &info_.light_color.x, ImGuiColorEditFlags_Float);

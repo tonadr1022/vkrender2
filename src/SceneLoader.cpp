@@ -1082,11 +1082,11 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
           const auto& pos_accessor = gltf.accessors[pos_attrib->accessorIndex];
           u64 start_i_static = mesh_draw_info.first_vertex;
           u64 start_i_animated = mesh_draw_info.first_animated_vertex;
-          // u32 o = 0;
-          // if (gltf.nodes[gltf_node_i].skinIndex.has_value()) {
-          //   o = result->scene_graph_data.skins[gltf.nodes[gltf_node_i].skinIndex.value()]
-          //           .model_bone_mat_start_i;
-          // }
+          u32 o = 0;
+          if (gltf.nodes[gltf_node_i].skinIndex.has_value()) {
+            o = result->scene_graph_data.skins[gltf.nodes[gltf_node_i].skinIndex.value()]
+                    .model_bone_mat_start_i;
+          }
 
           if (animated) {
             fastgltf::iterateAccessorWithIndex<vec3>(
@@ -1098,9 +1098,9 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
 
             fastgltf::iterateAccessorWithIndex<uvec4>(
                 gltf, gltf.accessors[joints_attrib->accessorIndex],
-                [&result, start_i_animated](const uvec4& joints, size_t i) {
+                [&result, &start_i_animated, &o](const uvec4& joints, size_t i) {
                   for (u32 j = 0; j < 4; j++) {
-                    result->animated_vertices[start_i_animated + i].bone_id[j] = joints[j];
+                    result->animated_vertices[start_i_animated + i].bone_id[j] = joints[j] + o;
                   }
                 });
 

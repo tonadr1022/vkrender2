@@ -246,12 +246,17 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   animated_vertex_buf_.buffer = device_->create_buffer_holder(
       {BufferCreateInfo{.size = animated_vertices_size, .usage = BufferUsage_Storage}});
   animated_vertex_buf_.allocator.init(animated_vertices_size, sizeof(gfx::AnimatedVertex));
+  animated_vertex_output_bufs_.allocator.init(animated_vertices_size, sizeof(Vertex));
   for (size_t i = 0; i < device_->get_frames_in_flight(); i++) {
-    animated_vertex_output_bufs_.emplace_back(device_->create_buffer_holder(
-        BufferCreateInfo{.size = animated_vertices_size, .usage = BufferUsage_Storage}));
+    animated_vertex_output_bufs_.buffers[i] = device_->create_buffer_holder(
+        BufferCreateInfo{.size = animated_vertices_size, .usage = BufferUsage_Storage});
     // TODO: lol
     bone_matrix_bufs_.emplace_back();
   }
+  global_skin_mat_allocator_.init(100'000, sizeof(mat4));
+  skin_instance_datas_.allocator.init(animated_vertices_size, sizeof(SkinCommand));
+  skin_instance_datas_.buffer = device_->create_buffer_holder(
+      BufferCreateInfo{.size = animated_vertices_size, .usage = BufferUsage_Storage});
 
   auto indices_size = 10'000'000 * sizeof(u32);
   static_index_buf_.buffer = device_->create_buffer_holder(BufferCreateInfo{
@@ -530,17 +535,21 @@ void VkRender2::draw(const SceneDrawInfo& info) {
       object_data_buffer_copier_.copies.clear();
     }
   }
+
+  ResourceManager::get().update();
+
+  // TODO: per instance data: need to get the right bone matrix offset for each model
+
   {
     // upload skin matrices
     if (global_skin_matrices_.size()) {
       auto copy_size = global_skin_matrices_.size() * sizeof(mat4);
       Buffer* curr_mat_buf =
           device_->get_buffer(bone_matrix_bufs_[device_->curr_frame_in_flight()]);
-      if (!curr_mat_buf) {
+      if (!curr_mat_buf || copy_size > curr_mat_buf->size()) {
         bone_matrix_bufs_[device_->curr_frame_in_flight()] = device_->create_buffer_holder(
             BufferCreateInfo{.size = copy_size, .usage = BufferUsage_Storage});
         curr_mat_buf = device_->get_buffer(bone_matrix_bufs_[device_->curr_frame_in_flight()]);
-        LINFO("made buffer");
       }
       auto copy_cmd = device_->graphics_copy_allocator_.allocate(copy_size);
       state_.reset(copy_cmd.transfer_cmd_buf);
@@ -564,8 +573,6 @@ void VkRender2::draw(const SceneDrawInfo& info) {
       }
     }
   }
-
-  ResourceManager::get().update();
 
   CmdEncoder* cmd = device_->begin_command_list(QueueType::Graphics);
   state_.reset(*cmd);
@@ -961,8 +968,10 @@ void VkRender2::generate_mipmaps(CmdEncoder& ctx, ImageHandle handle) {
 void VkRender2::add_rendering_passes(RenderGraph& rg) {
   ZoneScoped;
   if (draw_stats_.animated_vertices > 0) {
+    assert(global_skin_matrices_.size());
+    assert(device_->get_buffer(bone_matrix_bufs_[device_->curr_frame_in_flight()]));
     auto& skinning = rg.add_pass("skinning");
-    skinning.add(animated_vertex_output_bufs_[device_->curr_frame_in_flight()].handle,
+    skinning.add(animated_vertex_output_bufs_.buffers[device_->curr_frame_in_flight()].handle,
                  Access::ComputeWrite);
     skinning.set_execute_fn([this](CmdEncoder& cmd) {
       cmd.bind_pipeline(PipelineBindPoint::Compute, skinning_comp_pipeline_);
@@ -970,13 +979,15 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
         u64 bone_mat_buf;
         u64 out_vertex_buf;
         u64 skinned_vertex_buf;
+        u64 skin_cmd_buf;
         u64 cnt;
         // u64 instance_data_buf;
       } pc{
           device_->get_buffer(bone_matrix_bufs_[device_->curr_frame_in_flight()])->device_addr(),
-          device_->get_buffer(animated_vertex_output_bufs_[device_->curr_frame_in_flight()])
+          device_->get_buffer(animated_vertex_output_bufs_.buffers[device_->curr_frame_in_flight()])
               ->device_addr(),
           device_->get_buffer(animated_vertex_buf_.buffer)->device_addr(),
+          device_->get_buffer(skin_instance_datas_.buffer)->device_addr(),
           draw_stats_.animated_vertices,
       };
       cmd.push_constants(sizeof(pc), &pc);
@@ -1174,7 +1185,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
       auto rg_gbuffer_c =
           gbuffer.add("gbuffer_c", {.format = gbuffer_c_format_}, Access::ColorWrite);
       if (draw_stats_.animated_vertices > 0) {
-        gbuffer.add(animated_vertex_output_bufs_[device_->curr_frame_in_flight()].handle,
+        gbuffer.add(animated_vertex_output_bufs_.buffers[device_->curr_frame_in_flight()].handle,
                     (Access)(Access::VertexRead | Access::ComputeRead));
       }
 
@@ -1214,7 +1225,8 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
           GBufferPushConstants pc{
               animated
                   ? device_
-                        ->get_buffer(animated_vertex_output_bufs_[device_->curr_frame_in_flight()])
+                        ->get_buffer(
+                            animated_vertex_output_bufs_.buffers[device_->curr_frame_in_flight()])
                         ->device_addr()
                   : static_vertex_buf_.get_buffer()->device_addr(),
               device_->get_buffer(curr_frame().scene_uniform_buf)->device_addr(),
@@ -1769,6 +1781,9 @@ void VkRender2::free(StaticModelInstanceResources& instance) {
   auto& obj_data_buf = instance.is_animated ? animated_object_data_buf_ : static_object_data_buf_;
   instance_buf.allocator.free(instance.instance_data_slot);
   obj_data_buf.allocator.free(instance.object_data_slot);
+  if (instance.is_animated) {
+    animated_vertex_output_bufs_.allocator.free(instance.animated_vertex_buf_slot);
+  }
   // free the draws (need to clear to 0)
   auto* pmodel = ResourceManager::get().get_model(instance.model_handle);
   assert(pmodel);
@@ -1870,16 +1885,7 @@ bool VkRender2::load_model2(const std::filesystem::path& path, LoadedModelData& 
     }
     u64 indices_staging_offset = staging.copy(res.indices.data(), indices_size);
 
-    // TODO: per instance
-    {
-      u32 num_new_skin_mats{};
-      for (const auto& skin : res.scene_graph_data.skins) {
-        num_new_skin_mats += skin.inverse_bind_matrices.size();
-      }
-      global_skin_matrices_.resize(global_skin_matrices_.size() + num_new_skin_mats);
-    }
     draw_stats_.vertices += res.vertices.size();
-    draw_stats_.animated_vertices += res.animated_vertices.size();
     draw_stats_.indices += res.indices.size();
     draw_stats_.textures += res.textures.size();
     draw_stats_.materials += res.materials.size();
@@ -1896,11 +1902,6 @@ bool VkRender2::load_model2(const std::filesystem::path& path, LoadedModelData& 
       if (animated_vertices_size) {
         state_.buffer_barrier(animated_vertex_buf_.get_buffer()->buffer(),
                               VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-
-        for (size_t i = 0; i < device_->get_frames_in_flight(); i++) {
-          state_.buffer_barrier(device_->get_buffer(animated_vertex_output_bufs_[i])->buffer(),
-                                VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-        }
       }
       state_.flush_barriers();
 
@@ -1908,11 +1909,6 @@ bool VkRender2::load_model2(const std::filesystem::path& path, LoadedModelData& 
         copy_cmd.copy_buffer(device_, *device_->get_buffer(animated_vertex_buf_.buffer),
                              animated_vertices_staging_offset,
                              animated_vertices_gpu_slot.get_offset(), animated_vertices_size);
-        for (size_t i = 0; i < device_->get_frames_in_flight(); i++) {
-          copy_cmd.copy_buffer(
-              device_, *device_->get_buffer(animated_vertex_output_bufs_[i].handle),
-              vertices_staging_offset, vertices_gpu_slot.get_offset(), vertices_size);
-        }
       }
       copy_cmd.copy_buffer(device_, *device_->get_buffer(static_materials_buf_.buffer),
                            material_data_staging_offset, materials_gpu_slot.get_offset(),
@@ -1936,12 +1932,6 @@ bool VkRender2::load_model2(const std::filesystem::path& path, LoadedModelData& 
             animated_vertex_buf_.get_buffer()->buffer(),
             VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
             VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT);
-        for (size_t i = 0; i < device_->get_frames_in_flight(); i++) {
-          state_.buffer_barrier(
-              device_->get_buffer(animated_vertex_output_bufs_[i])->buffer(),
-              VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
-              VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT);
-        }
       }
       state_.flush_barriers();
 
@@ -1952,6 +1942,8 @@ bool VkRender2::load_model2(const std::filesystem::path& path, LoadedModelData& 
     // result.materials = std::move(load_result.value().materials);
     result.gpu_resource_handle = model_gpu_resources_pool_.alloc();
     auto* resources = model_gpu_resources_pool_.get(result.gpu_resource_handle);
+    resources->animated_vertices_gpu_slot = animated_vertices_gpu_slot;
+    resources->animated_vertices = std::move(res.vertices);
     resources->textures = std::move(res.textures);
     resources->mesh_draw_infos = res.mesh_draw_infos;
     resources->materials_slot = materials_gpu_slot;
@@ -2039,6 +2031,50 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   u32 base_object_data_id = instance_resources->object_data_slot.get_offset() / sizeof(ObjectData);
   auto base_material_id = resources->materials_slot.get_offset() / sizeof(Material);
 
+  // if animated:
+  // copy the model's vertices output buffers since each instance needs its own
+  u32 first_vertex{};
+  std::vector<SkinCommand> skin_cmds;
+  if (instance_resources->is_animated) {
+    instance_resources->animated_vertex_buf_slot = animated_vertex_output_bufs_.allocator.allocate(
+        resources->animated_vertices.size() * sizeof(Vertex));
+    first_vertex = instance_resources->animated_vertex_buf_slot.get_offset() / sizeof(Vertex);
+
+    draw_stats_.animated_vertices += resources->animated_vertices.size();
+
+    // update global bone matrices
+    u32 num_new_skin_mats{};
+    for (const auto& skin : model.scene_graph_data.skins) {
+      num_new_skin_mats += skin.inverse_bind_matrices.size();
+    }
+    if (num_new_skin_mats > 0) {
+      instance_resources->global_bone_mat_slot =
+          global_skin_mat_allocator_.allocate(sizeof(mat4) * num_new_skin_mats);
+      global_skin_matrices_.resize(global_skin_mat_allocator_.max_seen_size() / sizeof(mat4));
+    }
+
+    {
+      skin_cmds.reserve(resources->animated_vertices.size());
+      u32 skin_vtx_i = resources->animated_vertices_gpu_slot.get_offset() / sizeof(AnimatedVertex);
+      u32 output_vertex_i = first_vertex;
+      u32 bone_mat_i = instance_resources->global_bone_mat_slot.get_offset() / sizeof(mat4);
+      for (size_t i = 0; i < resources->animated_vertices.size(); i++) {
+        skin_cmds.emplace_back(SkinCommand{
+            .skin_vtx_i = skin_vtx_i++,
+            .out_vtx_i = output_vertex_i++,
+            .bone_mat_start_i = bone_mat_i,
+        });
+      }
+      instance_resources->skin_commands_slot =
+          skin_instance_datas_.allocator.allocate(skin_cmds.size() * sizeof(SkinCommand));
+    }
+
+    // update skin instance datas so skinned vertices can know what to do
+
+  } else {
+    first_vertex = resources->first_vertex;
+  }
+
   for (size_t node_i = 0; node_i < scene.hierarchies.size(); node_i++) {
     // TODO: model wide?
     instance_resources->node_to_instance_and_obj.emplace_back(-1);
@@ -2071,7 +2107,7 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
 
     GPUDrawInfo draw{.index_cnt = mesh.index_count,
                      .first_index = static_cast<u32>(resources->first_index + mesh.first_index),
-                     .vertex_offset = static_cast<u32>(resources->first_vertex + mesh.first_vertex),
+                     .vertex_offset = first_vertex + mesh.first_vertex,
                      .instance_id = instance_id,
                      .flags = draw_flags};
     if (node_mesh_data.pass_flags & PassFlags_Opaque) {
@@ -2105,8 +2141,10 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   for (auto& cmds : pass_cmds) {
     tot_draw_cmds_buf_size += cmds.size() * sizeof(GPUDrawInfo);
   }
-  auto copy_cmd = device_->graphics_copy_allocator_.allocate(tot_draw_cmds_buf_size +
-                                                             obj_datas_size + instance_datas_size);
+  u64 skin_cmd_copy_size = skin_cmds.size() * sizeof(SkinCommand);
+  auto copy_cmd = device_->graphics_copy_allocator_.allocate(
+      tot_draw_cmds_buf_size + obj_datas_size + instance_datas_size +
+      instance_resources->animated_vertex_buf_slot.get_size() + skin_cmd_copy_size);
   auto staging = LinearCopyer{device_->get_buffer(copy_cmd.staging_buffer)->mapped_data()};
   u64 cmds_staging_offsets[MeshPass_Count] = {};
   for (int i = 0; i < MeshPass_Count; i++) {
@@ -2119,6 +2157,17 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
       staging.copy(instance_resources->object_datas.data(), obj_datas_size);
   u64 instance_datas_staging_offset =
       staging.copy(instance_resources->instance_datas.data(), instance_datas_size);
+  u64 skin_instance_datas_staging_offset{};
+  if (skin_cmds.size()) {
+    skin_instance_datas_staging_offset = staging.copy(skin_cmds.data(), skin_cmd_copy_size);
+  }
+
+  u64 vertices_staging_offset{};
+  if (instance_resources->is_animated) {
+    vertices_staging_offset = staging.copy(resources->animated_vertices.data(),
+                                           instance_resources->animated_vertex_buf_slot.get_size());
+  }
+
   {
     assert(obj_datas_size && instance_datas_size);
     state_.reset(copy_cmd.transfer_cmd_buf);
@@ -2142,6 +2191,40 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
         .buffer_barrier(instance_data_buf.get_buffer()->buffer(),
                         VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT)
         .flush_barriers();
+    if (instance_resources->is_animated) {
+      for (size_t i = 0; i < device_->get_frames_in_flight(); i++) {
+        state_.buffer_barrier(
+            device_->get_buffer(animated_vertex_output_bufs_.buffers[i])->buffer(),
+            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+      }
+      state_.flush_barriers();
+      // copy to output vertices
+      for (size_t i = 0; i < device_->get_frames_in_flight(); i++) {
+        copy_cmd.copy_buffer(
+            device_, *device_->get_buffer(animated_vertex_output_bufs_.buffers[i].handle),
+            vertices_staging_offset, instance_resources->animated_vertex_buf_slot.get_offset(),
+            instance_resources->animated_vertex_buf_slot.get_size());
+      }
+      // TODO: get rid of these barriers
+      for (size_t i = 0; i < device_->get_frames_in_flight(); i++) {
+        state_.buffer_barrier(
+            device_->get_buffer(animated_vertex_output_bufs_.buffers[i])->buffer(),
+            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
+            VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT);
+      }
+      state_.flush_barriers();
+
+      if (skin_cmds.size()) {
+        copy_cmd.copy_buffer(device_, *device_->get_buffer(skin_instance_datas_.buffer),
+                             skin_instance_datas_staging_offset,
+                             instance_resources->skin_commands_slot.get_offset(),
+                             skin_cmd_copy_size);
+        state_
+            .buffer_barrier(device_->get_buffer(skin_instance_datas_.buffer)->buffer(),
+                            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT)
+            .flush_barriers();
+      }
+    }
     device_->graphics_copy_allocator_.submit(copy_cmd);
   }
   return model_instance_resources_handle;
@@ -2237,6 +2320,10 @@ void VkRender2::update_animation(LoadedInstanceData& instance, float dt) {
   anim_i = 0;
   for (Animation& animation : model->animations) {
     const AnimationState& anim_state = instance.animation_states[anim_i];
+    if (!anim_state.active) {
+      anim_i++;
+      continue;
+    }
     for (size_t channel_i = 0; channel_i < animation.channels.nodes.size(); channel_i++) {
       int channel_node_i = animation.get_channel_node(channel_i);
       assert(channel_node_i >= 0);
@@ -2383,6 +2470,10 @@ MeshPass get_double_sided_pass(MeshPass pass) {
 bool VkRender2::update_skins(LoadedInstanceData& instance) {
   ZoneScoped;
   const auto& skins = instance.scene_graph_data.skins;
+  auto* instance_resources = static_model_instance_pool_.get(instance.instance_resources_handle);
+  assert(instance_resources);
+  u32 instance_bone_mat_start_i =
+      instance_resources->global_bone_mat_slot.get_offset() / sizeof(mat4);
   for (size_t skin_i = 0; skin_i < skins.size(); skin_i++) {
     const auto& skin = skins[skin_i];
     for (size_t joint_i = 0; joint_i < skin.joint_node_indices.size(); joint_i++) {
@@ -2390,10 +2481,10 @@ bool VkRender2::update_skins(LoadedInstanceData& instance) {
       const mat4& inv_bind_mat = skin.inverse_bind_matrices[joint_i];
       const mat4& global_transform_mat = instance.scene_graph_data.global_transforms[joint_node];
       mat4 inv_skel = glm::inverse(instance.scene_graph_data.global_transforms[skin.skeleton_i]);
-      assert(instance.global_bone_mat_start_i + skin.model_bone_mat_start_i + skin_i <
+      assert(instance_bone_mat_start_i + skin.model_bone_mat_start_i + skin_i <
              global_skin_matrices_.size());
-      global_skin_matrices_[instance.global_bone_mat_start_i + skin.model_bone_mat_start_i +
-                            joint_i] = inv_skel * global_transform_mat * inv_bind_mat;
+      global_skin_matrices_[instance_bone_mat_start_i + skin.model_bone_mat_start_i + joint_i] =
+          inv_skel * global_transform_mat * inv_bind_mat;
     }
   }
   return skins.size() > 0;
