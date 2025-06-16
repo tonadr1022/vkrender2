@@ -110,15 +110,17 @@ class FreeListAllocator {
 
   [[nodiscard]] u32 num_active_allocs() const { return num_active_allocs_; }
   [[nodiscard]] u32 max_seen_active_allocs() const { return max_seen_active_allocs_; }
+  [[nodiscard]] u32 max_seen_size() const { return max_seen_size_; }
 
  private:
   u32 size_{};
-  u32 alignment_{0};
-  u32 num_active_allocs_{0};
-  u32 max_seen_active_allocs_{0};
+  u32 alignment_{};
+  u32 num_active_allocs_{};
+  u32 max_seen_active_allocs_{};
+  u32 max_seen_size_{};
   u32 capacity_{};
-
   std::vector<Slot> allocs_;
+  bool initialized_{};
 
   using Iterator = decltype(allocs_.begin());
   void coalesce(Iterator& it);

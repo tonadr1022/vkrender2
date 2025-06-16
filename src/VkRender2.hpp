@@ -32,17 +32,20 @@ struct LoadedModelData;
 
 namespace gfx {
 
+inline constexpr u32 max_frames_in_flight = 2;
 struct ModelGPUResources {
   std::vector<Holder<ImageHandle>> textures;
   std::vector<PrimitiveDrawInfo> mesh_draw_infos;
   util::FreeListAllocator::Slot materials_slot;
   util::FreeListAllocator::Slot vertices_slot;
   util::FreeListAllocator::Slot indices_slot;
+  util::FreeListAllocator::Slot animated_vertices_gpu_slot;
   std::vector<Material> materials;
   u64 first_vertex;
   u64 first_index;
   u64 num_vertices;
   u64 num_indices;
+  std::vector<Vertex> animated_vertices;
   std::string name;
   u32 ref_count;
 };
@@ -73,6 +76,9 @@ struct StaticModelInstanceResources {
   std::array<u32, MeshPass_Count> mesh_pass_draw_handles{UINT32_MAX};
   util::FreeListAllocator::Slot instance_data_slot;
   util::FreeListAllocator::Slot object_data_slot;
+  util::FreeListAllocator::Slot animated_vertex_buf_slot;
+  util::FreeListAllocator::Slot global_bone_mat_slot;
+  util::FreeListAllocator::Slot skin_commands_slot;
   ModelHandle model_handle;
   const char* name;  // owned by gpu resource
   bool is_animated{};
@@ -115,6 +121,12 @@ struct FreeListBuffer {
   Holder<BufferHandle> buffer;
   util::FreeListAllocator allocator;
   [[nodiscard]] Buffer* get_buffer() const;
+};
+
+template <u32 N>
+struct FreeListNBuffers {
+  std::array<Holder<BufferHandle>, N> buffers;
+  util::FreeListAllocator allocator;
 };
 
 struct SceneDrawInfo {
@@ -224,11 +236,20 @@ class VkRender2 final {
   // bone matrix buffers: per frame in flight
   FreeListBuffer animated_vertex_buf_;
   // per frame in flight
-  std::vector<Holder<BufferHandle>> animated_vertex_output_bufs_;
+  FreeListNBuffers<max_frames_in_flight> animated_vertex_output_bufs_;
   // per frame in flight
   std::vector<Holder<BufferHandle>> bone_matrix_bufs_;
   FreeListBuffer animated_instance_data_buf_;
   FreeListBuffer animated_object_data_buf_;
+
+  struct SkinCommand {
+    u32 skin_vtx_i;
+    u32 out_vtx_i;
+    u32 bone_mat_start_i;
+  };
+  FreeListBuffer skin_instance_datas_;
+
+  util::FreeListAllocator global_skin_mat_allocator_;
   std::vector<mat4> global_skin_matrices_;
 
   FreeListBuffer static_vertex_buf_;

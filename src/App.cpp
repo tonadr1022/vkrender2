@@ -194,10 +194,6 @@ void App::run() {
     for (auto& instance_handle : instances_) {
       auto* instance = ResourceManager::get().get_instance(instance_handle);
       if (!instance || !instance->is_valid()) continue;
-      auto* res =
-          VkRender2::get().static_model_instance_pool_.get(instance->instance_resources_handle);
-      assert(res);
-      assert(res->instance_datas.size());
       VkRender2::get().update_animation(*instance, dt);
       changed_nodes.clear();
       validate_hierarchy(instance->scene_graph_data);

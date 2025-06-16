@@ -17,7 +17,9 @@ void FreeListAllocator::init(u32 size_bytes, u32 alignment, u32 element_reserve_
   empty_alloc.offset_ = 0;
   empty_alloc.mark_free();
   allocs_.push_back(empty_alloc);
+  initialized_ = true;
 }
+
 bool FreeListAllocator::reserve(u32 size_bytes) {
   // top bit in the offset is reserved
   if (size_bytes >= UINT32_MAX / 2) {
@@ -32,7 +34,9 @@ bool FreeListAllocator::reserve(u32 size_bytes) {
   capacity_ = size_bytes;
   return true;
 }
+
 FreeListAllocator::Slot FreeListAllocator::allocate(u32 size_bytes) {
+  assert(initialized_);
   // align the size
   size_bytes += (alignment_ - (size_bytes % alignment_)) % alignment_;
   auto smallest_free_alloc = allocs_.end();
@@ -69,6 +73,7 @@ FreeListAllocator::Slot FreeListAllocator::allocate(u32 size_bytes) {
 
   ++num_active_allocs_;
   max_seen_active_allocs_ = std::max<u32>(max_seen_active_allocs_, num_active_allocs_);
+  max_seen_size_ = std::max<u32>(new_alloc.get_offset() + new_alloc.get_size(), max_seen_size_);
   size_ += size_bytes;
 
   if (smallest_free_alloc->size_ == 0) {
