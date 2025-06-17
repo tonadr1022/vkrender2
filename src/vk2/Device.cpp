@@ -704,7 +704,7 @@ void Device::acquire_next_image(CmdEncoder* cmd) {
       }
       swapchain_.acquire_semaphores.clear();
       int x, y;
-      glfwGetWindowSize(window_, &x, &y);
+      glfwGetFramebufferSize(window_, &x, &y);
       auto desc = swapchain_.desc;
       desc.width = x;
       desc.height = y;
@@ -1949,20 +1949,21 @@ void Device::begin_swapchain_blit(CmdEncoder* cmd) {
   }
 }
 
-void Device::blit_to_swapchain(CmdEncoder* cmd, const Image& img, uvec2 dims) {
-  VkImageBlit2 region{.sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2,
-                      .srcSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                         .mipLevel = 0,
-                                         .baseArrayLayer = 0,
-                                         .layerCount = 1},
-                      .srcOffsets = {{}, {static_cast<i32>(dims.x), static_cast<i32>(dims.y), 1}},
-                      .dstSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                         .mipLevel = 0,
-                                         .baseArrayLayer = 0,
-                                         .layerCount = 1},
-                      .dstOffsets = {{}, {static_cast<i32>(dims.x), static_cast<i32>(dims.y), 1}}
-
-  };
+void Device::blit_to_swapchain(CmdEncoder* cmd, const Image& img, uvec2 dims, uvec2 dst_dims) {
+  assert(dst_dims.x > 0 && dst_dims.y > 0);
+  assert(dims.x > 0 && dims.y > 0);
+  VkImageBlit2 region{
+      .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2,
+      .srcSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                         .mipLevel = 0,
+                         .baseArrayLayer = 0,
+                         .layerCount = 1},
+      .srcOffsets = {{}, {static_cast<i32>(dims.x), static_cast<i32>(dims.y), 1}},
+      .dstSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                         .mipLevel = 0,
+                         .baseArrayLayer = 0,
+                         .layerCount = 1},
+      .dstOffsets = {{}, {static_cast<i32>(dst_dims.x), static_cast<i32>(dst_dims.y), 1}}};
   VkBlitImageInfo2 blit_info{.sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2,
                              .srcImage = img.image(),
                              .srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,

@@ -24,6 +24,9 @@ option(KTX_FEATURE_STATIC_LIBRARY "" ON)
 
 add_subdirectory(glfw)
 add_subdirectory(glm)
+
+target_compile_definitions(glm INTERFACE GLM_FORCE_DEPTH_ZERO_TO_ONE VK_NO_PROTOTYPES GLFW_INCLUDE_NONE)
+
 add_subdirectory(volk)
 add_subdirectory(vk-bootstrap)
 add_subdirectory(vma)

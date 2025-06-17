@@ -548,9 +548,7 @@ void RenderGraph::execute(CmdEncoder& cmd) {
                               .pImageMemoryBarriers = img_barriers};
         vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
 
-        get_device().blit_to_swapchain(&cmd, *tex,
-                                       {glm::min(tex->get_desc().dims.x, desc_.dims.x),
-                                        glm::min(tex->get_desc().dims.y, desc_.dims.y)});
+        get_device().blit_to_swapchain(&cmd, *tex, tex->get_desc().dims, desc_.dims);
 
         // write after read barrier
         state.layout = img_barriers[0].newLayout;
@@ -706,6 +704,13 @@ ResourceDimensions RenderGraph::get_resource_dims(const RenderResource& resource
     if (resource.info.size_class == SizeClass::SwapchainRelative) {
       dims.width = desc_.dims.x;
       dims.height = desc_.dims.y;
+      // TODO: lol
+      if (resource.name != backbuffer_img_) {
+        dims.width *= render_scale_;
+        dims.height *= render_scale_;
+      } else {
+        dims.scaled = false;
+      }
     } else if (resource.info.size_class == SizeClass::Absolute) {
       dims.width = (uint32_t)resource.info.dims.x;
       dims.height = (uint32_t)resource.info.dims.y;
@@ -844,7 +849,6 @@ void RenderGraph::setup_attachments() {
           .bind_flags = get_bind_flags(dims.access_usage),
           .usage = Usage::Default,
       };
-
       assert(i < physical_image_attachments_.size());
       {
         auto it = img_cache_.find(dims);
@@ -855,8 +859,16 @@ void RenderGraph::setup_attachments() {
           if (img) {
             const auto& existing_desc = img->get_desc();
             if (dims.size_class == SizeClass::SwapchainRelative) {
-              valid_extent =
-                  existing_desc.dims.x == desc_.dims.x && existing_desc.dims.y == desc_.dims.y;
+              auto cmp = desc_.dims;
+              if (dims.scaled) {
+                cmp.x = (int)((float)cmp.x * render_scale_);
+                cmp.y = (int)((float)cmp.y * render_scale_);
+              }
+              valid_extent = existing_desc.dims.x == cmp.x && existing_desc.dims.y == cmp.y;
+              if (!valid_extent) {
+                LINFO("invalid {} {} {} {}", existing_desc.dims.x, existing_desc.dims.y, cmp.x,
+                      cmp.y);
+              }
             } else {
               valid_extent = existing_desc.dims.x == dims.width &&
                              existing_desc.dims.y == dims.height &&
@@ -869,8 +881,9 @@ void RenderGraph::setup_attachments() {
               physical_image_attachments_[i] = it->second.handle;
               need_new_img = false;
             } else {
-              LINFO("need new image: {} {} {}\ncinfo : {} {}", i, dims.width, dims.height,
-                    existing_desc.dims.x, existing_desc.dims.y);
+              LINFO("need new image: {} {} {} {}\ncinfo: {} {} {}\t{}", i, dims.width, dims.height,
+                    dims.depth, existing_desc.dims.x, existing_desc.dims.y, existing_desc.dims.z,
+                    get_device().curr_frame_num());
             }
           }
           if (!need_new_img) {
@@ -882,9 +895,6 @@ void RenderGraph::setup_attachments() {
           image_pipeline_states_.erase(physical_image_attachments_[i]);
           LINFO("making new image: {}", i);
           img_cache_used_.emplace_back(dims, get_device().create_image_holder(desc));
-          // if (!inserted) {
-          //   it->second = vk2::get_device().create_image_holder(info);
-          // }
           physical_image_attachments_[i] = img_cache_used_.back().second.handle;
         }
       }

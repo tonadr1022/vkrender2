@@ -329,7 +329,18 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   PipelineLoader loader;
   loader.reserve(20);
   loader.add_compute("cull_objects.comp", &cull_objs_pipeline_)
-      .add_compute("postprocess/postprocess.comp", &postprocess_pipeline_)
+      .add_graphics(
+          GraphicsPipelineCreateInfo{
+              .shaders = {{"fullscreen_quad.vert", ShaderType::Vertex},
+                          {"postprocess/postprocess.frag", ShaderType::Fragment}},
+              .rendering = {.color_formats = {convert_format(
+                                device_->get_swapchain_info().format)}},
+              .rasterization = {.cull_mode = CullMode::Front},
+              .depth_stencil = GraphicsPipelineCreateInfo::depth_disable(),
+              .name = "depth debug",
+          },
+          &postprocess_pipeline_)
+      // .add_compute("postprocess/postprocess.comp", &postprocess_pipeline_)
       .add_compute("debug/clear_img.comp", &img_pipeline_)
       .add_compute("gbuffer/shade.comp", &deferred_shade_pipeline_)
       .add_graphics(
@@ -1461,11 +1472,12 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
   {
     auto& pp = rg.add_pass("post_process");
     auto draw_out_handle =
-        pp.add(post_process_input_img_name, {.format = draw_img_format_}, Access::ComputeRead);
+        pp.add(post_process_input_img_name, {.format = draw_img_format_}, Access::FragmentRead);
     auto final_out_handle =
         pp.add("final_out", AttachmentInfo{.format = device_->get_swapchain_info().format},
-               Access::ComputeWrite);
+               Access::ColorWrite);
     pp.set_execute_fn([this, &rg, draw_out_handle, final_out_handle](CmdEncoder& cmd) {
+      cmd.begin_region("post_process");
       if (postprocess_pass_enabled.get()) {
         u32 postprocess_flags = 0;
         if (debug_mode_ != DEBUG_MODE_NONE) {
@@ -1477,17 +1489,23 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
         if (tonemap_enabled.get()) {
           postprocess_flags |= 0x1;
         }
-        cmd.bind_pipeline(PipelineBindPoint::Compute, postprocess_pipeline_);
+
+        auto tex = rg.get_texture_handle(final_out_handle);
+        auto dims = device_->get_image(tex)->size();
+        cmd.begin_rendering({.extent = dims}, {RenderingAttachmentInfo::color_att(tex)});
+        cmd.set_viewport_and_scissor(dims);
+        cmd.bind_pipeline(PipelineBindPoint::Graphics, postprocess_pipeline_);
         auto post_processed_img = rg.get_texture_handle(final_out_handle);
         struct {
           u32 in_tex_idx, out_tex_idx, flags, tonemap_type;
         } pc{device_->get_bindless_idx(rg.get_texture_handle(draw_out_handle),
-                                       SubresourceType::Storage),
+                                       SubresourceType::Shader),
              device_->get_bindless_idx(post_processed_img, SubresourceType::Storage),
              postprocess_flags, tonemap_type_};
         cmd.push_constants(sizeof(pc), &pc);
-        auto dims = device_->get_image(post_processed_img)->size();
-        cmd.dispatch((dims.x + 16) / 16, (dims.y + 16) / 16, 1);
+        cmd.draw(3);
+        cmd.end_rendering();
+        cmd.end_region();
       }
     });
   }
@@ -1523,8 +1541,8 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
           }
           auto color_handle = rg.get_texture_handle(rg_color_handle);
           auto depth_handle = rg.get_texture_handle(rg_depth_handle);
+          uvec2 extent = device_->get_image(color_handle)->size();
           if (line_draw_vertices_.size()) {
-            uvec2 extent = device_->get_image(color_handle)->size();
             cmd.begin_rendering({.extent = extent},
                                 {RenderingAttachmentInfo::color_att(color_handle),
                                  RenderingAttachmentInfo::depth_stencil_att(depth_handle)});
@@ -1540,6 +1558,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
 
           cmd.begin_rendering({.extent = device_->get_image(color_handle)->size()},
                               {RenderingAttachmentInfo::color_att(color_handle)});
+          cmd.set_viewport_and_scissor(extent);
           device_->render_imgui(cmd);
           cmd.end_rendering();
           cmd.end_region();
@@ -1818,7 +1837,7 @@ void VkRender2::free(CmdEncoder& cmd, StaticModelInstanceResources& instance) {
 
 uvec2 VkRender2::window_dims() const {
   int x, y;
-  glfwGetFramebufferSize(window_, &x, &y);
+  glfwGetWindowSize(window_, &x, &y);
   return {x, y};
 }
 float VkRender2::aspect_ratio() const {

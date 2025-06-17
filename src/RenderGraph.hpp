@@ -32,6 +32,7 @@ struct ResourceDimensions {
   BufferInfo buffer_info;
   ImageHandle external_img_handle;
   SizeClass size_class{SizeClass::SwapchainRelative};
+  bool scaled{true};
   uint32_t width{}, height{}, depth{}, layers{1}, levels{1}, samples{1};
   Access access_usage{};
   // VkImageUsageFlags image_usage_flags{};
@@ -288,6 +289,7 @@ struct RenderGraph {
   std::vector<ResourceState2> resource_states_;
   AttachmentInfo desc_;
   bool log_ = true;
+  float render_scale_{.5};
 };
 
 }  // namespace gfx

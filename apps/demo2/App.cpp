@@ -209,7 +209,6 @@ void App::run() {
     }
     renderer.draw(info_);
   }
-
   save_cam(cam_data);
   shutdown();
 }
@@ -274,6 +273,7 @@ namespace {
 bool first_mouse{true};
 vec2 last_pos{};
 }  // namespace
+
 void App::on_cursor_event(vec2 pos) {
   if (first_mouse) {
     first_mouse = false;
@@ -285,17 +285,6 @@ void App::on_cursor_event(vec2 pos) {
   if (hide_mouse) {
     cam.process_mouse(offset);
   }
-}
-
-float App::aspect_ratio() const {
-  auto dims = window_dims();
-  return (float)dims.x / (float)dims.y;
-}
-
-uvec2 App::window_dims() const {
-  int x, y;
-  glfwGetWindowSize(window, &x, &y);
-  return {x, y};
 }
 
 void App::on_imgui() {

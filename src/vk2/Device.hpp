@@ -206,7 +206,7 @@ class Device {
   u32 cmd_buf_count_{};
   CmdEncoder* begin_command_list(QueueType queue_type);
   void begin_swapchain_blit(CmdEncoder* cmd);
-  void blit_to_swapchain(CmdEncoder* cmd, const Image& img, uvec2 dims);
+  void blit_to_swapchain(CmdEncoder* cmd, const Image& img, uvec2 dims, uvec2 dst_dims);
 
  private:
   struct TransitionHandler {

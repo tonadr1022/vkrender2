@@ -7,88 +7,10 @@
 #include <tracy/Tracy.hpp>
 #include <vector>
 
-#include "core/Logger.hpp"
 #include "vk2/Device.hpp"
 #include "vk2/VkCommon.hpp"
 
 namespace gfx::vk2 {
-namespace {
-
-// VkSwapchainKHR create_swapchain(const UpdateSwapchainInfo& info, VkFormat format,
-//                                 VkSwapchainKHR old, VkSurfaceCapabilitiesKHR surface_caps) {
-//   ZoneScoped;
-//   VkCompositeAlphaFlagBitsKHR surface_composite =
-//       (surface_caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR)
-//           ? VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
-//       : (surface_caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR)
-//           ? VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR
-//       : (surface_caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR)
-//           ? VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR
-//           : VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
-//   VkSwapchainKHR res;
-//   VkExtent2D extent = {info.dims.x, info.dims.y};
-//   VkSwapchainCreateInfoKHR swap_info{
-//       .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
-//       .surface = info.surface,
-//       .minImageCount = std::max(2u, surface_caps.minImageCount),
-//       .imageFormat = format,
-//       .imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
-//       .imageExtent = extent,
-//       .imageArrayLayers = 1,
-//       .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-//       .queueFamilyIndexCount = 1,
-//       .pQueueFamilyIndices = &info.queue_idx,
-//       .preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
-//       .compositeAlpha = surface_composite,
-//       .presentMode = info.present_mode,
-//       .oldSwapchain = old};
-//   VK_CHECK(vkCreateSwapchainKHR(info.device, &swap_info, nullptr, &res));
-//   return res;
-// }
-
-}  // namespace
-
-// void Swapchain::init(const UpdateSwapchainInfo& info, VkSwapchainKHR old) {
-//   VkSurfaceCapabilitiesKHR surface_caps;
-//   vkGetPhysicalDeviceSurfaceCapabilitiesKHR(get_device().get_physical_device(), info.surface,
-//                                             &surface_caps);
-//   VkSwapchainKHR new_swapchain = create_swapchain(info, format, old, surface_caps);
-//   assert(new_swapchain);
-//   uint32_t new_img_cnt = 0;
-//   VK_CHECK(vkGetSwapchainImagesKHR(info.device, new_swapchain, &new_img_cnt, nullptr));
-//   imgs.resize(new_img_cnt);
-//   VK_CHECK(vkGetSwapchainImagesKHR(info.device, new_swapchain, &new_img_cnt, imgs.data()));
-//   swapchain = new_swapchain;
-//   this->present_mode = info.present_mode;
-//   this->dims = info.dims;
-//
-//   if (acquire_semaphores.size() == 0) {
-//     for (size_t i = 0; i < imgs.size(); i++) {
-//       acquire_semaphores.emplace_back(get_device().create_semaphore(false));
-//     }
-//   }
-//   release_semaphore = get_device().create_semaphore(false);
-// }
-
-// Swapchain::Status Swapchain::update(const UpdateSwapchainInfo& info) {
-//   ZoneScoped;
-//   if (info.dims.x == 0 || info.dims.y == 0) {
-//     LINFO("not ready");
-//     return Swapchain::Status::NotReady;
-//   }
-//
-//   if (dims.x == info.dims.x && dims.y == info.dims.y && !info.requested_resize) {
-//     return Swapchain::Status::Ready;
-//   }
-//
-//   VkSwapchainKHR old = swapchain;
-//   init(info, old);
-//   VK_CHECK(vkDeviceWaitIdle(info.device));
-//
-//   vkDestroySwapchainKHR(info.device, old, nullptr);
-//
-//   return Swapchain::Status::Resized;
-// }
 
 void Swapchain::destroy(VkDevice device) {
   for (auto& img_view : img_views) {
