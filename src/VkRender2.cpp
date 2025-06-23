@@ -13,7 +13,6 @@
 #include <glm/gtx/string_cast.hpp>
 #include <glm/mat4x4.hpp>
 #include <memory>
-#include <print>
 #include <tracy/Tracy.hpp>
 #include <tracy/TracyVulkan.hpp>
 #include <utility>
@@ -143,9 +142,9 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   // create per frame staging buffers
   for (u32 i = 0; i < device_->get_frames_in_flight(); i++) {
     // 64 MB
-    staging_buffers_.emplace_back(device_->create_staging_buffer(1024ul * 1024 * 64));
+    frame_staging_buffers_.emplace_back(device_->create_staging_buffer(1024ul * 1024 * 64));
     staging_buffer_copiers_.emplace_back(
-        device_->get_buffer(staging_buffers_.back())->mapped_data());
+        device_->get_buffer(frame_staging_buffers_.back())->mapped_data());
   }
 
   PipelineManager::init(device_->device(), resource_dir_ / "shaders", true,
@@ -532,9 +531,10 @@ void VkRender2::draw(const SceneDrawInfo& info) {
             .flush_barriers();
         staging_buffer_copiers_[device_->curr_frame_in_flight()].copy(object_datas_to_copy_.data(),
                                                                       copy_size);
-        cmd.copy_buffer(object_data_buffer_copier_,
-                        *device_->get_buffer(staging_buffers_[device_->curr_frame_in_flight()]),
-                        *static_object_data_buf_.get_buffer());
+        cmd.copy_buffer(
+            object_data_buffer_copier_,
+            *device_->get_buffer(frame_staging_buffers_[device_->curr_frame_in_flight()]),
+            *static_object_data_buf_.get_buffer());
         state_
             .buffer_barrier(
                 static_object_data_buf_.get_buffer()->buffer(),

@@ -1114,8 +1114,8 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
 
           } else {
             fastgltf::iterateAccessorWithIndex<vec3>(
-                gltf, pos_accessor, [&result, start_i_animated](const vec3& pos, u32 i) {
-                  result->animated_vertices[start_i_animated + i].pos = pos;
+                gltf, pos_accessor, [&result, start_i_static](const vec3& pos, u32 i) {
+                  result->vertices[start_i_static + i].pos = pos;
                 });
           }
 

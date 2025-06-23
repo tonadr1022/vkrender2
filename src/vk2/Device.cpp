@@ -712,7 +712,6 @@ void Device::acquire_next_image(CmdEncoder* cmd) {
       acquire_next_image(cmd);
     }
   }
-  assert(swapchain_.release_semaphore);
   // TODO: refactor this LOL
   if (cmd->submit_swapchains_.empty()) {
     cmd->submit_swapchains_.push_back(&swapchain_);
@@ -1804,10 +1803,11 @@ void Device::submit_commands() {
             swapchain->acquire_semaphores[swapchain->acquire_semaphore_idx],
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_BLIT_BIT, 0));
         // signals the release for swapchain
-        assert(swapchain->release_semaphore != VK_NULL_HANDLE);
-        queue.signal_semaphores.emplace_back(swapchain->release_semaphore);
-        queue.signal_semaphore_infos.emplace_back(vk2::init::semaphore_submit_info(
-            swapchain->release_semaphore, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0));
+        VkSemaphore sem = swapchain->release_semaphores[swapchain->acquire_semaphore_idx];
+        assert(sem != VK_NULL_HANDLE);
+        queue.signal_semaphores.emplace_back(sem);
+        queue.signal_semaphore_infos.emplace_back(
+            vk2::init::semaphore_submit_info(sem, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0));
       }
 
       // handle dependencies

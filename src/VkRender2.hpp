@@ -376,7 +376,7 @@ class VkRender2 final {
   BufferCopyer object_data_buffer_copier_;
   std::vector<InstanceHandle> dirty_instances_;
   std::vector<ObjectData> object_datas_to_copy_;
-  std::vector<Holder<BufferHandle>> staging_buffers_;
+  std::vector<Holder<BufferHandle>> frame_staging_buffers_;
   std::vector<LinearCopyer> staging_buffer_copiers_;
 
   PipelineTask make_pipeline_task(const ComputePipelineCreateInfo& info,

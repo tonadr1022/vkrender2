@@ -142,10 +142,25 @@ void App::run() {
   //     ResourceManager::get().load_model("/Users/tony/Downloads/bistro/Exterior/exterior.glb"));
   // instances_.emplace_back(ResourceManager::get().load_model(
   //     "/Users/tony/Downloads/secret_of_the_mimic_-_mimic/scene.gltf"));
-  instances_.emplace_back(ResourceManager::get().load_model(
-      "/Users/tony/Downloads/killer_clown_balatro_style/scene.gltf"));
-  instances_.emplace_back(
-      ResourceManager::get().load_model("/Users/tony/models/Models/Fox/glTF/Fox.gltf"));
+  // instances_.emplace_back(ResourceManager::get().load_model(
+  //     "/Users/tony/Downloads/killer_clown_balatro_style/scene.gltf"));
+  glm::vec3 v{};
+  int w = 2;
+  float spacing = 3.f;
+  for (v.z = -w; v.z < w; v.z++) {
+    for (v.x = -w; v.x < w; v.x++) {
+      glm::mat4 transform = glm::translate(glm::mat4{1}, v * spacing);
+      instances_.emplace_back(ResourceManager::get().load_model(
+          "/Users/tony/models/Models/Cube/glTF/Cube.gltf", transform));
+    }
+  }
+  // for (int i = 0; i < 10; i++) {
+  //   LINFO("loading model");
+  //   instances_.emplace_back(
+  //       ResourceManager::get().load_model("/Users/tony/models/Models/Cube/glTF/Cube.gltf"));
+  // }
+  // instances_.emplace_back(
+  //     ResourceManager::get().load_model("/Users/tony/models/Models/Fox/glTF/Fox.gltf"));
   // instances_.emplace_back(ResourceManager::get().load_model(
   //     "/Users/tony/models/Models/AlphaBlendModeTest/glTF/AlphaBlendModeTest.gltf"));
 
@@ -173,10 +188,11 @@ void App::run() {
   std::filesystem::path env_tex = local_models_dir / "newport_loft.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/quarry_04_puresky_4k.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/golden_gate_hills_4k.hdr";
-  for (int i = 0; i < 10; i++) {
-    instances_.emplace_back(
-        ResourceManager::get().load_model("/Users/tony/models/Models/Fox/glTF/Fox.gltf"));
-  }
+
+  // for (int i = 0; i < 10; i++) {
+  //   instances_.emplace_back(
+  //       ResourceManager::get().load_model("/Users/tony/models/Models/Fox/glTF/Fox.gltf"));
+  // }
 
   VkRender2::get().set_env_map(env_tex);
   while (running_ && !glfwWindowShouldClose(window)) {
@@ -237,14 +253,15 @@ void App::update(float dt) {
   int i = 0;
   static float offset{10.f};
   ImGui::DragFloat("offset", &offset);
-  for (auto& instance_h : instances_) {
-    auto* instance = ResourceManager::get().get_instance(instance_h);
-    if (instance) {
-      instance->scene_graph_data.local_transforms[0] =
-          glm::translate(mat4{1}, vec3{i++ * offset, 0, 0});
-      mark_changed(instance->scene_graph_data, 0);
-    }
-  }
+
+  // for (auto& instance_h : instances_) {
+  //   auto* instance = ResourceManager::get().get_instance(instance_h);
+  //   if (instance) {
+  //     instance->scene_graph_data.local_transforms[0] =
+  //         glm::translate(mat4{1}, vec3{i++ * offset, 0, 0});
+  //     mark_changed(instance->scene_graph_data, 0);
+  //   }
+  // }
   // static glm::quat rot = glm::quat(1, 0, 0, 0);
   // glm::quat delta_rot = glm::angleAxis(dt, glm::vec3(0., 1., 0.));
   // rot = glm::normalize(delta_rot * rot);  // Accumulate rotation

@@ -25,7 +25,12 @@ void Swapchain::destroy(VkDevice device) {
       semaphore = nullptr;
     }
   }
-  vkDestroySemaphore(device, release_semaphore, nullptr);
+  for (auto& semaphore : release_semaphores) {
+    if (semaphore) {
+      vkDestroySemaphore(device, semaphore, nullptr);
+      semaphore = nullptr;
+    }
+  }
   vkDestroySwapchainKHR(device, swapchain, nullptr);
   swapchain = nullptr;
 }
@@ -151,12 +156,16 @@ void create_swapchain(Swapchain& swapchain, const SwapchainDesc& desc) {
         vkCreateImageView(get_device().device(), &view_info, nullptr, &swapchain.img_views[i]));
     if (swapchain.acquire_semaphores.empty()) {
       for (size_t i = 0; i < swapchain.imgs.size(); i++) {
-        swapchain.acquire_semaphores.emplace_back(get_device().create_semaphore(false));
+        swapchain.acquire_semaphores.emplace_back(
+            get_device().create_semaphore(false, "swapchain acquire semaphore"));
       }
     }
-    if (!swapchain.release_semaphore) {
-      swapchain.release_semaphore =
-          get_device().create_semaphore(false, "swapchain release semaphore");
+
+    if (swapchain.release_semaphores.empty()) {
+      for (size_t i = 0; i < swapchain.imgs.size(); i++) {
+        swapchain.release_semaphores.emplace_back(
+            get_device().create_semaphore(false, "swapchain release semaphore"));
+      }
     }
   }
 }
