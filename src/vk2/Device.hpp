@@ -222,6 +222,23 @@ class Device {
   // TODO: fix
  public:
   std::vector<VkImageMemoryBarrier2> init_transitions_;
+  struct CopyOp {
+    BufferHandle staging_buffer;
+    BufferHandle dst_buffer;
+    u64 src_offset;
+    u64 dst_offset;
+    u64 size;
+  };
+  std::vector<CopyOp> copy_ops;
+  struct Barrier {
+    BufferHandle buffer;
+    VkAccessFlags2 src_access;
+    VkPipelineStageFlags2 src_stage;
+    VkAccessFlags2 dst_access;
+    VkPipelineStageFlags2 dst_stage;
+  };
+  std::vector<Barrier> copy_barriers;
+
   struct CopyAllocator {
     explicit CopyAllocator(Device* device, QueueType type) : device_(device), type_(type) {}
     struct CopyCmd {

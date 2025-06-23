@@ -556,22 +556,33 @@ void VkRender2::draw(const SceneDrawInfo& info) {
     if (global_skin_matrices_.size()) {
       auto copy_size = global_skin_matrices_.size() * sizeof(mat4);
       Buffer* curr_mat_buf =
-          device_->get_buffer(bone_matrix_bufs_[device_->curr_frame_in_flight()]);
+          device_->get_buffer(bone_matrix_bufs_[device_->curr_frame_in_flight()].handle);
       if (!curr_mat_buf || copy_size > curr_mat_buf->size()) {
         bone_matrix_bufs_[device_->curr_frame_in_flight()] = device_->create_buffer_holder(
             BufferCreateInfo{.size = copy_size, .usage = BufferUsage_Storage});
         curr_mat_buf = device_->get_buffer(bone_matrix_bufs_[device_->curr_frame_in_flight()]);
       }
-      auto copy_cmd = device_->graphics_copy_allocator_.allocate(copy_size);
-      state_.reset(copy_cmd.transfer_cmd_buf);
-      memcpy(device_->get_buffer(copy_cmd.staging_buffer)->mapped_data(),
-             global_skin_matrices_.data(), copy_size);
-      copy_cmd.copy_buffer(device_, *curr_mat_buf, 0, 0, copy_size);
-      state_
-          .buffer_barrier(curr_mat_buf->buffer(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                          VK_ACCESS_2_SHADER_READ_BIT)
-          .flush_barriers();
-      device_->graphics_copy_allocator_.submit(copy_cmd);
+      // auto copy_cmd = device_->graphics_copy_allocator_.allocate(copy_size);
+      // state_.reset(copy_cmd.transfer_cmd_buf);
+      // memcpy(device_->get_buffer(copy_cmd.staging_buffer)->mapped_data(),
+      //        global_skin_matrices_.data(), copy_size);
+      // copy_cmd.copy_buffer(device_, *curr_mat_buf, 0, 0, copy_size);
+      device_->copy_ops.emplace_back(Device::CopyOp{
+          .staging_buffer = frame_staging_buffers_[device_->curr_frame_in_flight()].handle,
+          .dst_buffer = bone_matrix_bufs_[device_->curr_frame_in_flight()].handle,
+          .src_offset = staging_buffer_copiers_[device_->curr_frame_in_flight()].copy(
+              global_skin_matrices_.data(), copy_size),
+          .dst_offset = 0,
+          .size = copy_size});
+      device_->copy_barriers.emplace_back(bone_matrix_bufs_[device_->curr_frame_in_flight()].handle,
+                                          0, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                                          VK_ACCESS_2_SHADER_READ_BIT,
+                                          VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
+      // state_
+      //     .buffer_barrier(curr_mat_buf->buffer(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+      //                     VK_ACCESS_2_SHADER_READ_BIT)
+      //     .flush_barriers();
+      // device_->graphics_copy_allocator_.submit(copy_cmd);
     }
   }
 
@@ -584,6 +595,66 @@ void VkRender2::draw(const SceneDrawInfo& info) {
       }
     }
   }
+
+  immediate_submit([this](CmdEncoder& cmd) {
+    struct CopyBatch {
+      std::vector<VkBufferCopy2KHR> copies;
+      BufferHandle dst;
+    };
+    std::vector<CopyBatch> batches;
+    for (const auto& copy : device_->copy_ops) {
+      CopyBatch* batch{};
+      for (auto& b : batches) {
+        if (b.dst == copy.dst_buffer) {
+          batch = &b;
+          break;
+        }
+      }
+      if (!batch) {
+        auto& new_batch = batches.emplace_back();
+        new_batch.dst = copy.dst_buffer;
+        batch = &new_batch;
+      }
+
+      batch->copies.emplace_back(VkBufferCopy2KHR{.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2_KHR,
+                                                  .srcOffset = copy.src_offset,
+                                                  .dstOffset = copy.dst_offset,
+                                                  .size = copy.size});
+    }
+
+    for (auto& batch : batches) {
+      VkCopyBufferInfo2KHR copy_info{
+          .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+          .srcBuffer = device_->get_buffer(frame_staging_buffers_[device_->curr_frame_in_flight()])
+                           ->buffer(),
+          .dstBuffer = device_->get_buffer(batch.dst)->buffer(),
+          .regionCount = static_cast<uint32_t>(batch.copies.size()),
+          .pRegions = batch.copies.data()};
+      vkCmdCopyBuffer2KHR(cmd.cmd(), &copy_info);
+    }
+
+    std::vector<VkBufferMemoryBarrier2> buffer_barriers;
+    buffer_barriers.reserve(device_->copy_barriers.size());
+    for (auto& barrier : device_->copy_barriers) {
+      buffer_barriers.emplace_back(VkBufferMemoryBarrier2{
+          .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+          .srcStageMask = barrier.src_stage,
+          .srcAccessMask = barrier.src_access,
+          .dstStageMask = barrier.dst_stage,
+          .dstAccessMask = barrier.dst_access,
+          .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+          .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+          .buffer = device_->get_buffer(barrier.buffer)->buffer(),
+          .offset = 0,
+          .size = VK_WHOLE_SIZE,
+      });
+    }
+    VkDependencyInfo info = vk2::init::dependency_info(buffer_barriers, {});
+    vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
+    // TODO: move elsewhere
+    device_->copy_ops.clear();
+    device_->copy_barriers.clear();
+  });
 
   CmdEncoder* cmd = device_->begin_command_list(QueueType::Graphics);
   state_.reset(*cmd);
