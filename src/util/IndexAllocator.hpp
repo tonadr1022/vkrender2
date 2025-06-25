@@ -93,6 +93,7 @@ class FreeListAllocator {
     void mark_used() { offset_ &= 0x7FFFFFFF; }
     [[nodiscard]] u32 get_offset() const { return offset_ & 0x7FFFFFFF; }
     [[nodiscard]] u32 get_size() const { return size_; }
+    [[nodiscard]] u32 get_off_plus_size() const { return get_offset() + get_size(); }
   };
 
   void init(u32 size_bytes, u32 alignment, u32 element_reserve_count = 100);

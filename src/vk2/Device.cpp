@@ -996,6 +996,10 @@ ImageHandle Device::create_image(const ImageDesc& desc, void*) {
 
   // always copy to/from
   cinfo.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+  // // non shader resources can be read from
+  // if (!has_flag(desc.bind_flags, BindFlag::ShaderResource)) {
+  //   cinfo.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+  // }
 
   switch (desc.type) {
     case ImageDesc::Type::OneD:
@@ -1691,6 +1695,7 @@ void Device::Queue::clear() {
 }
 
 void Device::Queue::submit(Device* device, VkFence fence) {
+  ZoneScoped;
   if (queue == VK_NULL_HANDLE) {
     return;
   }
@@ -1748,6 +1753,7 @@ void Device::Queue::submit(Device* device, VkFence fence) {
 }
 
 void Device::submit_commands() {
+  ZoneScoped;
   // transition resources (images) to graphics queue
   if (!init_transitions_.empty()) {
     // place barriers and submit to grpahics queue
@@ -1898,6 +1904,7 @@ void Device::submit_commands() {
 }
 
 CmdEncoder* Device::begin_command_list(QueueType queue_type) {
+  ZoneScoped;
   u32 curr_cmd_idx = cmd_buf_count_++;
   if (curr_cmd_idx >= cmd_lists_.size()) {
     cmd_lists_.emplace_back(std::make_unique<CmdEncoder>(this, default_pipeline_layout_));
@@ -1992,6 +1999,7 @@ void Device::free_semaphore(VkSemaphore semaphore) {
 void Device::free_semaphore_unsafe(VkSemaphore semaphore) { free_semaphores_.push_back(semaphore); }
 
 void Device::cmd_list_wait(CmdEncoder* cmd_list, CmdEncoder* wait_for) {
+  ZoneScoped;
   assert(cmd_list != wait_for && wait_for->id_ < cmd_list->id_);
   VkSemaphore semaphore = new_semaphore();
   cmd_list->wait_semaphores_.emplace_back(semaphore);

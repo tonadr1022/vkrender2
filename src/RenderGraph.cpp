@@ -1147,6 +1147,7 @@ const RenderGraphPass::UsageAndHandle* RenderGraphPass::get_swapchain_write_usag
 }
 
 void RenderGraph::reset() {
+  ZoneScoped;
   passes_.clear();
   buffer_to_idx_map_.clear();
   image_to_idx_map_.clear();

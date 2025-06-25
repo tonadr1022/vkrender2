@@ -219,6 +219,7 @@ void CSM::on_imgui() {
 
 void CSM::prepare_frame(u32, const mat4& cam_view, vec3 light_dir, float aspect_ratio,
                         float fov_deg, const AABB& aabb, vec3 view_pos) {
+  ZoneScoped;
   float shadow_z_far = shadow_z_far_;
   if (aabb_based_z_far_) {
     std::array<vec3, 8> aabb_corners;

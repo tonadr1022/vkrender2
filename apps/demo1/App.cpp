@@ -145,13 +145,19 @@ void App::run() {
   // instances_.emplace_back(ResourceManager::get().load_model(
   //     "/Users/tony/Downloads/killer_clown_balatro_style/scene.gltf"));
   glm::vec3 v{};
-  int w = 2;
+  int w = 1;
   float spacing = 3.f;
   for (v.z = -w; v.z < w; v.z++) {
     for (v.x = -w; v.x < w; v.x++) {
       glm::mat4 transform = glm::translate(glm::mat4{1}, v * spacing);
+      // glm::mat4 transform = glm::scale(glm::translate(glm::mat4{1}, v * spacing), vec3{.1});
+      // instances_.emplace_back(ResourceManager::get().load_model(
+      //     "/Users/tony/models/Models/Fox/glTF/Fox.gltf", transform));
       instances_.emplace_back(ResourceManager::get().load_model(
-          "/Users/tony/models/Models/Cube/glTF/Cube.gltf", transform));
+          "/Users/tony/Downloads/wally_walrus_leoncio/scene.gltf", transform));
+      // instances_.emplace_back(ResourceManager::get().load_model(
+      //     "/Users/tony/models/Models/AnimatedCube/glTF/AnimatedCube.gltf", transform));
+      // "/Users/tony/models/Models/Cube/glTF/Cube.gltf", transform));
     }
   }
   // for (int i = 0; i < 10; i++) {
@@ -159,8 +165,8 @@ void App::run() {
   //   instances_.emplace_back(
   //       ResourceManager::get().load_model("/Users/tony/models/Models/Cube/glTF/Cube.gltf"));
   // }
-  instances_.emplace_back(
-      ResourceManager::get().load_model("/Users/tony/models/Models/Fox/glTF/Fox.gltf"));
+  // instances_.emplace_back(
+  //     ResourceManager::get().load_model("/Users/tony/models/Models/Fox/glTF/Fox.gltf"));
   // instances_.emplace_back(ResourceManager::get().load_model(
   //     "/Users/tony/models/Models/AlphaBlendModeTest/glTF/AlphaBlendModeTest.gltf"));
 

@@ -90,6 +90,7 @@ void ResourceManager::add_instance(ModelHandle model_handle, InstanceHandle inst
 };
 
 void ResourceManager::update() {
+  ZoneScoped;
   std::scoped_lock lock(instance_load_req_mtx_);
   for (const auto& req : instance_load_requests_) {
     add_instance(req.model_handle, req.instance_handle, req.transform);
