@@ -2008,17 +2008,7 @@ void Device::cmd_list_wait(CmdEncoder* cmd_list, CmdEncoder* wait_for) {
 
 void Device::CopyAllocator::CopyCmd::copy_buffer(Device* device, const Buffer& dst, u64 src_offset,
                                                  u64 dst_offset, u64 size) const {
-  VkBufferCopy2KHR copy{.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2_KHR,
-                        .srcOffset = src_offset,
-                        .dstOffset = dst_offset,
-                        .size = size};
-
-  VkCopyBufferInfo2KHR copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
-                                 .srcBuffer = device->get_buffer(staging_buffer)->buffer(),
-                                 .dstBuffer = dst.buffer(),
-                                 .regionCount = 1,
-                                 .pRegions = &copy};
-  vkCmdCopyBuffer2KHR(transfer_cmd_buf, &copy_info);
+  copy_buffer(device, *device->get_buffer(staging_buffer), dst, src_offset, dst_offset, size);
 }
 
 void Device::set_name(VkCommandPool pool, const char* name) const {
@@ -2042,5 +2032,19 @@ BufferHandle Device::create_staging_buffer(u64 size) {
 
 VkImage Device::get_curr_swapchain_img() const {
   return swapchain_.imgs[swapchain_.curr_swapchain_idx];
+}
+
+void Device::CopyAllocator::CopyCmd::copy_buffer(Device*, const Buffer& src, const Buffer& dst,
+                                                 u64 src_offset, u64 dst_offset, u64 size) const {
+  VkBufferCopy2KHR copy{.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2_KHR,
+                        .srcOffset = src_offset,
+                        .dstOffset = dst_offset,
+                        .size = size};
+  VkCopyBufferInfo2KHR copy_info{.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+                                 .srcBuffer = src.buffer(),
+                                 .dstBuffer = dst.buffer(),
+                                 .regionCount = 1,
+                                 .pRegions = &copy};
+  vkCmdCopyBuffer2KHR(transfer_cmd_buf, &copy_info);
 }
 }  // namespace gfx

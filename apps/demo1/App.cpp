@@ -149,10 +149,12 @@ void App::run() {
   float spacing = 3.f;
   for (v.z = -w; v.z < w; v.z++) {
     for (v.x = -w; v.x < w; v.x++) {
-      // glm::mat4 transform = glm::translate(glm::mat4{1}, v * spacing);
-      glm::mat4 transform = glm::scale(glm::translate(glm::mat4{1}, v * spacing), vec3{.1});
-      instances_.emplace_back(ResourceManager::get().load_model(
-          "/Users/tony/models/Models/Fox/glTF/Fox.gltf", transform));
+      glm::mat4 transform = glm::translate(glm::mat4{1}, v * spacing);
+      // glm::mat4 transform = glm::scale(glm::translate(glm::mat4{1}, v * spacing), vec3{.1});
+      // instances_.emplace_back(ResourceManager::get().load_model(
+      //     "/Users/tony/models/Models/Fox/glTF/Fox.gltf", transform));
+      // instances_.emplace_back(ResourceManager::get().load_model(
+      //     "/Users/tony/Downloads/killer_clown_balatro_style/scene.gltf", transform));
       instances_.emplace_back(ResourceManager::get().load_model(
           "/Users/tony/Downloads/wally_walrus_leoncio/scene.gltf", transform));
       // instances_.emplace_back(ResourceManager::get().load_model(
@@ -160,6 +162,7 @@ void App::run() {
       // "/Users/tony/models/Models/Cube/glTF/Cube.gltf", transform));
     }
   }
+
   // for (int i = 0; i < 10; i++) {
   //   LINFO("loading model");
   //   instances_.emplace_back(
@@ -187,7 +190,8 @@ void App::run() {
   // std::filesystem::path env_tex = local_models_dir / "quarry_04_puresky_4k.hdr";
   // std::filesystem::path env_tex = local_models_dir / "immenstadter_horn_2k.hdr";
 
-  // instances_.emplace_back(ResourceManager::get().load_model(local_models_dir / "sponza.glb"));
+  // instances_.emplace_back(ResourceManager::get().load_model(local_models_dir /
+  // "sponza.glb"));
 
   // instances_.emplace_back(
   //     ResourceManager::get().load_model(resource_dir / "models/Cube/glTF/Cube.gltf"));
@@ -215,18 +219,21 @@ void App::run() {
     update(dt);
     on_imgui();
 
-    ZoneScopedN("update transforms overall");
-    static std::vector<i32> changed_nodes;
-    for (auto& instance_handle : instances_) {
-      auto* instance = ResourceManager::get().get_instance(instance_handle);
-      if (!instance || !instance->is_valid()) continue;
-      VkRender2::get().update_animation(*instance, dt);
-      changed_nodes.clear();
-      validate_hierarchy(instance->scene_graph_data);
-      bool dirty_transforms = recalc_global_transforms(instance->scene_graph_data, &changed_nodes);
-      renderer.update_skins(*instance);
-      if (dirty_transforms) {
-        VkRender2::get().update_transforms(*instance, changed_nodes);
+    {
+      ZoneScopedN("update transforms overall");
+      static std::vector<i32> changed_nodes;
+      for (auto& instance_handle : instances_) {
+        auto* instance = ResourceManager::get().get_instance(instance_handle);
+        if (!instance || !instance->is_valid()) continue;
+        VkRender2::get().update_animation(*instance, dt);
+        changed_nodes.clear();
+        validate_hierarchy(instance->scene_graph_data);
+        bool dirty_transforms =
+            recalc_global_transforms(instance->scene_graph_data, &changed_nodes);
+        renderer.update_skins(*instance);
+        if (dirty_transforms) {
+          VkRender2::get().update_transforms(*instance, changed_nodes);
+        }
       }
     }
     renderer.draw(info_);
@@ -458,7 +465,8 @@ void App::on_file_drop(int count, const char** paths) {
   for (int i = 0; i < count; i++) {
     LINFO("dropped file: {}", paths[i]);
     if (std::filesystem::exists(paths[i])) {
-      ResourceManager::get().load_model(paths[i]);
+      // TODO: fix
+      instances_.emplace_back(ResourceManager::get().load_model(paths[i]));
     }
   }
 }

@@ -248,6 +248,8 @@ class Device {
       [[nodiscard]] bool is_valid() const { return transfer_cmd_buf != VK_NULL_HANDLE; }
       void copy_buffer(Device* device, const Buffer& dst, u64 src_offset, u64 dst_offset,
                        u64 size) const;
+      void copy_buffer(Device* device, const Buffer& src, const Buffer& dst, u64 src_offset,
+                       u64 dst_offset, u64 size) const;
     };
     CopyCmd allocate(u64 size);
     void submit(CopyCmd cmd);

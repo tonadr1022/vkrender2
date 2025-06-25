@@ -70,12 +70,16 @@ ResourceManager& ResourceManager::get() {
   return *instance;
 }
 
-void ResourceManager::add_instance(ModelHandle model_handle, InstanceHandle instance_handle,
+bool ResourceManager::add_instance(ModelHandle model_handle, InstanceHandle instance_handle,
                                    const mat4& transform) {
   auto* instance = instance_pool_.get(instance_handle);
-  assert(instance);
+  if (!instance) {
+    return false;
+  }
   auto* model = loaded_model_pool_.get(model_handle);
-  assert(model);
+  if (!model || model->scene_graph_data.hierarchies.empty()) {
+    return false;
+  }
   instance->scene_graph_data = model->scene_graph_data;
   instance->scene_graph_data.local_transforms[0] = transform;
   gfx::mark_changed(instance->scene_graph_data, 0);
@@ -87,15 +91,16 @@ void ResourceManager::add_instance(ModelHandle model_handle, InstanceHandle inst
     instance->animation_states[i].anim_id = i;
   }
   instance->model_handle = model_handle;
+  return true;
 };
 
 void ResourceManager::update() {
   ZoneScoped;
   std::scoped_lock lock(instance_load_req_mtx_);
-  for (const auto& req : instance_load_requests_) {
-    add_instance(req.model_handle, req.instance_handle, req.transform);
-  }
-  instance_load_requests_.clear();
+  auto new_end = std::ranges::remove_if(instance_load_requests_, [this](InstanceLoadRequest& req) {
+    return add_instance(req.model_handle, req.instance_handle, req.transform);
+  });
+  instance_load_requests_.erase(new_end.begin(), new_end.end());
 }
 
 void ResourceManager::remove_model(InstanceHandle handle) {

@@ -39,7 +39,8 @@ class ResourceManager {
   }
 
  private:
-  void add_instance(ModelHandle model_handle, InstanceHandle instance_handle,
+  // returns true if added, false if model not found, undefined otherwise
+  bool add_instance(ModelHandle model_handle, InstanceHandle instance_handle,
                     const mat4& transform);
   ResourceManager() = default;
   struct LoadSceneResult {
