@@ -75,8 +75,10 @@ inline constexpr u32 max_bones_per_vertex{4};
 struct AnimatedVertex {
   vec3 pos;
   u32 instance_i;
-  vec4 normal;
-  vec4 tangent;
+  vec3 normal;
+  float uv_x;
+  vec3 tangent;
+  float uv_y;
   u32 bone_id[max_bones_per_vertex]{~0u, ~0u, ~0u, ~0u};
   float weights[max_bones_per_vertex]{};
 };

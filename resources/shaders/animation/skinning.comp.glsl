@@ -10,8 +10,10 @@
 struct SkinnedVertexData {
     vec3 pos;
     uint instance_i;
-    vec4 normal;
-    vec4 tangent;
+    vec3 normal;
+    float uv_x;
+    vec3 tangent;
+    float uv_y;
     u32 bone_id[MAX_WEIGHTS];
     float weights[MAX_WEIGHTS];
 };
@@ -60,6 +62,8 @@ void main() {
     }
     uint output_vertex_i = skin_cmd.out_vtx_i;
 
+    float uv_x = in_vtx.uv_x;
+    float uv_y = in_vtx.uv_y;
     vec4 in_pos = vec4(in_vtx.pos, 1.);
     vec4 in_norm = vec4(in_vtx.normal.xyz, 0.);
     vec4 in_tangent = vec4(in_vtx.normal.xyz, 0.);
@@ -82,4 +86,6 @@ void main() {
     pc.out_vertices_buf.vertices[output_vertex_i].pos = pos.xyz;
     pc.out_vertices_buf.vertices[output_vertex_i].normal.xyz = normal.xyz;
     pc.out_vertices_buf.vertices[output_vertex_i].tangent.xyz = tangent.xyz;
+    pc.out_vertices_buf.vertices[output_vertex_i].uv_x = uv_x;
+    pc.out_vertices_buf.vertices[output_vertex_i].uv_y = uv_y;
 }

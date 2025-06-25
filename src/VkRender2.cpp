@@ -237,8 +237,8 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
     }
   }
 
-  auto vertices_size = 10'000'000 * sizeof(gfx::Vertex);
-  auto animated_vertices_size = 1'000'000 * sizeof(gfx::AnimatedVertex);
+  auto vertices_size = 1'000'000 * sizeof(gfx::Vertex);
+  auto animated_vertices_size = 10'000 * sizeof(gfx::AnimatedVertex);
   static_vertex_buf_.buffer = device_->create_buffer_holder(
       {BufferCreateInfo{.size = vertices_size, .usage = BufferUsage_Storage}});
   static_vertex_buf_.allocator.init(vertices_size, sizeof(Vertex));
@@ -2003,7 +2003,7 @@ bool VkRender2::load_model2(const std::filesystem::path& path, LoadedModelData& 
       if (animated_vertices_size) {
         auto old_size = animated_vertex_buf_.get_buffer()->size();
         if (animated_vertices_gpu_slot.get_off_plus_size() >= old_size) {
-          assert(0);
+          // assert(0);
           auto new_size = old_size * 2;
           auto new_buf = device_->create_buffer_holder(
               BufferCreateInfo{.size = new_size, .usage = BufferUsage_Storage});
@@ -2146,6 +2146,16 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   if (instance_resources->is_animated) {
     instance_resources->animated_vertex_buf_slot = animated_vertex_output_bufs_.allocator.allocate(
         resources->animated_vertices.size() * sizeof(Vertex));
+
+    // resize animated vertex output bufs if needed
+    auto old_size = device_->get_buffer(animated_vertex_output_bufs_.buffers[0])->size();
+    if (instance_resources->animated_vertex_buf_slot.get_off_plus_size() >= old_size) {
+      size_t new_size = old_size * 2;
+      for (auto& buffer : animated_vertex_output_bufs_.buffers) {
+        buffer = device_->create_buffer_holder(
+            BufferCreateInfo{.size = new_size, .usage = BufferUsage_Storage});
+      }
+    }
     first_vertex = instance_resources->animated_vertex_buf_slot.get_offset() / sizeof(Vertex);
 
     draw_stats_.animated_vertices += resources->animated_vertices.size();
@@ -2312,41 +2322,7 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
                         VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT)
         .flush_barriers();
     if (instance_resources->is_animated) {
-      for (size_t i = 0; i < device_->get_frames_in_flight(); i++) {
-        state_.buffer_barrier(
-            device_->get_buffer(animated_vertex_output_bufs_.buffers[i])->buffer(),
-            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-      }
       state_.flush_barriers();
-      // copy to output vertices
-      for (size_t i = 0; i < device_->get_frames_in_flight(); i++) {
-        // auto old_size =
-        // device_->get_buffer(animated_vertex_output_bufs_.buffers[i].handle)->size(); if
-        // (instance_resources->animated_vertex_buf_slot.get_off_plus_size() >= old_size) {
-        //   immediate_submit([this, i, old_size](CmdEncoder& cmd) {
-        //     auto new_size = 2 * old_size;
-        //     auto new_buf = device_->create_buffer_holder(
-        //         BufferCreateInfo{.size = new_size, .usage = BufferUsage_Storage});
-        //     cmd.copy_buffer(*device_->get_buffer(animated_vertex_output_bufs_.buffers[i].handle),
-        //                     *device_->get_buffer(new_buf), 0, 0, old_size);
-        //     animated_vertex_output_bufs_.buffers[i] = std::move(new_buf);
-        //   });
-        // }
-
-        copy_cmd.copy_buffer(
-            device_, *device_->get_buffer(animated_vertex_output_bufs_.buffers[i].handle),
-            vertices_staging_offset, instance_resources->animated_vertex_buf_slot.get_offset(),
-            instance_resources->animated_vertex_buf_slot.get_size());
-      }
-      // TODO: get rid of these barriers
-      for (size_t i = 0; i < device_->get_frames_in_flight(); i++) {
-        state_.buffer_barrier(
-            device_->get_buffer(animated_vertex_output_bufs_.buffers[i])->buffer(),
-            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
-            VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT);
-      }
-      state_.flush_barriers();
-
       if (skin_cmds.size()) {
         copy_cmd.copy_buffer(device_, *device_->get_buffer(skin_instance_datas_.buffer),
                              skin_instance_datas_staging_offset,
@@ -2431,7 +2407,7 @@ void VkRender2::update_animation(LoadedInstanceData& instance, float dt) {
   assert(model);
   size_t anim_i = 0;
   for (auto& animation : model->animations) {
-    assert(animation.duration > 0.f);
+    // assert(animation.duration > 0.f);
     AnimationState& anim_state = instance.animation_states[anim_i];
     if (!anim_state.active) {
       anim_i++;

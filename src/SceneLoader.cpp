@@ -1147,17 +1147,15 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
           const auto* normal_attrib = primitive.findAttribute("NORMAL");
           if (normal_attrib != primitive.attributes.end()) {
             const auto& normal_accessor = gltf.accessors[normal_attrib->accessorIndex];
+            auto range = fastgltf::iterateAccessor<glm::vec3>(gltf, normal_accessor);
+            assert(normal_accessor.count == pos_accessor.count);
             if (animated) {
               u64 i = start_i_animated;
-              assert(normal_accessor.count == pos_accessor.count);
-              auto range = fastgltf::iterateAccessor<glm::vec3>(gltf, normal_accessor);
               for (const glm::vec3& normal : range) {
                 result->animated_vertices[i++].normal = vec4{normal, 0.};
               }
             } else {
               u64 i = start_i_static;
-              assert(normal_accessor.count == pos_accessor.count);
-              auto range = fastgltf::iterateAccessor<glm::vec3>(gltf, normal_accessor);
               for (const glm::vec3& normal : range) {
                 result->vertices[i++].normal = normal;
               }
@@ -1167,13 +1165,20 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
           const auto* uv_attrib = primitive.findAttribute("TEXCOORD_0");
           if (uv_attrib != primitive.attributes.end()) {
             const auto& accessor = gltf.accessors[uv_attrib->accessorIndex];
-
             assert(accessor.count == pos_accessor.count);
-            u64 i = start_i_static;
             auto range = fastgltf::iterateAccessor<glm::vec2>(gltf, accessor);
-            for (const glm::vec2& uv : range) {
-              result->vertices[i].uv_x = uv.x;
-              result->vertices[i++].uv_y = uv.y;
+            if (animated) {
+              u64 i = start_i_animated;
+              for (const glm::vec2& uv : range) {
+                result->animated_vertices[i].uv_x = uv.x;
+                result->animated_vertices[i++].uv_y = uv.y;
+              }
+            } else {
+              u64 i = start_i_static;
+              for (const glm::vec2& uv : range) {
+                result->vertices[i].uv_x = uv.x;
+                result->vertices[i++].uv_y = uv.y;
+              }
             }
           }
           const auto* tangent_attrib = primitive.findAttribute("TANGENT");
@@ -1218,12 +1223,12 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
                   .normal = {.base = verts.data() + (start_i_animated),
                              .offset = offsetof(AnimatedVertex, normal),
                              .stride = sizeof(AnimatedVertex)},
-                  .uv_x = {.base = result->vertices.data() + (start_i_static),
-                           .offset = offsetof(Vertex, uv_x),
-                           .stride = sizeof(Vertex)},
-                  .uv_y = {.base = result->vertices.data() + (start_i_static),
-                           .offset = offsetof(Vertex, uv_y),
-                           .stride = sizeof(Vertex)},
+                  .uv_x = {.base = verts.data() + (start_i_animated),
+                           .offset = offsetof(AnimatedVertex, uv_x),
+                           .stride = sizeof(AnimatedVertex)},
+                  .uv_y = {.base = verts.data() + (start_i_animated),
+                           .offset = offsetof(AnimatedVertex, uv_y),
+                           .stride = sizeof(AnimatedVertex)},
                   .tangent = {.base = verts.data() + (start_i_animated),
                               .offset = offsetof(AnimatedVertex, tangent),
                               .stride = sizeof(AnimatedVertex)},
