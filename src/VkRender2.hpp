@@ -45,7 +45,6 @@ struct ModelGPUResources {
   u64 first_index;
   u64 num_vertices;
   u64 num_indices;
-  std::vector<Vertex> animated_vertices;
   std::string name;
   u32 ref_count;
 };

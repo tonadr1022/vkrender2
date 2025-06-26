@@ -199,8 +199,6 @@ void calc_tangents(const CalcTangentsVertexInfo& info, std::span<IndexT> indices
     tangent.x = fvTangent[0];
     tangent.y = fvTangent[1];
     tangent.z = fvTangent[2];
-    // Note: fSign parameter available if you need to store tangent handedness
-    // For vec4 tangents: tangent.w = fSign;
   };
 
   genTangSpaceDefault(&ctx);
@@ -1241,7 +1239,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
                   .pos = {.base = result->vertices.data() + (start_i_static),
                           .offset = offsetof(Vertex, pos),
                           .stride = sizeof(Vertex)},
-                  .normal = {.base = result->vertices.data() + (start_i_animated),
+                  .normal = {.base = result->vertices.data() + (start_i_static),
                              .offset = offsetof(Vertex, normal),
                              .stride = sizeof(Vertex)},
                   .uv_x = {.base = result->vertices.data() + (start_i_static),
@@ -1250,12 +1248,12 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
                   .uv_y = {.base = result->vertices.data() + (start_i_static),
                            .offset = offsetof(Vertex, uv_y),
                            .stride = sizeof(Vertex)},
-                  .tangent = {.base = result->vertices.data() + (start_i_animated),
+                  .tangent = {.base = result->vertices.data() + (start_i_static),
                               .offset = offsetof(Vertex, tangent),
                               .stride = sizeof(Vertex)},
               };
-              calc_tangents<u32>(info, std::span(result->indices.data() + (start_idx),
-                                                 mesh_draw_info.index_count));
+              // calc_tangents<u32>(info, std::span(result->indices.data() + (start_idx),
+              //                                    mesh_draw_info.index_count));
             }
           }
         }));

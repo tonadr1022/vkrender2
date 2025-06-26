@@ -856,12 +856,18 @@ void Device::set_name(ImageHandle handle, const char* name) {
 }
 
 void Device::set_name(const char* name, u64 handle, VkObjectType type) const {
+#ifdef DEBUG_VK_OBJECT_NAMES
   VkDebugUtilsObjectNameInfoEXT name_info = {
       .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
       .objectType = type,
       .objectHandle = handle,
       .pObjectName = name};
   vkSetDebugUtilsObjectNameEXT(device_, &name_info);
+#else
+  (void)name;
+  (void)handle;
+  (void)type;
+#endif
 }
 
 void Device::set_name(VkFence fence, const char* name) {

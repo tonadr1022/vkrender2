@@ -146,7 +146,7 @@ void App::run() {
   //     "/Users/tony/Downloads/killer_clown_balatro_style/scene.gltf"));
 
   glm::vec3 v{};
-  int w = 1;
+  int w = 50;
   float spacing = 3.f;
   for (v.z = -w; v.z < w; v.z++) {
     for (v.x = -w; v.x < w; v.x++) {
@@ -159,10 +159,13 @@ void App::run() {
       // instances_.emplace_back(ResourceManager::get().load_model(
       //     "/Users/tony/Downloads/wally_walrus_leoncio/scene.gltf", transform));
       // instances_.emplace_back(ResourceManager::get().load_model(
-      //     "/Users/tony/models/Models/Cube/glTF/Cube.gltf", transform));
+      //     // "/Users/tony/models/Models/Cube/glTF/Cube.gltf", transform));
       //     "/Users/tony/models/Models/AnimatedCube/glTF/AnimatedCube.gltf", transform));
     }
   }
+  // instances_.emplace_back(ResourceManager::get().load_model(
+  //     "/Users/tony/models/Models/AnimatedCube/glTF/AnimatedCube.gltf",
+  //     glm::scale(glm::translate(glm::mat4{1}, vec3{0, -5, 0}), vec3{10000, 1, 10000})));
 
   // for (int i = 0; i < 10; i++) {
   //   LINFO("loading model");

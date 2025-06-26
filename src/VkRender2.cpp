@@ -2072,9 +2072,8 @@ bool VkRender2::load_model2(const std::filesystem::path& path, LoadedModelData& 
     result.gpu_resource_handle = model_gpu_resources_pool_.alloc();
     auto* resources = model_gpu_resources_pool_.get(result.gpu_resource_handle);
     resources->animated_vertices_gpu_slot = animated_vertices_gpu_slot;
-    resources->animated_vertices = std::move(res.vertices);
     resources->textures = std::move(res.textures);
-    resources->mesh_draw_infos = res.mesh_draw_infos;
+    resources->mesh_draw_infos = std::move(res.mesh_draw_infos);
     resources->materials_slot = materials_gpu_slot;
     resources->vertices_slot = vertices_gpu_slot;
     resources->indices_slot = indices_gpu_slot;
@@ -2141,10 +2140,6 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   if (model.scene_graph_data.skins.size()) {
     instance_resources->is_animated = true;
   }
-  // FreeListBuffer& instance_data_buf =
-  //     instance_resources->is_animated ? animated_instance_data_buf_ : static_instance_data_buf_;
-  // FreeListBuffer& object_data_buf =
-  //     instance_resources->is_animated ? animated_object_data_buf_ : static_object_data_buf_;
   FreeListBuffer& instance_data_buf = static_instance_data_buf_;
   FreeListBuffer& object_data_buf = static_object_data_buf_;
 
@@ -2160,15 +2155,13 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   u32 base_object_data_id = instance_resources->object_data_slot.get_offset() / sizeof(ObjectData);
   auto base_material_id = resources->materials_slot.get_offset() / sizeof(Material);
 
-  // if animated:
-  // copy the model's vertices output buffers since each instance needs its own
   u32 first_vertex{};
   std::vector<SkinCommand> skin_cmds;
   if (instance_resources->is_animated) {
-    instance_resources->animated_vertex_buf_slot = animated_vertex_output_bufs_.allocator.allocate(
-        resources->animated_vertices.size() * sizeof(Vertex));
+    instance_resources->animated_vertex_buf_slot =
+        animated_vertex_output_bufs_.allocator.allocate(resources->num_vertices * sizeof(Vertex));
 
-    draw_stats_.animated_vertices += resources->animated_vertices.size();
+    draw_stats_.animated_vertices += resources->num_vertices;
     // resize animated vertex output bufs if needed
     size_t old_size = device_->get_buffer(animated_vertex_output_bufs_.buffers[0])->size();
     size_t required_size = instance_resources->animated_vertex_buf_slot.get_off_plus_size();
@@ -2195,11 +2188,11 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
     }
 
     {
-      skin_cmds.reserve(resources->animated_vertices.size());
+      skin_cmds.reserve(resources->num_vertices);
       u32 skin_vtx_i = resources->animated_vertices_gpu_slot.get_offset() / sizeof(AnimatedVertex);
       u32 output_vertex_i = first_vertex;
       u32 bone_mat_i = instance_resources->global_bone_mat_slot.get_offset() / sizeof(mat4);
-      for (size_t i = 0; i < resources->animated_vertices.size(); i++) {
+      for (size_t i = 0; i < resources->num_vertices; i++) {
         skin_cmds.emplace_back(SkinCommand{
             .skin_vtx_i = skin_vtx_i++,
             .out_vtx_i = output_vertex_i++,
@@ -2268,7 +2261,6 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
       }
     }
   }
-
 
   scene_aabb_.min = glm::min(scene_aabb_.min, scene_min);
   scene_aabb_.max = glm::max(scene_aabb_.max, scene_max);
