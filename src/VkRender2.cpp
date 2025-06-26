@@ -142,9 +142,10 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   // create per frame staging buffers
   for (u32 i = 0; i < device_->get_frames_in_flight(); i++) {
     // 64 MB
-    frame_staging_buffers_.emplace_back(device_->create_staging_buffer(1024ul * 1024 * 64));
+    size_t capacity = 1024ul * 1024 * 64;
+    frame_staging_buffers_.emplace_back(device_->create_staging_buffer(capacity));
     staging_buffer_copiers_.emplace_back(
-        device_->get_buffer(frame_staging_buffers_.back())->mapped_data());
+        device_->get_buffer(frame_staging_buffers_.back())->mapped_data(), capacity);
   }
 
   PipelineManager::init(device_->device(), resource_dir_ / "shaders", true,
@@ -228,40 +229,49 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
       d.scene_uniform_buf =
           device_->create_buffer_holder(BufferCreateInfo{.size = sizeof(SceneUniforms),
                                                          .usage = BufferUsage_Storage,
-                                                         .flags = BufferCreateFlags_HostVisible});
+                                                         .flags = BufferCreateFlags_HostVisible,
+                                                         .debug_name = "scene uniform buf"});
 
       d.line_draw_buf =
           device_->create_buffer_holder(BufferCreateInfo{.size = sizeof(LineVertex) * 1000,
                                                          .usage = BufferUsage_Storage,
-                                                         .flags = BufferCreateFlags_HostVisible});
+                                                         .flags = BufferCreateFlags_HostVisible,
+                                                         .debug_name = "line draw buf"});
     }
   }
 
-  auto vertices_size = 1'000'000 * sizeof(gfx::Vertex);
-  auto animated_vertices_size = 100'00 * sizeof(gfx::AnimatedVertex);
-  static_vertex_buf_.buffer = device_->create_buffer_holder(
-      {BufferCreateInfo{.size = vertices_size, .usage = BufferUsage_Storage}});
+  auto vertices_size = 10'000'000 * sizeof(gfx::Vertex);
+  auto animated_vertices_size = 1000'00 * sizeof(gfx::AnimatedVertex);
+  static_vertex_buf_.buffer = device_->create_buffer_holder({BufferCreateInfo{
+      .size = vertices_size, .usage = BufferUsage_Storage, .debug_name = "static vertex buf"}});
   static_vertex_buf_.allocator.init(vertices_size, sizeof(Vertex));
-  animated_vertex_buf_.buffer = device_->create_buffer_holder(
-      {BufferCreateInfo{.size = animated_vertices_size, .usage = BufferUsage_Storage}});
+  animated_vertex_buf_.buffer =
+      device_->create_buffer_holder({BufferCreateInfo{.size = animated_vertices_size,
+                                                      .usage = BufferUsage_Storage,
+                                                      .debug_name = "animated vertex buf"}});
   animated_vertex_buf_.allocator.init(animated_vertices_size, sizeof(gfx::AnimatedVertex));
 
   animated_vertex_output_bufs_.allocator.init(animated_vertices_size, sizeof(Vertex));
   for (size_t i = 0; i < device_->get_frames_in_flight(); i++) {
-    animated_vertex_output_bufs_.buffers[i] = device_->create_buffer_holder(
-        BufferCreateInfo{.size = animated_vertices_size, .usage = BufferUsage_Storage});
+    animated_vertex_output_bufs_.buffers[i] =
+        device_->create_buffer_holder(BufferCreateInfo{.size = animated_vertices_size,
+                                                       .usage = BufferUsage_Storage,
+                                                       .debug_name = "animated vertex output buf"});
     // TODO: lol
     bone_matrix_bufs_.emplace_back();
   }
   global_skin_mat_allocator_.init(100'000, sizeof(mat4));
   skin_instance_datas_.allocator.init(animated_vertices_size, sizeof(SkinCommand));
-  skin_instance_datas_.buffer = device_->create_buffer_holder(
-      BufferCreateInfo{.size = animated_vertices_size, .usage = BufferUsage_Storage});
+  skin_instance_datas_.buffer =
+      device_->create_buffer_holder(BufferCreateInfo{.size = animated_vertices_size,
+                                                     .usage = BufferUsage_Storage,
+                                                     .debug_name = "skin instance data buf"});
 
   auto indices_size = 10'000'000 * sizeof(u32);
   static_index_buf_.buffer = device_->create_buffer_holder(BufferCreateInfo{
       .size = indices_size,
       .usage = BufferUsage_Index,
+      .debug_name = "static index buf",
   });
   static_index_buf_.allocator.init(indices_size, sizeof(u32));
 
@@ -277,6 +287,7 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   static_instance_data_buf_.buffer = device_->create_buffer_holder(BufferCreateInfo{
       .size = max_static_draws * sizeof(GPUInstanceData),
       .usage = BufferUsage_Storage,
+      .debug_name = "static instance data buf",
   });
   static_instance_data_buf_.allocator.init(max_static_draws * sizeof(GPUInstanceData),
                                            sizeof(GPUInstanceData), 100);
@@ -284,6 +295,7 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   animated_instance_data_buf_.buffer = device_->create_buffer_holder(BufferCreateInfo{
       .size = max_animated_draws * sizeof(GPUInstanceData),
       .usage = BufferUsage_Storage,
+      .debug_name = "animated instance data buf",
   });
   animated_instance_data_buf_.allocator.init(max_animated_draws * sizeof(GPUInstanceData),
                                              sizeof(GPUInstanceData), 100);
@@ -291,12 +303,14 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   animated_object_data_buf_.buffer = device_->create_buffer_holder(BufferCreateInfo{
       .size = max_animated_draws * sizeof(ObjectData),
       .usage = BufferUsage_Storage,
+      .debug_name = "animated object data buf",
   });
   animated_object_data_buf_.allocator.init(max_static_draws * sizeof(ObjectData),
                                            sizeof(ObjectData), 100);
   static_object_data_buf_.buffer = device_->create_buffer_holder(BufferCreateInfo{
       .size = max_static_draws * sizeof(ObjectData),
       .usage = BufferUsage_Storage,
+      .debug_name = "static object data buf",
   });
   static_object_data_buf_.allocator.init(max_static_draws * sizeof(ObjectData), sizeof(ObjectData),
                                          100);
@@ -565,9 +579,8 @@ void VkRender2::draw(const SceneDrawInfo& info) {
         curr_mat_buf = device_->get_buffer(bone_matrix_bufs_[device_->curr_frame_in_flight()]);
       }
       device_->copy_ops.emplace_back(Device::CopyOp{
-          .dst_buffer = bone_matrix_bufs_[device_->curr_frame_in_flight()].handle,
-          .src_offset = staging_buffer_copiers_[device_->curr_frame_in_flight()].copy(
-              global_skin_matrices_.data(), copy_size),
+          .dst_buffer = &bone_matrix_bufs_[device_->curr_frame_in_flight()],
+          .src_offset = get_staging_copyer().copy(global_skin_matrices_.data(), copy_size),
           .dst_offset = 0,
           .size = copy_size});
       device_->copy_barriers.emplace_back(bone_matrix_bufs_[device_->curr_frame_in_flight()].handle,
@@ -591,13 +604,13 @@ void VkRender2::draw(const SceneDrawInfo& info) {
     immediate_submit([this](CmdEncoder& cmd) {
       struct CopyBatch {
         std::vector<VkBufferCopy2KHR> copies;
-        BufferHandle dst;
+        Holder<BufferHandle>* dst;
       };
       std::vector<CopyBatch> batches;
       for (const auto& copy : device_->copy_ops) {
         CopyBatch* batch{};
         for (auto& b : batches) {
-          if (b.dst == copy.dst_buffer) {
+          if (b.dst->handle == copy.dst_buffer->handle) {
             batch = &b;
             break;
           }
@@ -620,7 +633,7 @@ void VkRender2::draw(const SceneDrawInfo& info) {
             .srcBuffer =
                 device_->get_buffer(frame_staging_buffers_[device_->curr_frame_in_flight()])
                     ->buffer(),
-            .dstBuffer = device_->get_buffer(batch.dst)->buffer(),
+            .dstBuffer = device_->get_buffer(*batch.dst)->buffer(),
             .regionCount = static_cast<uint32_t>(batch.copies.size()),
             .pRegions = batch.copies.data()};
         vkCmdCopyBuffer2KHR(cmd.cmd(), &copy_info);
@@ -1660,9 +1673,7 @@ void VkRender2::StaticMeshDrawManager::remove_draws(StateTracker&, CmdEncoder& c
   free_alloc_indices_.emplace_back(handle);
 }
 
-u32 VkRender2::StaticMeshDrawManager::add_draws(StateTracker& state,
-                                                Device::CopyAllocator::CopyCmd& cmd, size_t size,
-                                                size_t staging_offset) {
+u32 VkRender2::StaticMeshDrawManager::add_draws(StateTracker&, size_t size, size_t staging_offset) {
   assert(size > 0);
   Alloc a{};
   a.draw_cmd_slot = draw_cmds_buf_.allocator.allocate(size);
@@ -1705,18 +1716,25 @@ u32 VkRender2::StaticMeshDrawManager::add_draws(StateTracker& state,
     LINFO("unimplemented: need to resize Static mesh draw cmd buffer");
     exit(1);
   }
-  auto* draw_cmds_buf = device_->get_buffer(draw_cmds_buf_.buffer);
-  state
-      .buffer_barrier(draw_cmds_buf->buffer(), VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                      VK_ACCESS_2_TRANSFER_WRITE_BIT)
-      .flush_barriers();
-  cmd.copy_buffer(device_, *draw_cmds_buf, staging_offset, a.draw_cmd_slot.get_offset(), size);
-  state
-      .buffer_barrier(
-          draw_cmds_buf->buffer(),
-          VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-          VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT)
-      .flush_barriers();
+  // auto* draw_cmds_buf = device_->get_buffer(draw_cmds_buf_.buffer);
+  // state
+  //     .buffer_barrier(draw_cmds_buf->buffer(), VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+  //                     VK_ACCESS_2_TRANSFER_WRITE_BIT)
+  //     .flush_barriers();
+  device_->copy_ops.emplace_back(Device::CopyOp{
+      .dst_buffer = &draw_cmds_buf_.buffer,
+      .src_offset = staging_offset,
+      .dst_offset = a.draw_cmd_slot.get_offset(),
+      .size = size,
+  });
+
+  // cmd.copy_buffer(device_, *draw_cmds_buf, staging_offset, a.draw_cmd_slot.get_offset(), size);
+  // state
+  //     .buffer_barrier(
+  //         draw_cmds_buf->buffer(),
+  //         VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+  //         VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT)
+  //     .flush_barriers();
 
   if (free_alloc_indices_.size()) {
     auto h = free_alloc_indices_.back();
@@ -1960,9 +1978,11 @@ bool VkRender2::load_model2(const std::filesystem::path& path, LoadedModelData& 
     auto vertices_gpu_slot = static_vertex_buf_.allocator.allocate(vertices_size);
     auto indices_gpu_slot = static_index_buf_.allocator.allocate(indices_size);
 
-    auto copy_cmd = device_->graphics_copy_allocator_.allocate(
-        material_data_size + vertices_size + animated_vertices_size + indices_size);
-    auto staging = LinearCopyer{device_->get_buffer(copy_cmd.staging_buffer)->mapped_data()};
+    size_t copy_buf_capacity =
+        material_data_size + vertices_size + animated_vertices_size + indices_size;
+    auto copy_cmd = device_->graphics_copy_allocator_.allocate(copy_buf_capacity);
+    auto staging = LinearCopyer{device_->get_buffer(copy_cmd.staging_buffer)->mapped_data(),
+                                copy_buf_capacity};
     u64 material_data_staging_offset = staging.copy(res.materials.data(), material_data_size);
     u64 vertices_staging_offset = staging.copy(res.vertices.data(), vertices_size);
     u64 animated_vertices_staging_offset{};
@@ -2156,7 +2176,9 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
       size_t new_size = required_size * 2;
       for (auto& buffer : animated_vertex_output_bufs_.buffers) {
         buffer = device_->create_buffer_holder(
-            BufferCreateInfo{.size = new_size, .usage = BufferUsage_Storage});
+            BufferCreateInfo{.size = new_size,
+                             .usage = BufferUsage_Storage,
+                             .debug_name = "animated vertex output buf"});
       }
     }
     first_vertex = instance_resources->animated_vertex_buf_slot.get_offset() / sizeof(Vertex);
@@ -2247,74 +2269,64 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
     }
   }
 
-  u64 obj_datas_size = instance_resources->object_datas.size() * sizeof(gfx::ObjectData);
-  u64 instance_datas_size = instance_resources->instance_datas.size() * sizeof(GPUInstanceData);
 
   scene_aabb_.min = glm::min(scene_aabb_.min, scene_min);
   scene_aabb_.max = glm::max(scene_aabb_.max, scene_max);
 
-  u32 tot_draw_cmds_buf_size = 0;
-  for (auto& cmds : pass_cmds) {
-    tot_draw_cmds_buf_size += cmds.size() * sizeof(GPUDrawInfo);
-  }
-  u64 skin_cmd_copy_size = skin_cmds.size() * sizeof(SkinCommand);
-  auto copy_cmd = device_->graphics_copy_allocator_.allocate(
-      tot_draw_cmds_buf_size + obj_datas_size + instance_datas_size +
-      instance_resources->animated_vertex_buf_slot.get_size() + skin_cmd_copy_size);
-  auto staging = LinearCopyer{device_->get_buffer(copy_cmd.staging_buffer)->mapped_data()};
   u64 cmds_staging_offsets[MeshPass_Count] = {};
   for (int i = 0; i < MeshPass_Count; i++) {
     auto& cmds = pass_cmds[i];
     if (cmds.size()) {
-      cmds_staging_offsets[i] = staging.copy(cmds.data(), cmds.size() * sizeof(GPUDrawInfo));
+      cmds_staging_offsets[i] =
+          get_staging_copyer().copy(cmds.data(), cmds.size() * sizeof(GPUDrawInfo));
     }
   }
+
+  u64 obj_datas_size = instance_resources->object_datas.size() * sizeof(gfx::ObjectData);
+  u64 instance_datas_size = instance_resources->instance_datas.size() * sizeof(GPUInstanceData);
   u64 obj_datas_staging_offset =
-      staging.copy(instance_resources->object_datas.data(), obj_datas_size);
+      get_staging_copyer().copy(instance_resources->object_datas.data(), obj_datas_size);
   u64 instance_datas_staging_offset =
-      staging.copy(instance_resources->instance_datas.data(), instance_datas_size);
+      get_staging_copyer().copy(instance_resources->instance_datas.data(), instance_datas_size);
   u64 skin_instance_datas_staging_offset{};
+
+  u64 skin_cmd_copy_size = skin_cmds.size() * sizeof(SkinCommand);
   if (skin_cmds.size()) {
-    skin_instance_datas_staging_offset = staging.copy(skin_cmds.data(), skin_cmd_copy_size);
+    skin_instance_datas_staging_offset =
+        get_staging_copyer().copy(skin_cmds.data(), skin_cmd_copy_size);
   }
 
   size_t required_size = instance_resources->instance_data_slot.get_off_plus_size();
   if (required_size >= instance_data_buf.get_buffer()->size()) {
     auto new_size = 2 * required_size;
-    auto new_buf = device_->create_buffer_holder(
-        BufferCreateInfo{.size = new_size, .usage = BufferUsage_Storage});
+    auto new_buf = device_->create_buffer_holder(BufferCreateInfo{
+        .size = new_size, .usage = BufferUsage_Storage, .debug_name = "instance data buf"});
     LINFO("resize needed lol");
-    // copy_cmd.copy_buffer(device_, *device_->get_buffer(new_buf), 0, 0,
-    // curr_tot_draw_cmd_buf_size);
     instance_data_buf.buffer = std::move(new_buf);
     exit(1);
   }
 
   {
     assert(obj_datas_size && instance_datas_size);
-    state_.reset(copy_cmd.transfer_cmd_buf);
     for (int i = 0; i < MeshPass_Count; i++) {
       auto& cmds = pass_cmds[i];
       if (cmds.size()) {
         auto& mgr = get_mgr((MeshPass)i, instance_resources->is_animated);
-        instance_resources->mesh_pass_draw_handles[i] = mgr.add_draws(
-            state_, copy_cmd, cmds.size() * sizeof(GPUDrawInfo), cmds_staging_offsets[i]);
+        instance_resources->mesh_pass_draw_handles[i] =
+            mgr.add_draws(state_, cmds.size() * sizeof(GPUDrawInfo), cmds_staging_offsets[i]);
       }
     }
-    copy_cmd.copy_buffer(device_, *object_data_buf.get_buffer(), obj_datas_staging_offset,
-                         instance_resources->object_data_slot.get_offset(), obj_datas_size);
-    copy_cmd.copy_buffer(device_, *instance_data_buf.get_buffer(), instance_datas_staging_offset,
-                         instance_resources->instance_data_slot.get_offset(), instance_datas_size);
-    state_
-        .buffer_barrier(
-            object_data_buf.get_buffer()->buffer(),
-            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
-            VK_ACCESS_2_SHADER_READ_BIT)
-        .buffer_barrier(instance_data_buf.get_buffer()->buffer(),
-                        VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT)
-        .flush_barriers();
+    device_->copy_ops.emplace_back(
+        Device::CopyOp{.dst_buffer = &object_data_buf.buffer,
+                       .src_offset = obj_datas_staging_offset,
+                       .dst_offset = instance_resources->object_data_slot.get_offset(),
+                       .size = obj_datas_size});
+    device_->copy_ops.emplace_back(
+        Device::CopyOp{.dst_buffer = &instance_data_buf.buffer,
+                       .src_offset = instance_datas_staging_offset,
+                       .dst_offset = instance_resources->instance_data_slot.get_offset(),
+                       .size = instance_datas_size});
     if (instance_resources->is_animated) {
-      state_.flush_barriers();
       if (skin_cmds.size()) {
         {
           size_t required_size = instance_resources->skin_commands_slot.get_off_plus_size();
@@ -2322,44 +2334,42 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
           if (required_size > old_size) {
             size_t new_size = required_size * 2;
             auto new_buf = device_->create_buffer_holder(
-                BufferCreateInfo{.size = new_size, .usage = BufferUsage_Storage});
-            copy_cmd.copy_buffer(device_, *skin_instance_datas_.get_buffer(),
-                                 *device_->get_buffer(new_buf), 0, 0, old_size);
-            VkBufferMemoryBarrier2KHR barrier{};
-            barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2_KHR;
-            barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
-            barrier.dstAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
-            barrier.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
-            barrier.dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
-            barrier.buffer = device_->get_buffer(new_buf)->buffer();
-            barrier.size = VK_WHOLE_SIZE;
-            auto dependency_info = init::dependency_info(SPAN1(barrier), {});
-            vkCmdPipelineBarrier2KHR(copy_cmd.transfer_cmd_buf, &dependency_info);
+                BufferCreateInfo{.size = new_size,
+                                 .usage = BufferUsage_Storage,
+                                 .debug_name = "skin instance datas"});
+            immediate_submit([&, this](CmdEncoder& cmd) {
+              cmd.copy_buffer(*skin_instance_datas_.get_buffer(), *device_->get_buffer(new_buf), 0,
+                              0, old_size);
+              VkBufferMemoryBarrier2KHR barrier{};
+              barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2_KHR;
+              barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT;
+              barrier.dstAccessMask = VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT;
+              barrier.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+              barrier.dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+              barrier.buffer = device_->get_buffer(new_buf)->buffer();
+              barrier.size = VK_WHOLE_SIZE;
+              auto dependency_info = init::dependency_info(SPAN1(barrier), {});
+              vkCmdPipelineBarrier2KHR(cmd.cmd(), &dependency_info);
+            });
 
             skin_instance_datas_.buffer = std::move(new_buf);
-            copy_cmd.copy_buffer(device_, *device_->get_buffer(skin_instance_datas_.buffer),
-                                 skin_instance_datas_staging_offset,
-                                 instance_resources->skin_commands_slot.get_offset(),
-                                 skin_cmd_copy_size);
-            state_
-                .buffer_barrier(device_->get_buffer(skin_instance_datas_.buffer)->buffer(),
-                                VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT)
-                .flush_barriers();
+            device_->copy_ops.emplace_back(
+                Device::CopyOp{.dst_buffer = &skin_instance_datas_.buffer,
+                               .src_offset = skin_instance_datas_staging_offset,
+                               .dst_offset = instance_resources->skin_commands_slot.get_offset(),
+                               .size = skin_cmd_copy_size});
           } else {
-            copy_cmd.copy_buffer(device_, *device_->get_buffer(skin_instance_datas_.buffer),
-                                 skin_instance_datas_staging_offset,
-                                 instance_resources->skin_commands_slot.get_offset(),
-                                 skin_cmd_copy_size);
-            state_
-                .buffer_barrier(device_->get_buffer(skin_instance_datas_.buffer)->buffer(),
-                                VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT)
-                .flush_barriers();
+            device_->copy_ops.emplace_back(
+                Device::CopyOp{.dst_buffer = &skin_instance_datas_.buffer,
+                               .src_offset = skin_instance_datas_staging_offset,
+                               .dst_offset = instance_resources->skin_commands_slot.get_offset(),
+                               .size = skin_cmd_copy_size});
           }
         }
       }
     }
-    device_->graphics_copy_allocator_.submit(copy_cmd);
   }
+
   return model_instance_resources_handle;
 }
 
@@ -2623,4 +2633,14 @@ bool VkRender2::update_skins(LoadedInstanceData& instance) {
   return skins.size() > 0;
 }
 
+u64 LinearCopyer::copy(const void* data, u64 size) {
+  memcpy((char*)data_ + offset_, data, size);
+  if (offset_ + size > capacity_) {
+    LINFO("nope");
+    exit(1);
+  }
+  assert(offset_ + size <= capacity_);
+  offset_ += size;
+  return offset_ - size;
+}
 }  // namespace gfx

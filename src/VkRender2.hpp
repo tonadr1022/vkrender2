@@ -87,17 +87,14 @@ struct StaticModelInstanceResources {
 using ModelGPUResourceHandle = GenerationalHandle<ModelGPUResources>;
 
 struct LinearCopyer {
-  explicit LinearCopyer(void* data) : data_(data) {}
+  explicit LinearCopyer(void* data, u64 capacity) : capacity_(capacity), data_(data) {}
   LinearCopyer() = default;
 
-  u64 copy(const void* data, u64 size) {
-    memcpy((char*)data_ + offset_, data, size);
-    offset_ += size;
-    return offset_ - size;
-  }
+  [[nodiscard]] u64 copy(const void* data, u64 size);
   void reset() { offset_ = 0; }
 
  private:
+  u64 capacity_{};
   u64 offset_{};
   void* data_{};
 };
@@ -296,8 +293,7 @@ class VkRender2 final {
     [[nodiscard]] u32 add_draw_pass();
 
     // TODO: this is a little jank
-    u32 add_draws(StateTracker& state, Device::CopyAllocator::CopyCmd& cmd, size_t size,
-                  size_t staging_offset);
+    u32 add_draws(StateTracker& state, size_t size, size_t staging_offset);
     void remove_draws(StateTracker& state, CmdEncoder& cmd, u32 handle);
 
     [[nodiscard]] const std::string& get_name() const { return name_; }
@@ -378,6 +374,9 @@ class VkRender2 final {
   std::vector<ObjectData> object_datas_to_copy_;
   std::vector<Holder<BufferHandle>> frame_staging_buffers_;
   std::vector<LinearCopyer> staging_buffer_copiers_;
+  LinearCopyer& get_staging_copyer() {
+    return staging_buffer_copiers_[device_->curr_frame_in_flight()];
+  }
 
   PipelineTask make_pipeline_task(const ComputePipelineCreateInfo& info,
                                   PipelineHandle* out_handle);

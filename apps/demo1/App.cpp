@@ -144,6 +144,7 @@ void App::run() {
   //     "/Users/tony/Downloads/secret_of_the_mimic_-_mimic/scene.gltf"));
   // instances_.emplace_back(ResourceManager::get().load_model(
   //     "/Users/tony/Downloads/killer_clown_balatro_style/scene.gltf"));
+
   glm::vec3 v{};
   int w = 1;
   float spacing = 3.f;
@@ -155,11 +156,11 @@ void App::run() {
       //     "/Users/tony/models/Models/Fox/glTF/Fox.gltf", transform));
       // instances_.emplace_back(ResourceManager::get().load_model(
       //     "/Users/tony/Downloads/killer_clown_balatro_style/scene.gltf", transform));
-      instances_.emplace_back(ResourceManager::get().load_model(
-          "/Users/tony/Downloads/wally_walrus_leoncio/scene.gltf", transform));
       // instances_.emplace_back(ResourceManager::get().load_model(
+      //     "/Users/tony/Downloads/wally_walrus_leoncio/scene.gltf", transform));
+      // instances_.emplace_back(ResourceManager::get().load_model(
+      //     "/Users/tony/models/Models/Cube/glTF/Cube.gltf", transform));
       //     "/Users/tony/models/Models/AnimatedCube/glTF/AnimatedCube.gltf", transform));
-      // "/Users/tony/models/Models/Cube/glTF/Cube.gltf", transform));
     }
   }
 
@@ -184,8 +185,8 @@ void App::run() {
   // instances_.emplace_back(ResourceManager::get().load_model(
   //     "/Users/tony/models/Models/AlphaBlendModeTest/glTF/AlphaBlendModeTest.gltf"));
 
-  // instances_.emplace_back(
-  //     ResourceManager::get().load_model(local_models_dir / "Bistro_Godot_opt.glb"));
+  instances_.emplace_back(
+      ResourceManager::get().load_model(local_models_dir / "Bistro_Godot_opt.glb"));
 
   // std::filesystem::path env_tex = local_models_dir / "quarry_04_puresky_4k.hdr";
   // std::filesystem::path env_tex = local_models_dir / "immenstadter_horn_2k.hdr";

@@ -538,6 +538,9 @@ BufferHandle Device::create_buffer(const BufferCreateInfo& cinfo) {
 
   buffer->size_ = cinfo.size;
   buffer->usage_ = cinfo.usage;
+  if (cinfo.debug_name) {
+    set_name(cinfo.debug_name, (u64)buffer->buffer_, VK_OBJECT_TYPE_BUFFER);
+  }
 
   return handle;
 }

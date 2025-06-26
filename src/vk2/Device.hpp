@@ -223,7 +223,7 @@ class Device {
  public:
   std::vector<VkImageMemoryBarrier2> init_transitions_;
   struct CopyOp {
-    BufferHandle dst_buffer;
+    Holder<BufferHandle>* dst_buffer;
     u64 src_offset;
     u64 dst_offset;
     u64 size;
