@@ -1674,6 +1674,7 @@ void VkRender2::StaticMeshDrawManager::remove_draws(StateTracker&, CmdEncoder& c
 }
 
 u32 VkRender2::StaticMeshDrawManager::add_draws(StateTracker&, size_t size, size_t staging_offset) {
+  ZoneScoped;
   assert(size > 0);
   Alloc a{};
   a.draw_cmd_slot = draw_cmds_buf_.allocator.allocate(size);
@@ -1716,26 +1717,12 @@ u32 VkRender2::StaticMeshDrawManager::add_draws(StateTracker&, size_t size, size
     LINFO("unimplemented: need to resize Static mesh draw cmd buffer");
     exit(1);
   }
-  // auto* draw_cmds_buf = device_->get_buffer(draw_cmds_buf_.buffer);
-  // state
-  //     .buffer_barrier(draw_cmds_buf->buffer(), VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-  //                     VK_ACCESS_2_TRANSFER_WRITE_BIT)
-  //     .flush_barriers();
   device_->copy_ops.emplace_back(Device::CopyOp{
       .dst_buffer = &draw_cmds_buf_.buffer,
       .src_offset = staging_offset,
       .dst_offset = a.draw_cmd_slot.get_offset(),
       .size = size,
   });
-
-  // cmd.copy_buffer(device_, *draw_cmds_buf, staging_offset, a.draw_cmd_slot.get_offset(), size);
-  // state
-  //     .buffer_barrier(
-  //         draw_cmds_buf->buffer(),
-  //         VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-  //         VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT)
-  //     .flush_barriers();
-
   if (free_alloc_indices_.size()) {
     auto h = free_alloc_indices_.back();
     free_alloc_indices_.pop_back();
@@ -1880,9 +1867,8 @@ void VkRender2::draw_box(const mat4& model, const AABB& aabb, const vec4& color)
 }
 
 void VkRender2::free(StaticModelInstanceResources& instance) {
-  auto& instance_buf =
-      instance.is_animated ? animated_instance_data_buf_ : static_instance_data_buf_;
-  auto& obj_data_buf = instance.is_animated ? animated_object_data_buf_ : static_object_data_buf_;
+  auto& instance_buf = static_instance_data_buf_;
+  auto& obj_data_buf = static_object_data_buf_;
   instance_buf.allocator.free(instance.instance_data_slot);
   obj_data_buf.allocator.free(instance.object_data_slot);
   if (instance.is_animated) {
@@ -2095,6 +2081,7 @@ bool VkRender2::load_model2(const std::filesystem::path& path, LoadedModelData& 
 
 // TODO: thread safe
 StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_handle) {
+  ZoneScoped;
   auto* pmodel = ResourceManager::get().get_model(model_handle);
   assert(pmodel);
   if (!pmodel) {
@@ -2103,6 +2090,7 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   auto& model = *pmodel;
   auto* resources = model_gpu_resources_pool_.get(model.gpu_resource_handle);
   assert(resources);
+  resources->ref_count++;
   draw_stats_.total_vertices += resources->num_vertices;
   draw_stats_.total_indices += resources->num_indices;
 
@@ -2111,22 +2099,24 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   const auto& scene = model.scene_graph_data;
 
   assert(scene.hierarchies.size() == scene.node_mesh_indices.size());
-  for (size_t node_i = 0; node_i < scene.hierarchies.size(); node_i++) {
-    auto mesh_data_i = scene.node_mesh_indices[node_i];
-    if (mesh_data_i == -1) continue;
-    const auto& mesh_indices = scene.mesh_datas[mesh_data_i];
-    bool double_sided = resources->materials[mesh_indices.material_id].is_double_sided();
-    MeshPass pass{MeshPass_Count};
-    if (mesh_indices.pass_flags & PassFlags_Opaque) {
-      pass = MeshPass_Opaque;
-    } else if (mesh_indices.pass_flags & PassFlags_OpaqueAlpha) {
-      pass = MeshPass_OpaqueAlphaMask;
-    } else if (mesh_indices.pass_flags & PassFlags_Transparent) {
-      pass = MeshPass_Transparent;
+  {
+    ZoneScopedN("mesh_pass calcs");
+    for (size_t node_i = 0; node_i < scene.hierarchies.size(); node_i++) {
+      auto mesh_data_i = scene.node_mesh_indices[node_i];
+      if (mesh_data_i == -1) continue;
+      const auto& mesh_indices = scene.mesh_datas[mesh_data_i];
+      bool double_sided = resources->materials[mesh_indices.material_id].is_double_sided();
+      MeshPass pass{MeshPass_Count};
+      if (mesh_indices.pass_flags & PassFlags_Opaque) {
+        pass = MeshPass_Opaque;
+      } else if (mesh_indices.pass_flags & PassFlags_OpaqueAlpha) {
+        pass = MeshPass_OpaqueAlphaMask;
+      } else if (mesh_indices.pass_flags & PassFlags_Transparent) {
+        pass = MeshPass_Transparent;
+      }
+      pass_obj_counts[double_sided ? get_double_sided_pass(pass) : pass]++;
     }
-    pass_obj_counts[double_sided ? get_double_sided_pass(pass) : pass]++;
   }
-  resources->ref_count++;
 
   u32 num_objs_tot{};
   for (auto pass_obj_count : pass_obj_counts) {
@@ -2144,11 +2134,9 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   if (model.scene_graph_data.skins.size()) {
     instance_resources->is_animated = true;
   }
-  FreeListBuffer& instance_data_buf = static_instance_data_buf_;
-  FreeListBuffer& object_data_buf = static_object_data_buf_;
+  FreeListBuffer2& instance_data_buf = static_instance_data_buf_;
+  FreeListBuffer2& object_data_buf = static_object_data_buf_;
 
-  vec3 scene_min = vec3{std::numeric_limits<float>::max()};
-  vec3 scene_max = vec3{std::numeric_limits<float>::lowest()};
   std::array<std::vector<GPUDrawInfo>, MeshPass_Count> pass_cmds;
   instance_resources->instance_data_slot =
       instance_data_buf.allocator.allocate(num_objs_tot * sizeof(GPUInstanceData));
@@ -2162,6 +2150,7 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   u32 first_vertex{};
   std::vector<SkinCommand> skin_cmds;
   if (instance_resources->is_animated) {
+    ZoneScopedN("animation calcs");
     instance_resources->animated_vertex_buf_slot =
         animated_vertex_output_bufs_.allocator.allocate(resources->num_vertices * sizeof(Vertex));
 
@@ -2188,7 +2177,11 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
     if (num_new_skin_mats > 0) {
       instance_resources->global_bone_mat_slot =
           global_skin_mat_allocator_.allocate(sizeof(mat4) * num_new_skin_mats);
-      global_skin_matrices_.resize(global_skin_mat_allocator_.max_seen_size() / sizeof(mat4));
+      auto num_required_elements =
+          instance_resources->global_bone_mat_slot.get_off_plus_size() / sizeof(mat4);
+      if (global_skin_matrices_.size() < num_required_elements) {
+        global_skin_matrices_.resize(num_required_elements);
+      }
     }
 
     {
@@ -2210,64 +2203,69 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
     first_vertex = resources->first_vertex;
   }
 
-  for (size_t node_i = 0; node_i < scene.hierarchies.size(); node_i++) {
-    // TODO: model wide?
-    instance_resources->node_to_instance_and_obj.emplace_back(-1);
-    auto mesh_data_i = scene.node_mesh_indices[node_i];
-    if (mesh_data_i == -1) continue;
-    const auto& node_mesh_data = scene.mesh_datas[mesh_data_i];
-    // auto& node_mesh_data
-    auto& mesh = resources->mesh_draw_infos[node_mesh_data.mesh_idx];
-    // TODO: get rid
-    const mat4 model = scene.global_transforms[node_i];
-    AABB world_space_aabb = transform_aabb(model, mesh.aabb);
-    scene_min = glm::min(scene_min, world_space_aabb.min);
-    scene_max = glm::max(scene_max, world_space_aabb.max);
-    u32 instance_id = base_instance_id + instance_resources->instance_datas.size();
-    instance_resources->node_to_instance_and_obj.back() = instance_resources->instance_datas.size();
-    instance_resources->instance_datas.emplace_back(
-        node_mesh_data.material_id + base_material_id,
-        base_object_data_id + instance_resources->object_datas.size());
-    instance_resources->object_datas.emplace_back(gfx::ObjectData{
-        .model = model,
-        .aabb_min = vec4(world_space_aabb.min, 0.),
-        .aabb_max = vec4(world_space_aabb.max, 0.),
-    });
+  {
+    ZoneScopedN("instance data calc and model bounds");
+    vec3 scene_min = vec3{std::numeric_limits<float>::max()};
+    vec3 scene_max = vec3{std::numeric_limits<float>::lowest()};
+    for (size_t node_i = 0; node_i < scene.hierarchies.size(); node_i++) {
+      // TODO: model wide?
+      instance_resources->node_to_instance_and_obj.emplace_back(-1);
+      auto mesh_data_i = scene.node_mesh_indices[node_i];
+      if (mesh_data_i == -1) continue;
+      const auto& node_mesh_data = scene.mesh_datas[mesh_data_i];
+      // auto& node_mesh_data
+      auto& mesh = resources->mesh_draw_infos[node_mesh_data.mesh_idx];
+      // TODO: get rid
+      const mat4 model = scene.global_transforms[node_i];
+      AABB world_space_aabb = transform_aabb(model, mesh.aabb);
+      scene_min = glm::min(scene_min, world_space_aabb.min);
+      scene_max = glm::max(scene_max, world_space_aabb.max);
+      u32 instance_id = base_instance_id + instance_resources->instance_datas.size();
+      instance_resources->node_to_instance_and_obj.back() =
+          instance_resources->instance_datas.size();
+      instance_resources->instance_datas.emplace_back(
+          node_mesh_data.material_id + base_material_id,
+          base_object_data_id + instance_resources->object_datas.size());
+      instance_resources->object_datas.emplace_back(gfx::ObjectData{
+          .model = model,
+          .aabb_min = vec4(world_space_aabb.min, 0.),
+          .aabb_max = vec4(world_space_aabb.max, 0.),
+      });
 
-    u32 draw_flags{};
-    bool double_sided = resources->materials[node_mesh_data.material_id].is_double_sided();
-    if (double_sided) {
-      draw_flags |= GPUDrawInfoFlags_DoubleSided;
-    }
+      u32 draw_flags{};
+      bool double_sided = resources->materials[node_mesh_data.material_id].is_double_sided();
+      if (double_sided) {
+        draw_flags |= GPUDrawInfoFlags_DoubleSided;
+      }
 
-    GPUDrawInfo draw{.index_cnt = mesh.index_count,
-                     .first_index = static_cast<u32>(resources->first_index + mesh.first_index),
-                     .vertex_offset = first_vertex + mesh.first_vertex,
-                     .instance_id = instance_id,
-                     .flags = draw_flags};
-    if (node_mesh_data.pass_flags & PassFlags_Opaque) {
-      if (double_sided) {
-        pass_cmds[MeshPass_OpaqueDoubleSided].emplace_back(draw);
-      } else {
-        pass_cmds[MeshPass_Opaque].emplace_back(draw);
-      }
-    } else if (node_mesh_data.pass_flags & PassFlags_OpaqueAlpha) {
-      if (double_sided) {
-        pass_cmds[MeshPass_OpaqueAlphaMaskDoubleSided].emplace_back(draw);
-      } else {
-        pass_cmds[MeshPass_OpaqueAlphaMask].emplace_back(draw);
-      }
-    } else if (node_mesh_data.pass_flags & PassFlags_Transparent) {
-      if (double_sided) {
-        pass_cmds[MeshPass_TransparentDoubleSided].emplace_back(draw);
-      } else {
-        pass_cmds[MeshPass_Transparent].emplace_back(draw);
+      GPUDrawInfo draw{.index_cnt = mesh.index_count,
+                       .first_index = static_cast<u32>(resources->first_index + mesh.first_index),
+                       .vertex_offset = first_vertex + mesh.first_vertex,
+                       .instance_id = instance_id,
+                       .flags = draw_flags};
+      if (node_mesh_data.pass_flags & PassFlags_Opaque) {
+        if (double_sided) {
+          pass_cmds[MeshPass_OpaqueDoubleSided].emplace_back(draw);
+        } else {
+          pass_cmds[MeshPass_Opaque].emplace_back(draw);
+        }
+      } else if (node_mesh_data.pass_flags & PassFlags_OpaqueAlpha) {
+        if (double_sided) {
+          pass_cmds[MeshPass_OpaqueAlphaMaskDoubleSided].emplace_back(draw);
+        } else {
+          pass_cmds[MeshPass_OpaqueAlphaMask].emplace_back(draw);
+        }
+      } else if (node_mesh_data.pass_flags & PassFlags_Transparent) {
+        if (double_sided) {
+          pass_cmds[MeshPass_TransparentDoubleSided].emplace_back(draw);
+        } else {
+          pass_cmds[MeshPass_Transparent].emplace_back(draw);
+        }
       }
     }
+    scene_aabb_.min = glm::min(scene_aabb_.min, scene_min);
+    scene_aabb_.max = glm::max(scene_aabb_.max, scene_max);
   }
-
-  scene_aabb_.min = glm::min(scene_aabb_.min, scene_min);
-  scene_aabb_.max = glm::max(scene_aabb_.max, scene_max);
 
   u64 cmds_staging_offsets[MeshPass_Count] = {};
   for (int i = 0; i < MeshPass_Count; i++) {
@@ -2303,6 +2301,7 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
   }
 
   {
+    ZoneScopedN("copy data and add draws");
     assert(obj_datas_size && instance_datas_size);
     for (int i = 0; i < MeshPass_Count; i++) {
       auto& cmds = pass_cmds[i];

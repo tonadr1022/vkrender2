@@ -73,11 +73,11 @@ struct StaticModelInstanceResources {
   std::vector<GPUInstanceData> instance_datas;
   std::vector<int> node_to_instance_and_obj;
   std::array<u32, MeshPass_Count> mesh_pass_draw_handles{UINT32_MAX};
-  util::FreeListAllocator::Slot instance_data_slot;
-  util::FreeListAllocator::Slot object_data_slot;
-  util::FreeListAllocator::Slot animated_vertex_buf_slot;
-  util::FreeListAllocator::Slot global_bone_mat_slot;
-  util::FreeListAllocator::Slot skin_commands_slot;
+  util::FreeListAllocator2::Slot instance_data_slot;
+  util::FreeListAllocator2::Slot object_data_slot;
+  util::FreeListAllocator2::Slot animated_vertex_buf_slot;
+  util::FreeListAllocator2::Slot global_bone_mat_slot;
+  util::FreeListAllocator2::Slot skin_commands_slot;
   ModelHandle model_handle;
   const char* name;  // owned by gpu resource
   bool is_animated{};
@@ -113,6 +113,12 @@ struct LinearStagingBuffer {
   Buffer* buffer_{};
 };
 
+struct FreeListBuffer2 {
+  Holder<BufferHandle> buffer;
+  util::FreeListAllocator2 allocator;
+  [[nodiscard]] Buffer* get_buffer() const { return get_device().get_buffer(buffer); }
+};
+
 struct FreeListBuffer {
   Holder<BufferHandle> buffer;
   util::FreeListAllocator allocator;
@@ -122,7 +128,7 @@ struct FreeListBuffer {
 template <u32 N>
 struct FreeListNBuffers {
   std::array<Holder<BufferHandle>, N> buffers;
-  util::FreeListAllocator allocator;
+  util::FreeListAllocator2 allocator;
 };
 
 struct SceneDrawInfo {
@@ -243,15 +249,15 @@ class VkRender2 final {
     u32 out_vtx_i;
     u32 bone_mat_start_i;
   };
-  FreeListBuffer skin_instance_datas_;
+  FreeListBuffer2 skin_instance_datas_;
 
-  util::FreeListAllocator global_skin_mat_allocator_;
+  util::FreeListAllocator2 global_skin_mat_allocator_;
   std::vector<mat4> global_skin_matrices_;
 
   FreeListBuffer static_vertex_buf_;
   FreeListBuffer static_index_buf_;
-  FreeListBuffer static_instance_data_buf_;
-  FreeListBuffer static_object_data_buf_;
+  FreeListBuffer2 static_instance_data_buf_;
+  FreeListBuffer2 static_object_data_buf_;
   FreeListBuffer static_materials_buf_;
 
   struct DrawStats {
@@ -278,7 +284,7 @@ class VkRender2 final {
     StaticMeshDrawManager& operator=(StaticMeshDrawManager&&) = delete;
 
     struct Alloc {
-      util::FreeListAllocator::Slot draw_cmd_slot;
+      util::FreeListAllocator2::Slot draw_cmd_slot;
     };
 
     struct DrawPass {
@@ -312,8 +318,8 @@ class VkRender2 final {
     std::string name_;
     std::vector<Alloc> allocs_;
     std::vector<u32> free_alloc_indices_;
-    FreeListBuffer draw_cmds_buf_;
-    FreeListBuffer animated_draw_cmds_buf_;
+    FreeListBuffer2 draw_cmds_buf_;
+    FreeListBuffer2 animated_draw_cmds_buf_;
     u32 num_draw_cmds_{};
     Device* device_{};
     MeshPass mesh_pass_{MeshPass_Count};

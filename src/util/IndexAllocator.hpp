@@ -82,7 +82,7 @@ class FreeListAllocator {
     Slot() = default;
 
    private:
-    Slot(u32 offset, u32 size);
+    Slot(u32 offset, u32 size) : offset_(offset | 0x80000000), size_(size) {}
     u32 offset_{};
     u32 size_{};
 
@@ -127,4 +127,92 @@ class FreeListAllocator {
   void coalesce(Iterator& it);
 };
 
+class FreeListAllocator2 {
+ public:
+  FreeListAllocator2() = default;
+  FreeListAllocator2(const FreeListAllocator2&) = delete;
+  FreeListAllocator2(FreeListAllocator2&&) = delete;
+  FreeListAllocator2& operator=(const FreeListAllocator2&) = delete;
+  FreeListAllocator2& operator=(FreeListAllocator2&&) = delete;
+  struct Slot {
+    friend class FreeListAllocator2;
+    Slot() = default;
+
+   private:
+    Slot(u32 offset, u32 size) : offset_(offset | 0x80000000), size_(size) {}
+    u32 offset_{};
+    u32 size_{};
+
+   public:
+    [[nodiscard]] bool valid() const { return size_ != 0; }
+    [[nodiscard]] bool is_free() const { return valid() && (offset_ & 0x80000000) != 0; }
+    void mark_free() { offset_ |= 0x80000000; }
+    void mark_used() { offset_ &= 0x7FFFFFFF; }
+    [[nodiscard]] u32 get_offset() const { return offset_ & 0x7FFFFFFF; }
+    [[nodiscard]] u32 get_size() const { return size_; }
+    [[nodiscard]] u32 get_off_plus_size() const { return get_offset() + get_size(); }
+  };
+
+  void init(u32 size_bytes, u32 alignment, u32 = 100) {
+    alignment_ = alignment;
+    size_bytes += (alignment_ - (size_bytes % alignment_)) % alignment_;
+    capacity_ = size_bytes;
+    free_list_.emplace_back(Slot{0, size_bytes});
+    initialized_ = true;
+  }
+
+  [[nodiscard]] constexpr u32 alloc_size() const { return sizeof(Slot); }
+
+  [[nodiscard]] u32 capacity() const { return capacity_; }
+
+  [[nodiscard]] Slot allocate(u32 size_bytes) {
+    assert(free_list_.size());
+    assert(initialized_);
+    if (!initialized_) {
+      exit(1);
+    }
+    u32 smallest_slot_i = UINT32_MAX;
+    u32 smallest_slot_size = UINT32_MAX;
+    u32 i = 0;
+    for (auto& slot : free_list_) {
+      if (slot.get_size() >= size_bytes) {
+        if (slot.get_size() < smallest_slot_size) {
+          smallest_slot_i = i;
+          smallest_slot_size = slot.get_size();
+        }
+      }
+      i++;
+    }
+    if (smallest_slot_i == UINT32_MAX) {
+      auto new_slot = Slot{capacity_, size_bytes};
+      capacity_ += size_bytes;
+      return new_slot;
+    }
+    auto existing_slot = free_list_[smallest_slot_i];
+    if (existing_slot.get_size() == size_bytes) {
+      auto it = free_list_.begin() + smallest_slot_i;
+      auto return_slot = existing_slot;
+      free_list_.erase(it, it + 1);
+      return return_slot;
+    }
+    // split up the slot
+    auto return_slot = Slot{existing_slot.get_offset(), size_bytes};
+    auto new_free_slot =
+        Slot{return_slot.get_off_plus_size(), existing_slot.get_size() - size_bytes};
+    free_list_[smallest_slot_i] = new_free_slot;
+    return return_slot;
+  }
+
+  // returns number of bytes freed
+  u32 free(Slot slot) {
+    free_list_.emplace_back(slot);
+    return slot.get_size();
+  }
+
+ private:
+  u32 alignment_{};
+  u32 capacity_{};
+  std::vector<Slot> free_list_;
+  bool initialized_{};
+};
 }  // namespace util

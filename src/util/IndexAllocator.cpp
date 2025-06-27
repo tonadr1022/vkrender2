@@ -1,5 +1,7 @@
 #include "IndexAllocator.hpp"
 
+#include <tracy/Tracy.hpp>
+
 #include "core/Logger.hpp"
 
 namespace util {
@@ -36,11 +38,13 @@ bool FreeListAllocator::reserve(u32 size_bytes) {
 }
 
 FreeListAllocator::Slot FreeListAllocator::allocate(u32 size_bytes) {
+  ZoneScoped;
   assert(initialized_);
   // align the size
   size_bytes += (alignment_ - (size_bytes % alignment_)) % alignment_;
   auto smallest_free_alloc = allocs_.end();
   {
+    ZoneScopedN("find alloc");
     // find the smallest free allocation that is large enough
     for (auto it = allocs_.begin(); it != allocs_.end(); it++) {
       // adequate if free and size fits
@@ -141,7 +145,5 @@ void FreeListAllocator::coalesce(Iterator& it) {
     allocs_.erase(it + 1);  // only next
   }
 }
-
-FreeListAllocator::Slot::Slot(u32 offset, u32 size) : offset_(offset | 0x80000000), size_(size) {}
 
 }  // namespace util

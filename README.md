@@ -13,7 +13,7 @@ This is a Vulkan renderer.
 - Image Based Lighting
 - Cascaded Shadow Maps
 - glTF loading with KTX2 compressed texture support
-- Skeletal animations with compute skinning, animation blending coming soon (theoretically)
+- Skeletal animations with GPU compute skinning, animation blending coming soon (theoretically)
 - HDR
 - Tonemapping
 - MoltenVK compatible, ie using every Vulkan 1.3 extension possible while requiring 1.2 (MoltenVK makes me :( [since indirect rendering still loops draw commands on the CPU in their implementation](https://github.com/KhronosGroup/MoltenVK/issues/1796))

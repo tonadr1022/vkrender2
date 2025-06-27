@@ -72,6 +72,7 @@ ResourceManager& ResourceManager::get() {
 
 bool ResourceManager::add_instance(ModelHandle model_handle, InstanceHandle instance_handle,
                                    const mat4& transform) {
+  ZoneScoped;
   auto* instance = instance_pool_.get(instance_handle);
   if (!instance) {
     return false;
@@ -98,6 +99,7 @@ void ResourceManager::update() {
   ZoneScoped;
   std::scoped_lock lock(instance_load_req_mtx_);
   auto new_end = std::ranges::remove_if(instance_load_requests_, [this](InstanceLoadRequest& req) {
+    ZoneScoped;
     return add_instance(req.model_handle, req.instance_handle, req.transform);
   });
   instance_load_requests_.erase(new_end.begin(), new_end.end());
