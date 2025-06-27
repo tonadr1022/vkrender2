@@ -89,7 +89,7 @@ struct PrimitiveDrawInfo {
   u32 index_count;
   u32 first_vertex;
   u32 vertex_count;
-  u32 mesh_idx;
+  // u32 mesh_idx;
   u32 first_animated_vertex;
 };
 

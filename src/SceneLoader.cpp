@@ -991,7 +991,6 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
     u32 num_animated_vertices{};
     {
       u32 primitive_idx{0};
-      u32 mesh_idx{0};
       for (const auto& gltf_mesh : gltf.meshes) {
         for (const auto& gltf_prim : gltf_mesh.primitives) {
           u32 first_index = num_indices;
@@ -1019,10 +1018,8 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
               .index_count = index_count,
               .first_vertex = first_vertex,
               .vertex_count = vertex_count,
-              .mesh_idx = mesh_idx,
               .first_animated_vertex = first_animated_vertex};
         }
-        mesh_idx++;
       };
     }
     result->indices.resize(num_indices);
@@ -1058,7 +1055,7 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
       processed_meshes[mesh_idx] = true;
       for (size_t primitive_idx = 0; primitive_idx < gltf.meshes[mesh_idx].primitives.size();
            primitive_idx++) {
-        auto mesh_draw_idx = prim_offsets_of_meshes[mesh_idx];
+        auto mesh_draw_idx = prim_offsets_of_meshes[mesh_idx] + primitive_idx;
         futures.emplace_back(threads::pool.submit_task([&gltf, mesh_idx, primitive_idx, &result,
                                                         mesh_draw_idx, loaded_tangents_from_disk,
                                                         gltf_node_i]() {
@@ -1252,8 +1249,8 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
                               .offset = offsetof(Vertex, tangent),
                               .stride = sizeof(Vertex)},
               };
-              // calc_tangents<u32>(info, std::span(result->indices.data() + (start_idx),
-              //                                    mesh_draw_info.index_count));
+              calc_tangents<u32>(info, std::span(result->indices.data() + (start_idx),
+                                                 mesh_draw_info.index_count));
             }
           }
         }));

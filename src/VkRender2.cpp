@@ -1985,6 +1985,10 @@ bool VkRender2::load_model2(const std::filesystem::path& path, LoadedModelData& 
                                 copy_buf_capacity};
     u64 material_data_staging_offset = staging.copy(res.materials.data(), material_data_size);
     u64 vertices_staging_offset = staging.copy(res.vertices.data(), vertices_size);
+    // for (size_t i = 0; i < res.vertices.size(); i += 100) {
+    //   auto& v = res.vertices[i].pos;
+    //   LINFO("{} {} {}", v.x, v.y, v.z);
+    // }
     u64 animated_vertices_staging_offset{};
     if (animated_vertices_size) {
       animated_vertices_staging_offset =
