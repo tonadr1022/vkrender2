@@ -7,15 +7,16 @@ This is a Vulkan renderer.
 
 ## Features
 
-- Render graph for auto barrier placement (TODO multiple queues)
-- Fully Bindless/Indirect rendering (1 descriptor set)
+- Render graph for auto barrier placement
+- Fully Bindless/Indirect rendering
 - PBR
 - Image Based Lighting
 - Cascaded Shadow Maps
 - glTF loading with KTX2 compressed texture support
+- Skeletal animations with compute skinning, animation blending coming soon (theoretically)
 - HDR
 - Tonemapping
-- (for now) MoltenVK compatible, ie using every Vulkan 1.3 extension possible while requiring 1.2
+- MoltenVK compatible, ie using every Vulkan 1.3 extension possible while requiring 1.2 (MoltenVK makes me :( [since indirect rendering still loops draw commands on the CPU in their implementation](https://github.com/KhronosGroup/MoltenVK/issues/1796))
 
 ## Building
 
@@ -67,7 +68,3 @@ cmake --build build/Release
 - <https://github.com/KhronosGroup/Vulkan-Docs/wiki/Synchronization-Examples#upload-data-from-the-cpu-to-a-vertex-buffer>
 - extra pbr: <http://www.codinglabs.net/article_physically_based_rendering.aspx>
 - csm example: <https://github.com/walbourn/directx-sdk-samples/blob/main/CascadedShadowMaps11/RenderCascadeScene.hlsl>
-
-### render graph Notes
-
-- adding buffers to the render graph: buffers that need double buffering?
