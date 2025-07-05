@@ -1323,4 +1323,14 @@ void free_hdr(CPUHDRImageData& img_data) {
 
 }  // namespace loader
 
+uvec2 AnimSampler::get_time_indices(float t) const {
+  auto it = std::ranges::lower_bound(inputs, t);
+  size_t time_i = 0;
+  if (it != inputs.begin()) {
+    time_i = std::distance(inputs.begin(), it) - 1;
+  }
+  size_t next_time_i = inputs.size() == 1 ? 0 : (time_i + 1) % inputs.size();
+  return {time_i, next_time_i};
+}
+
 }  // namespace gfx

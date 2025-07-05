@@ -188,8 +188,8 @@ void App::run() {
   // instances_.emplace_back(ResourceManager::get().load_model(
   //     "/Users/tony/models/Models/AlphaBlendModeTest/glTF/AlphaBlendModeTest.gltf"));
 
-  instances_.emplace_back(
-      ResourceManager::get().load_model(local_models_dir / "Bistro_Godot_opt.glb"));
+  // instances_.emplace_back(
+  //     ResourceManager::get().load_model(local_models_dir / "Bistro_Godot_opt.glb"));
 
   // std::filesystem::path env_tex = local_models_dir / "quarry_04_puresky_4k.hdr";
   // std::filesystem::path env_tex = local_models_dir / "immenstadter_horn_2k.hdr";
@@ -270,6 +270,16 @@ void App::update(float dt) {
   int i = 0;
   static float offset{10.f};
   ImGui::DragFloat("offset", &offset);
+
+  auto* instance = ResourceManager::get().get_instance(instances_[0]);
+  if (instance) {
+    auto& nodes = instance->scene_graph_data.animation_data.blend_tree_nodes;
+    if (nodes.empty()) {
+      // nodes.emplace_back(BlendTreeNode{.children = {1, 2}, .type = BlendTreeNode::Type::Lerp});
+      // nodes.emplace_back(BlendTreeNode{.type = BlendTreeNode::Type::Clip});
+      nodes.emplace_back(BlendTreeNode{.animation_i = 0, .type = BlendTreeNode::Type::Clip});
+    }
+  }
 
   // for (auto& instance_h : instances_) {
   //   auto* instance = ResourceManager::get().get_instance(instance_h);

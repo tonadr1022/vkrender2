@@ -162,6 +162,11 @@ class VkRender2 final {
   StaticModelInstanceResourcesHandle add_instance(ModelHandle model_handle);
   void update_transforms(LoadedInstanceData& instance, std::vector<i32>& changed_nodes);
   void update_animation(LoadedInstanceData& instance, float dt);
+  void apply_clip(const Animation& animation, const AnimationState& state, float weight,
+                  std::span<NodeTransformAccumulator> transform_accumulators,
+                  std::vector<bool>& dirty_node_bits);
+  void eval_blend_tree(LoadedInstanceData& instance, const std::vector<gfx::Animation>& animations,
+                       const BlendTreeNode& node);
   bool update_skins(LoadedInstanceData& instance);
   void remove_instance(StaticModelInstanceResourcesHandle handle);
   void mark_dirty(InstanceHandle handle);

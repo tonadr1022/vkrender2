@@ -722,8 +722,6 @@ void Device::acquire_next_image(CmdEncoder* cmd) {
   assert(cmd->submit_swapchains_.size() == 1);
 }
 
-void Device::begin_frame() { ZoneScoped; }
-
 VkFence Device::allocate_fence(bool reset) {
   if (!free_fences_.empty()) {
     VkFence f = free_fences_.back();

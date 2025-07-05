@@ -87,8 +87,11 @@ bool ResourceManager::add_instance(ModelHandle model_handle, InstanceHandle inst
   instance->instance_resources_handle = gfx::VkRender2::get().add_instance(model_handle);
   // TODO: maybe not do this here?
 
-  instance->animation_states.resize(model->animations.size());
-  for (size_t i = 0; i < model->animations.size(); i++) {
+  auto animation_count = model->animations.size();
+  instance->animation_states.resize(animation_count);
+  instance->transform_accumulators.resize(instance->scene_graph_data.hierarchies.size());
+  instance->dirty_animation_node_bits.resize(instance->scene_graph_data.hierarchies.size());
+  for (size_t i = 0; i < animation_count; i++) {
     instance->animation_states[i].anim_id = i;
   }
   instance->model_handle = model_handle;

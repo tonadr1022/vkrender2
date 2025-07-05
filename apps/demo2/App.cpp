@@ -237,14 +237,14 @@ void App::update(float dt) {
   int i = 0;
   static float offset{10.f};
   ImGui::DragFloat("offset", &offset);
-  for (auto& instance_h : instances_) {
-    auto* instance = ResourceManager::get().get_instance(instance_h);
-    if (instance) {
-      instance->scene_graph_data.local_transforms[0] =
-          glm::translate(mat4{1}, vec3{i++ * offset, 0, 0});
-      mark_changed(instance->scene_graph_data, 0);
-    }
-  }
+  // for (auto& instance_h : instances_) {
+  //   auto* instance = ResourceManager::get().get_instance(instance_h);
+  //   if (instance) {
+  //     instance->scene_graph_data.local_transforms[0] =
+  //         glm::translate(mat4{1}, vec3{i++ * offset, 0, 0});
+  //     mark_changed(instance->scene_graph_data, 0);
+  //   }
+  // }
   // static glm::quat rot = glm::quat(1, 0, 0, 0);
   // glm::quat delta_rot = glm::angleAxis(dt, glm::vec3(0., 1., 0.));
   // rot = glm::normalize(delta_rot * rot);  // Accumulate rotation

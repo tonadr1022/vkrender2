@@ -1,8 +1,5 @@
 #pragma once
 
-// TODO: not include this
-#include <unordered_set>
-
 #include "SceneLoader.hpp"
 #include "SceneResources.hpp"
 #include "Types.hpp"
@@ -18,7 +15,10 @@ struct LoadedInstanceData {
   ModelHandle model_handle;
   gfx::Scene2 scene_graph_data;
   std::vector<gfx::AnimationState> animation_states;
+  std::vector<gfx::NodeTransformAccumulator> transform_accumulators;  // animated only
+  std::vector<bool> dirty_animation_node_bits;
   // std::unordered_map<int, gfx::NodeTransform> node_transforms;
+  // TODO: rename to GPU resources handle
   gfx::StaticModelInstanceResourcesHandle instance_resources_handle;
   [[nodiscard]] bool is_valid() const { return model_handle.is_valid(); }
 };

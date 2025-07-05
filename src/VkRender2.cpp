@@ -499,7 +499,6 @@ void VkRender2::draw(const SceneDrawInfo& info) {
   {
     on_imgui();
     ImGui::Render();
-    device_->begin_frame();
   }
 
   {
@@ -2430,11 +2429,71 @@ float get_interpolation_value(float start_anim_t, float end_anim_t, float curr_t
 
 }  // namespace
 
+// void VkRender2::update_animation(LoadedInstanceData& instance, float dt) {
+//   ZoneScoped;
+//   LoadedModelData* model = ResourceManager::get().get_model(instance.model_handle);
+//   assert(model);
+//   size_t anim_i = 0;
+//   for (auto& animation : model->animations) {
+//     if (animation.duration <= 0.f) continue;
+//     AnimationState& anim_state = instance.animation_states[anim_i];
+//     if (!anim_state.active) {
+//       anim_i++;
+//       continue;
+//     }
+//     anim_state.curr_t += animation.ticks_per_second * dt;
+//     if (anim_state.play_once && anim_state.curr_t > animation.duration) {
+//       // animation is over
+//       anim_state.active = false;
+//       anim_state.curr_t = animation.duration;
+//     } else {
+//       anim_state.curr_t = std::fmodf(anim_state.curr_t, animation.duration);
+//     }
+//     assert(anim_state.anim_id != UINT32_MAX);
+//     anim_i++;
+//   }
+//
+//   // traverse from the root node? or iterate animations?
+//   anim_i = 0;
+//   // TODO: very bad lol
+//   std::vector<int> dirty_nodes;
+//   for (Animation& animation : model->animations) {
+//     const AnimationState& anim_state = instance.animation_states[anim_i];
+//     if (!anim_state.active) {
+//       anim_i++;
+//       continue;
+//     }
+//     apply_clip(animation, anim_state, 1.f, instance.transform_accumulators, dirty_nodes);
+//
+//     anim_i++;
+//   }
+//
+//   for (auto node_i : dirty_nodes) {
+//     auto& transform_accum = instance.transform_accumulators[node_i];
+//     if (transform_accum.tot_weight > 0) {
+//       mat4 t = glm::translate(mat4{1}, transform_accum.translation / transform_accum.tot_weight);
+//       mat4 r = glm::mat4_cast(glm::normalize(transform_accum.rotation));
+//       mat4 s = glm::scale(mat4{1}, transform_accum.scale / transform_accum.tot_weight);
+//       instance.scene_graph_data.local_transforms[node_i] = t * r * s;
+//       mark_changed(instance.scene_graph_data, node_i);
+//     }
+//   }
+//
+//   instance.transform_accumulators.clear();
+//   instance.transform_accumulators.resize(instance.scene_graph_data.hierarchies.size(),
+//                                          NodeTransformAccumulator{});
+// }
+
 void VkRender2::update_animation(LoadedInstanceData& instance, float dt) {
   ZoneScoped;
   LoadedModelData* model = ResourceManager::get().get_model(instance.model_handle);
   assert(model);
   size_t anim_i = 0;
+  instance.transform_accumulators.clear();
+  instance.transform_accumulators.resize(instance.scene_graph_data.hierarchies.size(),
+                                         NodeTransformAccumulator{});
+  instance.dirty_animation_node_bits.clear();
+  instance.dirty_animation_node_bits.resize(instance.scene_graph_data.hierarchies.size(), false);
   for (auto& animation : model->animations) {
     // assert(animation.duration > 0.f);
     AnimationState& anim_state = instance.animation_states[anim_i];
@@ -2454,76 +2513,39 @@ void VkRender2::update_animation(LoadedInstanceData& instance, float dt) {
     anim_i++;
   }
 
-  // traverse from the root node? or iterate animations?
-  anim_i = 0;
-  for (Animation& animation : model->animations) {
-    const AnimationState& anim_state = instance.animation_states[anim_i];
-    if (!anim_state.active) {
-      anim_i++;
+  auto& blend_tree_nodes = instance.scene_graph_data.animation_data.blend_tree_nodes;
+  if (!blend_tree_nodes.empty()) {
+    eval_blend_tree(instance, model->animations, blend_tree_nodes[0]);
+  }
+
+  // anim_i = 0;
+  // for (Animation& animation : model->animations) {
+  //   const AnimationState& anim_state = instance.animation_states[anim_i];
+  //   if (!anim_state.active) {
+  //     anim_i++;
+  //     continue;
+  //   }
+  //   apply_clip(animation, anim_state, 1.f, instance.transform_accumulators,
+  //              instance.dirty_animation_node_bits);
+  //   anim_i++;
+  // }
+
+  for (size_t node_i = 0; node_i < instance.dirty_animation_node_bits.size(); node_i++) {
+    if (!instance.dirty_animation_node_bits[node_i]) {
       continue;
     }
-    for (size_t channel_i = 0; channel_i < animation.channels.nodes.size(); channel_i++) {
-      int channel_node_i = animation.get_channel_node(channel_i);
-      assert(channel_node_i >= 0);
-      u32 channel_sampler_i = animation.get_channel_sampler_i(channel_i);
-      assert(channel_sampler_i < animation.samplers.size());
-      AnimationPath channel_anim_path = animation.get_channel_anim_path(channel_i);
-      const AnimSampler& sampler = animation.samplers[channel_sampler_i];
-      // binary search
-      auto it = std::ranges::lower_bound(sampler.inputs, anim_state.curr_t);
-      size_t time_i = 0;
-      if (it != sampler.inputs.begin()) {
-        time_i = std::distance(sampler.inputs.begin(), it) - 1;
-      }
-      size_t next_time_i = sampler.inputs.size() == 1 ? 0 : (time_i + 1) % sampler.inputs.size();
-      assert(next_time_i < sampler.inputs.size());
-      assert(time_i < sampler.inputs.size());
-      float interpolation_val =
-          sampler.inputs.size() == 1
-              ? 0.f
-              : get_interpolation_value(sampler.inputs[time_i], sampler.inputs[next_time_i],
-                                        anim_state.curr_t);
-
-      auto& nt = instance.scene_graph_data.node_transforms[channel_node_i];
-      if (channel_anim_path == AnimationPath::Translation) {
-        assert(sampler.outputs_raw.size() == sampler.inputs.size() * 3);
-        const vec3* translations = reinterpret_cast<const vec3*>(sampler.outputs_raw.data());
-        nt.translation =
-            sampler.inputs.size() == 1
-                ? translations[0]
-                : glm::mix(translations[time_i], translations[next_time_i], interpolation_val);
-      } else if (channel_anim_path == AnimationPath::Rotation) {
-        assert(sampler.outputs_raw.size() == sampler.inputs.size() * 4);
-        assert(time_i < sampler.inputs.size());
-        const quat* rotations = reinterpret_cast<const quat*>(sampler.outputs_raw.data());
-        if (sampler.inputs.size() == 1) {
-          nt.rotation = rotations[0];
-        } else {
-          quat q0 = rotations[time_i];
-          quat q1 = rotations[next_time_i];
-          if (glm::dot(q0, q1) < 0.0f) q1 = -q1;  // ensure shortest path
-          nt.rotation = glm::normalize(glm::slerp(q0, q1, interpolation_val));
-        }
-      } else if (channel_anim_path == AnimationPath::Scale) {
-        assert(sampler.outputs_raw.size() == sampler.inputs.size() * 3);
-        const vec3* scales = reinterpret_cast<const vec3*>(sampler.outputs_raw.data());
-        nt.scale = sampler.inputs.size() == 1
-                       ? scales[0]
-                       : glm::mix(scales[time_i], scales[next_time_i], interpolation_val);
-      }
-    }
-
-    for (size_t channel_i = 0; channel_i < animation.channels.nodes.size(); channel_i++) {
-      auto node_i = animation.get_channel_node(channel_i);
-      const auto& nt = instance.scene_graph_data.node_transforms[node_i];
-      mat4 t = glm::translate(mat4(1), nt.translation);
-      mat4 r = glm::mat4_cast(nt.rotation);
-      mat4 s = glm::scale(mat4(1), nt.scale);
-      instance.scene_graph_data.local_transforms[node_i] = t * r * s;
-      mark_changed(instance.scene_graph_data, node_i);
-    }
-
-    anim_i++;
+    auto& transform_accum = instance.transform_accumulators[node_i];
+    auto& nt = instance.scene_graph_data.node_transforms[node_i];
+    mat4 t = glm::translate(mat4{1}, (transform_accum.weights.x > 0.f
+                                          ? transform_accum.translation / transform_accum.weights.x
+                                          : nt.translation));
+    mat4 r = glm::mat4_cast(
+        transform_accum.weights.y > 0.f ? glm::normalize(transform_accum.rotation) : nt.rotation);
+    mat4 s = glm::scale(mat4{1}, transform_accum.weights.z > 0.f
+                                     ? transform_accum.scale / transform_accum.weights.z
+                                     : nt.scale);
+    instance.scene_graph_data.local_transforms[node_i] = t * r * s;
+    mark_changed(instance.scene_graph_data, node_i);
   }
 }
 
@@ -2630,12 +2652,95 @@ bool VkRender2::update_skins(LoadedInstanceData& instance) {
 
 u64 LinearCopyer::copy(const void* data, u64 size) {
   memcpy((char*)data_ + offset_, data, size);
+#ifndef NDEBUG
   if (offset_ + size > capacity_) {
     LINFO("nope");
     exit(1);
   }
   assert(offset_ + size <= capacity_);
+#endif
   offset_ += size;
   return offset_ - size;
 }
+
+void VkRender2::apply_clip(const Animation& animation, const AnimationState& state, float weight,
+                           std::span<NodeTransformAccumulator> transform_accumulators,
+                           std::vector<bool>& dirty_node_bits) {
+  if (!state.active) {
+    return;
+  }
+  assert(transform_accumulators.size() > 0);
+  for (size_t channel_i = 0; channel_i < animation.channels.nodes.size(); channel_i++) {
+    int channel_node_i = animation.get_channel_node(channel_i);
+    assert(channel_node_i >= 0);
+    u32 channel_sampler_i = animation.get_channel_sampler_i(channel_i);
+    assert(channel_sampler_i < animation.samplers.size());
+    AnimationPath channel_anim_path = animation.get_channel_anim_path(channel_i);
+    const AnimSampler& sampler = animation.samplers[channel_sampler_i];
+    uvec2 time_indices = sampler.get_time_indices(state.curr_t);
+    u32 time_i = time_indices.x, next_time_i = time_indices.y;
+    float interpolation_val = get_interpolation_value(sampler.inputs[time_indices.x],
+                                                      sampler.inputs[time_indices.y], state.curr_t);
+
+    assert(channel_node_i < (int)transform_accumulators.size());
+    auto& nt = transform_accumulators[channel_node_i];
+    dirty_node_bits[channel_node_i] = true;
+    assert(sampler.inputs.size() > 1);
+    if (channel_anim_path == AnimationPath::Translation) {
+      assert(sampler.outputs_raw.size() == sampler.inputs.size() * 3);
+      const vec3* translations = reinterpret_cast<const vec3*>(sampler.outputs_raw.data());
+      auto translation =
+          sampler.inputs.size() == 1
+              ? translations[0]
+              : glm::mix(translations[time_i], translations[next_time_i], interpolation_val);
+      nt.translation += translation * weight;
+      nt.weights.x += weight;
+    } else if (channel_anim_path == AnimationPath::Rotation) {
+      assert(sampler.outputs_raw.size() == sampler.inputs.size() * 4);
+      assert(time_i < sampler.inputs.size());
+      const quat* rotations = reinterpret_cast<const quat*>(sampler.outputs_raw.data());
+      quat rotation;
+      if (sampler.inputs.size() == 1) {
+        rotation = rotations[0];
+      } else {
+        quat q0 = rotations[time_i];
+        quat q1 = rotations[next_time_i];
+        if (glm::dot(q0, q1) < 0.0f) q1 = -q1;  // ensure shortest path
+        rotation = glm::slerp(q0, q1, interpolation_val);
+      }
+
+      if (nt.weights.y == 0.0f) {
+        nt.rotation = rotation;
+      } else {
+        nt.rotation = glm::slerp(nt.rotation, rotation, weight / (nt.weights.y + weight));
+      }
+      nt.weights.y += weight;
+    } else if (channel_anim_path == AnimationPath::Scale) {
+      assert(sampler.outputs_raw.size() == sampler.inputs.size() * 3);
+      const vec3* scales = reinterpret_cast<const vec3*>(sampler.outputs_raw.data());
+      auto scale = sampler.inputs.size() == 1
+                       ? scales[0]
+                       : glm::mix(scales[time_i], scales[next_time_i], interpolation_val);
+      nt.scale += weight * scale;
+      nt.weights.z += weight;
+    }
+  }
+}
+
+void VkRender2::eval_blend_tree(LoadedInstanceData& instance,
+                                const std::vector<gfx::Animation>& animations,
+                                const BlendTreeNode& node) {
+  if (node.type == BlendTreeNode::Type::Clip) {
+    assert(node.animation_i < animations.size());
+    assert(node.children.empty());
+    apply_clip(animations[node.animation_i], instance.animation_states[node.animation_i],
+               node.weight, instance.transform_accumulators, instance.dirty_animation_node_bits);
+    return;
+  }
+  for (u32 child_i : node.children) {
+    BlendTreeNode& child_node = instance.scene_graph_data.animation_data.blend_tree_nodes[child_i];
+    eval_blend_tree(instance, animations, child_node);
+  }
+}
+
 }  // namespace gfx

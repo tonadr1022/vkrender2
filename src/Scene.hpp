@@ -59,11 +59,31 @@ struct SkinData {
   u32 skeleton_i{};
 };
 
+struct NodeTransformAccumulator {
+  vec3 translation{0.f};
+  quat rotation{glm::identity<glm::quat>()};
+  vec3 scale{1.f};
+  vec3 weights{};
+};
+
+struct BlendTreeNode {
+  enum class Type : u8 { Clip, Lerp };
+  std::vector<u32> children;
+  float weight{1.f};
+  u32 animation_i{UINT32_MAX};
+  Type type;
+};
+
+struct AnimationData {
+  std::vector<BlendTreeNode> blend_tree_nodes;
+};
+
 struct Scene2 {
   std::vector<mat4> local_transforms;
   std::vector<NodeTransform> node_transforms;
   std::vector<mat4> global_transforms;
   std::vector<Hierarchy> hierarchies;
+  AnimationData animation_data;
   std::vector<std::string> node_names;
   // TODO: vector here
   std::unordered_map<i32, i32> node_to_node_name_idx;

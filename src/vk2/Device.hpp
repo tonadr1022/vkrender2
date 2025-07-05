@@ -156,7 +156,6 @@ class Device {
   [[nodiscard]] AttachmentInfo get_swapchain_info() const;
   [[nodiscard]] VkImage get_swapchain_img(u32 idx) const;
   void submit_commands();
-  void begin_frame();
   [[nodiscard]] u32 curr_frame_num() const { return curr_frame_num_; }
   [[nodiscard]] u32 curr_frame_in_flight() const {
     return curr_frame_num() % get_frames_in_flight();

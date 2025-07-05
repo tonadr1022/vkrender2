@@ -40,6 +40,7 @@ enum class AnimationPath : u8 {
 struct AnimSampler {
   std::vector<float> inputs;
   std::vector<float> outputs_raw;
+  [[nodiscard]] uvec2 get_time_indices(float t) const;
 };
 
 struct Channels {
