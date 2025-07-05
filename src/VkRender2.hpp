@@ -166,7 +166,7 @@ class VkRender2 final {
                   std::span<NodeTransformAccumulator> transform_accumulators,
                   std::vector<bool>& dirty_node_bits);
   void eval_blend_tree(LoadedInstanceData& instance, const std::vector<gfx::Animation>& animations,
-                       const BlendTreeNode& node);
+                       std::vector<NodeTransformAccumulator>& out_accum, const BlendTreeNode& node);
   bool update_skins(LoadedInstanceData& instance);
   void remove_instance(StaticModelInstanceResourcesHandle handle);
   void mark_dirty(InstanceHandle handle);

@@ -2515,7 +2515,8 @@ void VkRender2::update_animation(LoadedInstanceData& instance, float dt) {
 
   auto& blend_tree_nodes = instance.scene_graph_data.animation_data.blend_tree_nodes;
   if (!blend_tree_nodes.empty()) {
-    eval_blend_tree(instance, model->animations, blend_tree_nodes[0]);
+    eval_blend_tree(instance, model->animations, instance.transform_accumulators,
+                    blend_tree_nodes[0]);
   }
 
   // anim_i = 0;
@@ -2729,17 +2730,55 @@ void VkRender2::apply_clip(const Animation& animation, const AnimationState& sta
 
 void VkRender2::eval_blend_tree(LoadedInstanceData& instance,
                                 const std::vector<gfx::Animation>& animations,
+                                std::vector<NodeTransformAccumulator>& out_accum,
                                 const BlendTreeNode& node) {
   if (node.type == BlendTreeNode::Type::Clip) {
     assert(node.animation_i < animations.size());
     assert(node.children.empty());
     apply_clip(animations[node.animation_i], instance.animation_states[node.animation_i],
-               node.weight, instance.transform_accumulators, instance.dirty_animation_node_bits);
+               node.weight, out_accum, instance.dirty_animation_node_bits);
     return;
   }
-  for (u32 child_i : node.children) {
-    BlendTreeNode& child_node = instance.scene_graph_data.animation_data.blend_tree_nodes[child_i];
-    eval_blend_tree(instance, animations, child_node);
+  if (node.type == BlendTreeNode::Type::Lerp && node.children.size() == 2) {
+    auto& left = instance.scene_graph_data.animation_data.blend_tree_nodes[node.children[0]];
+    auto& right = instance.scene_graph_data.animation_data.blend_tree_nodes[node.children[1]];
+
+    std::vector<NodeTransformAccumulator> left_accum(instance.transform_accumulators.size());
+    std::vector<NodeTransformAccumulator> right_accum(instance.transform_accumulators.size());
+    eval_blend_tree(instance, animations, left_accum, left);
+    eval_blend_tree(instance, animations, right_accum, right);
+
+    float weight = node.weight;
+    auto get_translation = [](const NodeTransformAccumulator& accum, const NodeTransform& nt) {
+      return accum.weights.x > 0.f ? accum.translation / accum.weights.x : nt.translation;
+    };
+    auto get_rotation = [](const NodeTransformAccumulator& accum, const NodeTransform& nt) {
+      return accum.weights.y > 0.f ? glm::normalize(accum.rotation) : nt.rotation;
+    };
+    auto get_scale = [](const NodeTransformAccumulator& accum, const NodeTransform& nt) {
+      return accum.weights.z > 0.f ? accum.scale / accum.weights.z : nt.scale;
+    };
+    for (size_t i = 0; i < left_accum.size(); i++) {
+      // mix transforms
+      const auto& left_t = left_accum[i];
+      const auto& right_t = right_accum[i];
+      const auto& nt = instance.scene_graph_data.node_transforms[i];
+      vec3 translation =
+          glm::mix(get_translation(left_t, nt), get_translation(right_t, nt), weight);
+      quat rot;
+      quat left_rot = get_rotation(left_t, nt);
+      quat right_rot = get_rotation(right_t, nt);
+      if (glm::dot(left_rot, right_rot) < 0.f) {
+        rot = glm::slerp(left_rot, -right_rot, weight);
+      } else {
+        rot = glm::slerp(left_rot, right_rot, weight);
+      }
+      vec3 scale = glm::mix(get_scale(left_t, nt), get_scale(right_t, nt), weight);
+      out_accum[i].translation = translation;
+      out_accum[i].rotation = rot;
+      out_accum[i].scale = scale;
+      out_accum[i].weights = vec3{1.f};
+    }
   }
 }
 

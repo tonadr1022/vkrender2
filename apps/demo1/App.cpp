@@ -154,8 +154,8 @@ void App::run() {
       // glm::mat4 transform = glm::scale(glm::translate(glm::mat4{1}, v * spacing), vec3{.1});
       // instances_.emplace_back(ResourceManager::get().load_model(
       //     "/Users/tony/models/Models/Fox/glTF/Fox.gltf", transform));
-      instances_.emplace_back(ResourceManager::get().load_model(
-          "/Users/tony/Downloads/killer_clown_balatro_style/scene.gltf", transform));
+      // instances_.emplace_back(ResourceManager::get().load_model(
+      //     "/Users/tony/Downloads/killer_clown_balatro_style/scene.gltf", transform));
       // instances_.emplace_back(ResourceManager::get().load_model(
       //     "/Users/tony/Downloads/wally_walrus_leoncio/scene.gltf", transform));
       // instances_.emplace_back(ResourceManager::get().load_model(
@@ -172,8 +172,8 @@ void App::run() {
   //   instances_.emplace_back(
   //       ResourceManager::get().load_model("/Users/tony/models/Models/Cube/glTF/Cube.gltf"));
   // }
-  // instances_.emplace_back(
-  //     ResourceManager::get().load_model("/Users/tony/models/Models/Fox/glTF/Fox.gltf"));
+  instances_.emplace_back(
+      ResourceManager::get().load_model("/Users/tony/models/Models/Fox/glTF/Fox.gltf"));
   // instances_.emplace_back(ResourceManager::get().load_model(
   //     "/Users/tony/models/Models/AlphaBlendModeTest/glTF/AlphaBlendModeTest.gltf"));
 
@@ -275,9 +275,13 @@ void App::update(float dt) {
   if (instance) {
     auto& nodes = instance->scene_graph_data.animation_data.blend_tree_nodes;
     if (nodes.empty()) {
-      // nodes.emplace_back(BlendTreeNode{.children = {1, 2}, .type = BlendTreeNode::Type::Lerp});
-      // nodes.emplace_back(BlendTreeNode{.type = BlendTreeNode::Type::Clip});
+      nodes.emplace_back(BlendTreeNode{
+          .children = {1, 2},
+          .weight = .5f,
+          .type = BlendTreeNode::Type::Lerp,
+      });
       nodes.emplace_back(BlendTreeNode{.animation_i = 0, .type = BlendTreeNode::Type::Clip});
+      nodes.emplace_back(BlendTreeNode{.animation_i = 1, .type = BlendTreeNode::Type::Clip});
     }
   }
 
@@ -425,6 +429,22 @@ void App::on_imgui() {
       offset++;
     }
 
+    static int selected_node = -1;
+    if (selected_node >= 0) {
+      if (ImGui::Begin("Node")) {
+        auto* instance = ResourceManager::get().get_instance(instances_[selected_node]);
+        assert(instance && instance->is_valid());
+        auto* model = ResourceManager::get().get_model(instance->model_handle);
+        ImGui::Text("node");
+        if (ImGui::TreeNodeEx("Blend Tree", ImGuiTreeNodeFlags_DefaultOpen)) {
+          auto& nodes = instance->scene_graph_data.animation_data.blend_tree_nodes;
+          ImGui::SliderFloat("weight", &nodes[0].weight, 0.0f, 1.0f);
+          ImGui::TreePop();
+        }
+      }
+      ImGui::End();
+    }
+
     if (ImGui::TreeNodeEx("Scene", ImGuiTreeNodeFlags_DefaultOpen)) {
       util::fixed_vector<u32, 8> to_delete;
       size_t i = 0;
@@ -442,6 +462,9 @@ void App::on_imgui() {
           }
         }
         ImGui::SameLine();
+        if (ImGui::Button("Edit")) {
+          selected_node = i;
+        }
         if (ImGui::TreeNodeEx("%s", ImGuiTreeNodeFlags_DefaultOpen, "%s",
                               model->path.string().c_str())) {
           scene_node_imgui(instance->scene_graph_data, 0);
