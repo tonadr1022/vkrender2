@@ -10,6 +10,7 @@
 #include <cassert>
 #include <filesystem>
 #define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/io.hpp>
 #include <glm/gtx/string_cast.hpp>
 #include <glm/mat4x4.hpp>
 #include <memory>
@@ -2206,6 +2207,7 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
     ZoneScopedN("instance data calc and model bounds");
     vec3 scene_min = vec3{std::numeric_limits<float>::max()};
     vec3 scene_max = vec3{std::numeric_limits<float>::lowest()};
+    bool is_animated = instance_resources->is_animated;
     for (size_t node_i = 0; node_i < scene.hierarchies.size(); node_i++) {
       // TODO: model wide?
       instance_resources->node_to_instance_and_obj.emplace_back(-1);
@@ -2222,9 +2224,13 @@ StaticModelInstanceResourcesHandle VkRender2::add_instance(ModelHandle model_han
       u32 instance_id = base_instance_id + instance_resources->instance_datas.size();
       instance_resources->node_to_instance_and_obj.back() =
           instance_resources->instance_datas.size();
+      u32 flags{};
+      if (is_animated) {
+        flags |= INSTANCE_IS_ANIMATED_BIT;
+      }
       instance_resources->instance_datas.emplace_back(
           node_mesh_data.material_id + base_material_id,
-          base_object_data_id + instance_resources->object_datas.size());
+          base_object_data_id + instance_resources->object_datas.size(), flags);
       instance_resources->object_datas.emplace_back(gfx::ObjectData{
           .model = model,
           .aabb_min = vec4(world_space_aabb.min, 0.),
@@ -2412,9 +2418,6 @@ void VkRender2::update_transforms(LoadedInstanceData& instance, std::vector<i32>
     AABB world_aabb = transform_aabb(scene.global_transforms[node_i], mesh_info.aabb);
     object_datas_to_copy_.emplace_back(scene.global_transforms[node_i], vec4{world_aabb.min, 0.},
                                        vec4{world_aabb.max, 0.});
-    // object_datas_to_copy_.emplace_back(scene.global_transforms[node_i],
-    //                                    vec4{mesh_info.aabb.min, 0.}, vec4{mesh_info.aabb.max,
-    //                                    0.});
     instance_resources->object_datas[instance_i] = object_datas_to_copy_.back();
   }
 }
@@ -2429,65 +2432,13 @@ float get_interpolation_value(float start_anim_t, float end_anim_t, float curr_t
 
 }  // namespace
 
-// void VkRender2::update_animation(LoadedInstanceData& instance, float dt) {
-//   ZoneScoped;
-//   LoadedModelData* model = ResourceManager::get().get_model(instance.model_handle);
-//   assert(model);
-//   size_t anim_i = 0;
-//   for (auto& animation : model->animations) {
-//     if (animation.duration <= 0.f) continue;
-//     AnimationState& anim_state = instance.animation_states[anim_i];
-//     if (!anim_state.active) {
-//       anim_i++;
-//       continue;
-//     }
-//     anim_state.curr_t += animation.ticks_per_second * dt;
-//     if (anim_state.play_once && anim_state.curr_t > animation.duration) {
-//       // animation is over
-//       anim_state.active = false;
-//       anim_state.curr_t = animation.duration;
-//     } else {
-//       anim_state.curr_t = std::fmodf(anim_state.curr_t, animation.duration);
-//     }
-//     assert(anim_state.anim_id != UINT32_MAX);
-//     anim_i++;
-//   }
-//
-//   // traverse from the root node? or iterate animations?
-//   anim_i = 0;
-//   // TODO: very bad lol
-//   std::vector<int> dirty_nodes;
-//   for (Animation& animation : model->animations) {
-//     const AnimationState& anim_state = instance.animation_states[anim_i];
-//     if (!anim_state.active) {
-//       anim_i++;
-//       continue;
-//     }
-//     apply_clip(animation, anim_state, 1.f, instance.transform_accumulators, dirty_nodes);
-//
-//     anim_i++;
-//   }
-//
-//   for (auto node_i : dirty_nodes) {
-//     auto& transform_accum = instance.transform_accumulators[node_i];
-//     if (transform_accum.tot_weight > 0) {
-//       mat4 t = glm::translate(mat4{1}, transform_accum.translation / transform_accum.tot_weight);
-//       mat4 r = glm::mat4_cast(glm::normalize(transform_accum.rotation));
-//       mat4 s = glm::scale(mat4{1}, transform_accum.scale / transform_accum.tot_weight);
-//       instance.scene_graph_data.local_transforms[node_i] = t * r * s;
-//       mark_changed(instance.scene_graph_data, node_i);
-//     }
-//   }
-//
-//   instance.transform_accumulators.clear();
-//   instance.transform_accumulators.resize(instance.scene_graph_data.hierarchies.size(),
-//                                          NodeTransformAccumulator{});
-// }
-
 void VkRender2::update_animation(LoadedInstanceData& instance, float dt) {
   ZoneScoped;
   LoadedModelData* model = ResourceManager::get().get_model(instance.model_handle);
   assert(model);
+  if (model->animations.empty()) {
+    return;
+  }
   size_t anim_i = 0;
   instance.transform_accumulators.clear();
   instance.transform_accumulators.resize(instance.scene_graph_data.hierarchies.size(),
@@ -2519,18 +2470,6 @@ void VkRender2::update_animation(LoadedInstanceData& instance, float dt) {
                     blend_tree_nodes[0]);
   }
 
-  // anim_i = 0;
-  // for (Animation& animation : model->animations) {
-  //   const AnimationState& anim_state = instance.animation_states[anim_i];
-  //   if (!anim_state.active) {
-  //     anim_i++;
-  //     continue;
-  //   }
-  //   apply_clip(animation, anim_state, 1.f, instance.transform_accumulators,
-  //              instance.dirty_animation_node_bits);
-  //   anim_i++;
-  // }
-
   for (size_t node_i = 0; node_i < instance.dirty_animation_node_bits.size(); node_i++) {
     if (!instance.dirty_animation_node_bits[node_i]) {
       continue;
@@ -2544,7 +2483,7 @@ void VkRender2::update_animation(LoadedInstanceData& instance, float dt) {
         transform_accum.weights.y > 0.f ? glm::normalize(transform_accum.rotation) : nt.rotation);
     mat4 s = glm::scale(mat4{1}, transform_accum.weights.z > 0.f
                                      ? transform_accum.scale / transform_accum.weights.z
-                                     : nt.scale);
+                                     : vec3{1});
     instance.scene_graph_data.local_transforms[node_i] = t * r * s;
     mark_changed(instance.scene_graph_data, node_i);
   }
@@ -2635,17 +2574,15 @@ bool VkRender2::update_skins(LoadedInstanceData& instance) {
   assert(instance_resources);
   u32 instance_bone_mat_start_i =
       instance_resources->global_bone_mat_slot.get_offset() / sizeof(mat4);
-  for (size_t skin_i = 0; skin_i < skins.size(); skin_i++) {
-    const auto& skin = skins[skin_i];
+  for (const auto& skin : skins) {
     for (size_t joint_i = 0; joint_i < skin.joint_node_indices.size(); joint_i++) {
       int joint_node = skin.joint_node_indices[joint_i];
       const mat4& inv_bind_mat = skin.inverse_bind_matrices[joint_i];
       const mat4& global_transform_mat = instance.scene_graph_data.global_transforms[joint_node];
-      mat4 inv_skel = glm::inverse(instance.scene_graph_data.global_transforms[skin.skeleton_i]);
-      assert(instance_bone_mat_start_i + skin.model_bone_mat_start_i + skin_i <
+      assert(instance_bone_mat_start_i + skin.model_bone_mat_start_i + joint_i <
              global_skin_matrices_.size());
       global_skin_matrices_[instance_bone_mat_start_i + skin.model_bone_mat_start_i + joint_i] =
-          inv_skel * global_transform_mat * inv_bind_mat;
+          global_transform_mat * inv_bind_mat;
     }
   }
   return skins.size() > 0;
@@ -2778,6 +2715,17 @@ void VkRender2::eval_blend_tree(LoadedInstanceData& instance,
       out_accum[i].rotation = rot;
       out_accum[i].scale = scale;
       out_accum[i].weights = vec3{1.f};
+    }
+  }
+}
+
+void VkRender2::draw_joints(LoadedInstanceData& instance) {
+  auto& s = instance.scene_graph_data;
+  for (size_t i = 0; i < s.hierarchies.size(); i++) {
+    if (s.node_flags[i] & Scene2::NodeFlag_IsJointBit) {
+      auto& t = s.global_transforms[i];
+      vec3 c{t[0][3], t[1][3], t[2][3]};
+      draw_sphere(c, 5, vec4{1.f});
     }
   }
 }

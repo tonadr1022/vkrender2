@@ -56,13 +56,12 @@ struct SkinData {
   std::vector<u32> joint_node_indices;
   std::vector<mat4> inverse_bind_matrices;
   u32 model_bone_mat_start_i{};
-  u32 skeleton_i{};
 };
 
 struct NodeTransformAccumulator {
   vec3 translation{0.f};
   quat rotation{glm::identity<glm::quat>()};
-  vec3 scale{1.f};
+  vec3 scale{0.f};
   vec3 weights{};
 };
 

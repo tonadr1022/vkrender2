@@ -68,7 +68,7 @@ struct AnimationState {
   u32 anim_id = {UINT32_MAX};
   float curr_t = {0.f};
   bool play_once{false};
-  bool active{true};
+  bool active{false};
 };
 
 inline constexpr u32 max_bones_per_vertex{4};

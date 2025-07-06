@@ -31,6 +31,7 @@ ktx
 glfw
 glm
 lib_imgui
+lib_imguizmo
 fastgltf
 Tracy::TracyClient
 volk::volk

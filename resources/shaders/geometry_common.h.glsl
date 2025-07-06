@@ -4,6 +4,7 @@
 struct InstanceData {
     uint material_id;
     uint instance_id;
+    uint flags;
 };
 
 struct ObjectData {
@@ -12,7 +13,7 @@ struct ObjectData {
     vec4 extent;
 };
 
-layout(std430, buffer_reference) readonly buffer InstanceDatas {
+layout(scalar, std430, buffer_reference) readonly buffer InstanceDatas {
     InstanceData datas[];
 };
 

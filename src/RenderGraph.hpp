@@ -289,7 +289,7 @@ struct RenderGraph {
   std::vector<ResourceState2> resource_states_;
   AttachmentInfo desc_;
   bool log_ = true;
-  float render_scale_{.5};
+  float render_scale_{1};
 };
 
 }  // namespace gfx

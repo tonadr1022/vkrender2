@@ -36,6 +36,17 @@ add_subdirectory(tracy)
 add_subdirectory(fastgltf)
 add_subdirectory(nativefiledialog-extended)
 
+add_library(lib_imguizmo
+    ImGuizmo/GraphEditor.cpp
+    ImGuizmo/ImCurveEdit.cpp
+    ImGuizmo/ImGradient.cpp
+    ImGuizmo/ImGuizmo.cpp
+    ImGuizmo/ImSequencer.cpp
+)
+target_include_directories(lib_imguizmo PUBLIC
+    ImGuizmo
+    imgui
+)
 add_library(lib_imgui
     imgui/imgui.cpp
     imgui/imgui_demo.cpp

@@ -83,10 +83,12 @@ bool ResourceManager::add_instance(ModelHandle model_handle, InstanceHandle inst
   }
   instance->scene_graph_data = model->scene_graph_data;
   instance->scene_graph_data.local_transforms[0] = transform;
+  gfx::decompose_matrix(transform, instance->scene_graph_data.node_transforms[0].translation,
+                        instance->scene_graph_data.node_transforms[0].rotation,
+                        instance->scene_graph_data.node_transforms[0].scale);
   gfx::mark_changed(instance->scene_graph_data, 0);
   instance->instance_resources_handle = gfx::VkRender2::get().add_instance(model_handle);
   // TODO: maybe not do this here?
-
   auto animation_count = model->animations.size();
   instance->animation_states.resize(animation_count);
   instance->transform_accumulators.resize(instance->scene_graph_data.hierarchies.size());

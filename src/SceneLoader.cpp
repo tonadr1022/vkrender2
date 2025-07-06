@@ -436,6 +436,9 @@ void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_mate
 
   for (size_t i = scene_node_indices.size(); i > 0; i--) {
     auto gltf_node_i = scene_node_indices[i - 1];
+    // to_add_node_stack.emplace_back(
+    //     NodeStackEntry{.gltf_node_i = static_cast<int>(gltf_node_i), .parent_i = -1, .level =
+    //     0});
     to_add_node_stack.emplace_back(NodeStackEntry{
         .gltf_node_i = static_cast<int>(gltf_node_i), .parent_i = root_node, .level = 1});
   }
@@ -477,18 +480,6 @@ void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_mate
                                    : default_material.get_pass_flags();
         primitive_i++;
       }
-
-      // if (gltf_node.skinIndex.has_value()) {
-      //   auto skin_i = gltf_node.skinIndex.value();
-      //   auto& skin = gltf.skins[skin_i];
-      //   for (auto joint_idx : skin.joints) {
-      //   }
-      //   if (skin.inverseBindMatrices.has_value()) {
-      //   }
-      //   if (skin.skeleton.has_value()) {
-      //
-      //   }
-      // }
     }
 
     for (const auto& gltf_child_i : gltf_node.children) {
@@ -590,7 +581,6 @@ void traverse(Scene2& scene, fastgltf::Asset& gltf, const Material& default_mate
   for (auto& gltf_skin : gltf.skins) {
     auto& new_skin = out_skins.emplace_back(SkinData{
         .name = std::string{gltf_skin.name},
-        .skeleton_i = static_cast<u32>(gltf_skin.skeleton.value_or(0)),
     });
 
     if (gltf_skin.inverseBindMatrices.has_value()) {

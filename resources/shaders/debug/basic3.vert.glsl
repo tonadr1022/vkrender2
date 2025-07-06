@@ -21,6 +21,7 @@ layout(location = 0) out vec3 out_normal;
 struct InstanceData {
     uint material_id;
     uint instance_id;
+    uint flags;
 };
 
 struct ObjectData {
@@ -33,7 +34,7 @@ VK2_DECLARE_STORAGE_BUFFERS_RO(ObjectDataBuffer){
 InstanceData datas[];
 } instance_buffers[];
 
-VK2_DECLARE_STORAGE_BUFFERS_RO(InstanceDataBuffers){
+VK2_DECLARE_STORAGE_BUFFERS_RO_SCALAR(InstanceDataBuffers){
 ObjectData datas[];
 } object_data_buffers[];
 

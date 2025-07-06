@@ -37,6 +37,8 @@ void main() {
     float metallic = gbuffer_a.b;
     float roughness = gbuffer_a.a;
     vec3 albedo = gbuffer_b.rgb;
+    // STORE(vec4(albedo, 1.));
+    // return;
     vec3 emissive = gbuffer_c.rgb;
     float ao = gbuffer_c.a;
     vec3 V = normalize(scene_data.view_pos - world_pos);

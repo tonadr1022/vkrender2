@@ -11,7 +11,12 @@
 #include "Scene.hpp"
 #include "VkRender2.hpp"
 #include "core/Logger.hpp"
+
+// clang-format off
 #include "imgui.h"
+#include "ImGuizmo.h"
+// clang-format on
+
 #include "util/CVar.hpp"
 #include "vk2/Device.hpp"
 namespace {
@@ -142,8 +147,6 @@ void App::run() {
   //     ResourceManager::get().load_model("/Users/tony/Downloads/bistro/Exterior/exterior.glb"));
   // instances_.emplace_back(ResourceManager::get().load_model(
   //     "/Users/tony/Downloads/secret_of_the_mimic_-_mimic/scene.gltf"));
-  // instances_.emplace_back(ResourceManager::get().load_model(
-  //     "/Users/tony/Downloads/killer_clown_balatro_style/scene.gltf"));
 
   glm::vec3 v{};
   int w = 1;
@@ -172,8 +175,15 @@ void App::run() {
   //   instances_.emplace_back(
   //       ResourceManager::get().load_model("/Users/tony/models/Models/Cube/glTF/Cube.gltf"));
   // }
+  // instances_.emplace_back(
+  //     ResourceManager::get().load_model("/Users/tony/models/Models/Fox/glTF/Fox.gltf"));
+  // instances_.emplace_back(ResourceManager::get().load_model("/Users/tony/theboss.glb"));
+  instances_.emplace_back(ResourceManager::get().load_model("/Users/tony/theboss.glb"));
   instances_.emplace_back(
-      ResourceManager::get().load_model("/Users/tony/models/Models/Fox/glTF/Fox.gltf"));
+      ResourceManager::get().load_model("/Users/tony/models/Models/Cube/glTF/Cube.gltf"));
+  // instances_.emplace_back(ResourceManager::get().load_model(
+  //     "/Users/tony/Downloads/killer_clown_balatro_style/scene.gltf"));
+  // instances_.emplace_back(ResourceManager::get().load_model("/Users/tony/theboss/theboss.gltf"));
   // instances_.emplace_back(ResourceManager::get().load_model(
   //     "/Users/tony/models/Models/AlphaBlendModeTest/glTF/AlphaBlendModeTest.gltf"));
 
@@ -220,6 +230,9 @@ void App::run() {
     last_time = curr_t;
 
     renderer.new_frame();
+    ImGuizmo::SetOrthographic(false);
+    ImGuizmo::BeginFrame();
+
     update(dt);
     on_imgui();
 
@@ -234,10 +247,10 @@ void App::run() {
         validate_hierarchy(instance->scene_graph_data);
         bool dirty_transforms =
             recalc_global_transforms(instance->scene_graph_data, &changed_nodes);
-        renderer.update_skins(*instance);
         if (dirty_transforms) {
           VkRender2::get().update_transforms(*instance, changed_nodes);
         }
+        renderer.update_skins(*instance);
       }
     }
     renderer.draw(info_);
@@ -273,6 +286,7 @@ void App::update(float dt) {
 
   auto* instance = ResourceManager::get().get_instance(instances_[0]);
   if (instance) {
+    VkRender2::get().draw_joints(*instance);
     auto& nodes = instance->scene_graph_data.animation_data.blend_tree_nodes;
     if (nodes.empty()) {
       nodes.emplace_back(BlendTreeNode{
@@ -280,8 +294,8 @@ void App::update(float dt) {
           .weight = .5f,
           .type = BlendTreeNode::Type::Lerp,
       });
-      nodes.emplace_back(BlendTreeNode{.animation_i = 0, .type = BlendTreeNode::Type::Clip});
-      nodes.emplace_back(BlendTreeNode{.animation_i = 1, .type = BlendTreeNode::Type::Clip});
+      nodes.emplace_back(BlendTreeNode{.animation_i = 3, .type = BlendTreeNode::Type::Clip});
+      nodes.emplace_back(BlendTreeNode{.animation_i = 2, .type = BlendTreeNode::Type::Clip});
     }
   }
 
@@ -429,16 +443,59 @@ void App::on_imgui() {
       offset++;
     }
 
-    static int selected_node = -1;
-    if (selected_node >= 0) {
+    if (selected_obj_ >= 0) {
       if (ImGui::Begin("Node")) {
-        auto* instance = ResourceManager::get().get_instance(instances_[selected_node]);
+        auto* instance = ResourceManager::get().get_instance(instances_[selected_obj_]);
         assert(instance && instance->is_valid());
         auto* model = ResourceManager::get().get_model(instance->model_handle);
-        ImGui::Text("node");
+        static ImGuizmo::MODE mode{ImGuizmo::MODE::WORLD};
+        static ImGuizmo::OPERATION operation{ImGuizmo::OPERATION::TRANSLATE};
+        if (ImGui::TreeNodeEx("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+          auto& scene = instance->scene_graph_data;
+          int node = selected_node_;
+          int parent = scene.hierarchies[node].parent;
+
+          if (ImGui::DragFloat3("translation", &scene.node_transforms[node].translation.x)) {
+            scene.node_transforms[node].to_mat4(scene.local_transforms[node]);
+            mark_changed(scene, node);
+          }
+          int x, y;
+          glfwGetWindowSize(window, &x, &y);
+          ImGuizmo::SetRect(0, 0, x, y);
+          auto aspect = aspect_ratio();
+          mat4 proj = glm::perspective(glm::radians(info_.fov_degrees), aspect, .1f, 10000.f);
+          mat4 src_transform = scene.local_transforms[node];
+          mat4 delta_mat{1};
+          ImGuizmo::PushID(node);
+          ImGuizmo::OPERATION operations[] = {ImGuizmo::OPERATION::TRANSLATE,
+                                              ImGuizmo::OPERATION::ROTATE,
+                                              ImGuizmo::OPERATION::SCALEU};
+          for (auto& operation : operations) {
+            if (ImGuizmo::Manipulate(&info_.view[0][0], &proj[0][0], operation,
+                                     ImGuizmo::MODE::LOCAL, &src_transform[0][0],
+                                     &delta_mat[0][0])) {
+              mat4 new_t = delta_mat * scene.local_transforms[node];
+              scene.local_transforms[node] = new_t;
+              // if (parent < 0) {
+              //   // scene.local_transforms[node] = new_global;
+              // } else {
+              //   // mat4 parent_global = scene.global_transforms[parent];
+              //   // scene.local_transforms[node] = glm::inverse(parent_global) * new_global;
+              // }
+              decompose_matrix(
+                  scene.local_transforms[node], scene.node_transforms[node].translation,
+                  scene.node_transforms[node].rotation, scene.node_transforms[node].scale);
+              mark_changed(scene, node);
+            }
+          }
+          ImGuizmo::PopID();
+          ImGui::TreePop();
+        }
         if (ImGui::TreeNodeEx("Blend Tree", ImGuiTreeNodeFlags_DefaultOpen)) {
           auto& nodes = instance->scene_graph_data.animation_data.blend_tree_nodes;
-          ImGui::SliderFloat("weight", &nodes[0].weight, 0.0f, 1.0f);
+          if (nodes.size()) {
+            ImGui::SliderFloat("weight", &nodes[0].weight, 0.0f, 1.0f);
+          }
           ImGui::TreePop();
         }
       }
@@ -461,13 +518,15 @@ void App::on_imgui() {
             to_delete.emplace_back(i);
           }
         }
+
         ImGui::SameLine();
         if (ImGui::Button("Edit")) {
-          selected_node = i;
+          selected_node_ = 0;
+          selected_obj_ = i;
         }
         if (ImGui::TreeNodeEx("%s", ImGuiTreeNodeFlags_DefaultOpen, "%s",
                               model->path.string().c_str())) {
-          scene_node_imgui(instance->scene_graph_data, 0);
+          scene_node_imgui(instance->scene_graph_data, 0, i);
           ImGui::TreePop();
         }
 
@@ -508,7 +567,7 @@ void App::on_file_drop(int count, const char** paths) {
   }
 }
 
-void App::scene_node_imgui(gfx::Scene2& scene, int node) {
+void App::scene_node_imgui(gfx::Scene2& scene, int node, u32 obj_id) {
   assert(node != -1);
   auto it = scene.node_to_node_name_idx.find(node);
   ImGui::PushID(node);
@@ -517,9 +576,9 @@ void App::scene_node_imgui(gfx::Scene2& scene, int node) {
                           ? "Node"
                           : scene.node_names[it->second].c_str())) {
     ImGui::Text("node %i", node);
-    if (ImGui::DragFloat3("translation", &scene.node_transforms[node].translation.x)) {
-      scene.node_transforms[node].to_mat4(scene.local_transforms[node]);
-      mark_changed(scene, node);
+    if (ImGui::Button("Edit")) {
+      selected_node_ = node;
+      selected_obj_ = obj_id;
     }
     auto decomp = [&](const mat4& transform) {
       vec3 pos, scale;
@@ -531,6 +590,7 @@ void App::scene_node_imgui(gfx::Scene2& scene, int node) {
     };
     auto& local_transform = scene.local_transforms[node];
     ImGui::PushID(&local_transform);
+
     decomp(local_transform);
     ImGui::PopID();
     ImGui::PushID(&scene.global_transforms[node]);
@@ -539,7 +599,7 @@ void App::scene_node_imgui(gfx::Scene2& scene, int node) {
 
     for (int c = scene.hierarchies[node].first_child; c != -1;
          c = scene.hierarchies[c].next_sibling) {
-      scene_node_imgui(scene, c);
+      scene_node_imgui(scene, c, obj_id);
     }
     ImGui::TreePop();
   }

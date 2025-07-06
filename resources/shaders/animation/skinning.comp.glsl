@@ -81,8 +81,6 @@ void main() {
         tangent.xyz += normal_matrix * in_tangent.xyz * in_vtx.weights[i];
     }
 
-    // TODO: just write the whole vertex by fetching immutable uv buffer instead
-    // of copying uvs on instance load?
     pc.out_vertices_buf.vertices[output_vertex_i].pos = pos.xyz;
     pc.out_vertices_buf.vertices[output_vertex_i].normal.xyz = normal.xyz;
     pc.out_vertices_buf.vertices[output_vertex_i].tangent.xyz = tangent.xyz;

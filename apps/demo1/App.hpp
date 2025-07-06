@@ -48,5 +48,8 @@ struct App {
   void update(float dt);
   [[nodiscard]] float aspect_ratio() const;
   [[nodiscard]] uvec2 window_dims() const;
-  void scene_node_imgui(gfx::Scene2& scene, int node);
+  void scene_node_imgui(gfx::Scene2& scene, int node, u32 obj_id);
+
+  int selected_node_{-1};
+  int selected_obj_{-1};
 };

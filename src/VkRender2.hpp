@@ -67,6 +67,7 @@ std::string to_string(MeshPass p);
 struct GPUInstanceData {
   u32 material_id;
   u32 instance_id;
+  u32 flags;
 };
 struct StaticModelInstanceResources {
   std::vector<ObjectData> object_datas;
@@ -167,6 +168,7 @@ class VkRender2 final {
                   std::vector<bool>& dirty_node_bits);
   void eval_blend_tree(LoadedInstanceData& instance, const std::vector<gfx::Animation>& animations,
                        std::vector<NodeTransformAccumulator>& out_accum, const BlendTreeNode& node);
+  void draw_joints(LoadedInstanceData& instance);
   bool update_skins(LoadedInstanceData& instance);
   void remove_instance(StaticModelInstanceResourcesHandle handle);
   void mark_dirty(InstanceHandle handle);
