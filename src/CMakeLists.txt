@@ -1,4 +1,6 @@
 add_library(renderer
+
+AnimationManager.cpp
 StateTracker.cpp
 Camera.cpp
 VkRender2.cpp

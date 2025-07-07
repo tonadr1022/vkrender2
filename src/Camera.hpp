@@ -2,6 +2,9 @@
 
 #include <glm/gtc/quaternion.hpp>
 
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/io.hpp>
+
 #include "Common.hpp"
 #include "Input.hpp"
 
@@ -21,6 +24,7 @@ struct Camera {
     right = glm::normalize(glm::cross(front, {0, 1, 0}));
     up = glm::normalize(glm::cross(right, front));
   }
+  [[nodiscard]] quat get_rotation_quat() const { return glm::quatLookAt(front, up); }
 
   void update_vectors() {
     glm::vec3 dir;
@@ -34,51 +38,86 @@ struct Camera {
 };
 
 struct CameraController {
-  void on_imgui();
-  explicit CameraController(Camera& cam, float sensitivity = .1)
-      : cam(cam), sensivity(sensitivity) {}
-
-  void process_mouse(vec2 offset) {
-    offset *= sensivity;
-    cam.yaw += offset.x;
-    cam.pitch += offset.y;
-    cam.pitch = glm::clamp(cam.pitch, -89.f, 89.f);
-    cam.update_vectors();
+  void on_imgui() const;
+  CameraController() = default;
+  explicit CameraController(Camera* cam, float sensitivity = .1)
+      : cam(cam), mouse_sensivity(sensitivity) {
+    cam->update_vectors();
   }
 
-  void update_pos(GLFWwindow*, float dt) {
+  bool process_mouse(vec2 offset) const {
+    assert(cam);
+    offset *= mouse_sensivity;
+    cam->yaw += offset.x;
+    cam->pitch += offset.y;
+    cam->pitch = glm::clamp(cam->pitch, -89.f, 89.f);
+    cam->update_vectors();
+    return !glm::all(glm::equal(offset, vec2{0}, glm::epsilon<float>()));
+  }
+
+  bool update_pos(float dt) {
+    assert(cam);
+
+    cam->update_vectors();
     auto get_key = [&](int key) { return Input::key_down(key); };
-    vec3 offset{};
+    vec3 acceleration{};
+    bool accelerating{};
+
     if (get_key(GLFW_KEY_W) || get_key(GLFW_KEY_I)) {
-      offset += cam.front;
+      acceleration += cam->front;
+      accelerating = true;
     }
     if (get_key(GLFW_KEY_S) || get_key(GLFW_KEY_K)) {
-      offset -= cam.front;
+      acceleration -= cam->front;
+      accelerating = true;
     }
     if (get_key(GLFW_KEY_A) || get_key(GLFW_KEY_J)) {
-      offset -= cam.right;
+      acceleration -= cam->right;
+      accelerating = true;
     }
     if (get_key(GLFW_KEY_D) || get_key(GLFW_KEY_L)) {
-      offset += cam.right;
+      acceleration += cam->right;
+      accelerating = true;
     }
-    float vert{};
+
     if (get_key(GLFW_KEY_Y) || get_key(GLFW_KEY_R)) {
-      vert += 1;
+      acceleration += vec3(0, 1, 0);
+      accelerating = true;
     }
     if (get_key(GLFW_KEY_H) || get_key(GLFW_KEY_F)) {
-      vert -= 1;
+      acceleration += vec3(0, -1, 0);
+      accelerating = true;
     }
+
     if (get_key(GLFW_KEY_B)) {
-      move_speed += 0.1;
+      acceleration_strength *= 1.1f;
+      max_velocity *= 1.1f;
     }
     if (get_key(GLFW_KEY_V)) {
-      move_speed -= 0.1;
+      acceleration_strength /= 1.1f;
+      max_velocity /= 1.1f;
     }
-    cam.pos += offset * move_speed * dt;
-    cam.pos.y += vert * move_speed * dt;
+
+    if (accelerating) {
+      acceleration = glm::normalize(acceleration) * acceleration_strength;
+    }
+
+    velocity += acceleration * dt;
+    velocity *= damping;
+
+    velocity = glm::clamp(velocity, -max_velocity, max_velocity);
+
+    cam->pos += velocity * dt;
+
+    return accelerating || !glm::all(glm::equal(velocity, vec3{0}, glm::epsilon<float>()));
   }
 
-  Camera& cam;
-  float sensivity{.1};
+  Camera* cam{};
+  vec3 velocity{};
+  vec3 max_velocity{10.f};
+  float acceleration_strength{100.0f};
+  float damping{0.9f};
+
+  float mouse_sensivity{.1};
   float move_speed{10.};
 };

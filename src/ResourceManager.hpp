@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Animation.hpp"
 #include "SceneLoader.hpp"
 #include "SceneResources.hpp"
 #include "Types.hpp"
@@ -14,13 +15,12 @@ struct LoadedModelData {
 struct LoadedInstanceData {
   ModelHandle model_handle;
   gfx::Scene2 scene_graph_data;
-  std::vector<gfx::AnimationState> animation_states;
   std::vector<gfx::NodeTransformAccumulator> transform_accumulators;  // animated only
   std::vector<bool> dirty_animation_node_bits;
-  // std::unordered_map<int, gfx::NodeTransform> node_transforms;
+  AnimationHandle animation_id;
   // TODO: rename to GPU resources handle
   gfx::StaticModelInstanceResourcesHandle instance_resources_handle;
-  [[nodiscard]] bool is_valid() const { return model_handle.is_valid(); }
+  [[nodiscard]] bool is_model_loaded() const { return model_handle.is_valid(); }
 };
 
 class ResourceManager {
@@ -35,7 +35,7 @@ class ResourceManager {
   LoadedModelData* get_model(ModelHandle handle) { return loaded_model_pool_.get(handle); }
   LoadedInstanceData* get_instance(InstanceHandle handle) {
     auto* instance = instance_pool_.get(handle);
-    return instance && instance->is_valid() ? instance : nullptr;
+    return instance && instance->is_model_loaded() ? instance : nullptr;
   }
 
  private:

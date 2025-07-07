@@ -1,11 +1,15 @@
 #include "ResourceManager.hpp"
 
+#include <glm/gtc/epsilon.hpp>
+#include <glm/gtc/matrix_access.hpp>
 #include <tracy/Tracy.hpp>
 
+#include "AnimationManager.hpp"
 #include "Scene.hpp"
 #include "ThreadPool.hpp"
 #include "VkRender2.hpp"
 #include "core/Logger.hpp"
+#include "util/MathUtil.hpp"
 
 InstanceHandle ResourceManager::load_model(const std::filesystem::path& path,
                                            const mat4& transform) {
@@ -82,20 +86,24 @@ bool ResourceManager::add_instance(ModelHandle model_handle, InstanceHandle inst
     return false;
   }
   instance->scene_graph_data = model->scene_graph_data;
-  instance->scene_graph_data.local_transforms[0] = transform;
-  gfx::decompose_matrix(transform, instance->scene_graph_data.node_transforms[0].translation,
-                        instance->scene_graph_data.node_transforms[0].rotation,
-                        instance->scene_graph_data.node_transforms[0].scale);
-  gfx::mark_changed(instance->scene_graph_data, 0);
-  instance->instance_resources_handle = gfx::VkRender2::get().add_instance(model_handle);
-  // TODO: maybe not do this here?
-  auto animation_count = model->animations.size();
-  instance->animation_states.resize(animation_count);
-  instance->transform_accumulators.resize(instance->scene_graph_data.hierarchies.size());
-  instance->dirty_animation_node_bits.resize(instance->scene_graph_data.hierarchies.size());
-  for (size_t i = 0; i < animation_count; i++) {
-    instance->animation_states[i].anim_id = i;
+
+  if (!util::math::is_identity(transform)) {
+    // set initial transform
+    instance->scene_graph_data.local_transforms[0] =
+        transform * instance->scene_graph_data.local_transforms[0];
+    gfx::decompose_matrix(instance->scene_graph_data.local_transforms[0],
+                          instance->scene_graph_data.node_transforms[0].translation,
+                          instance->scene_graph_data.node_transforms[0].rotation,
+                          instance->scene_graph_data.node_transforms[0].scale);
+    gfx::mark_changed(instance->scene_graph_data, 0);
   }
+  instance->instance_resources_handle = gfx::VkRender2::get().add_instance(model_handle);
+  if (!model->animations.empty()) {
+    instance->animation_id = AnimationManager::get().add_animation(*instance, *model);
+  }
+
+  // TODO: move to animation
+  instance->transform_accumulators.resize(instance->scene_graph_data.hierarchies.size());
   instance->model_handle = model_handle;
   return true;
 };

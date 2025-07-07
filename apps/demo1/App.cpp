@@ -3,8 +3,10 @@
 #include <nfd.h>
 
 #include <fstream>
+#include <iostream>
 #include <tracy/Tracy.hpp>
 
+#include "AnimationManager.hpp"
 #include "Camera.hpp"
 #include "GLFW/glfw3.h"
 #include "ResourceManager.hpp"
@@ -13,6 +15,7 @@
 #include "core/Logger.hpp"
 
 // clang-format off
+#include "glm/gtc/quaternion.hpp"
 #include "imgui.h"
 #include "ImGuizmo.h"
 // clang-format on
@@ -36,7 +39,7 @@ std::optional<std::filesystem::path> get_resource_dir() {
 }  // namespace
 
 using namespace gfx;
-App::App(const InitInfo& info) : cam(cam_data, .1) {
+App::App(const InitInfo& info) : cam(&cam_data, .1) {
   NFD_Init();
 
   auto resource_dir_ret = get_resource_dir();
@@ -92,6 +95,7 @@ App::App(const InitInfo& info) : cam(cam_data, .1) {
     return;
   }
   ResourceManager::init();
+  AnimationManager::init();
   local_models_dir = resource_dir / "local_models/";
   running_ = true;
 }
@@ -178,9 +182,9 @@ void App::run() {
   // instances_.emplace_back(
   //     ResourceManager::get().load_model("/Users/tony/models/Models/Fox/glTF/Fox.gltf"));
   // instances_.emplace_back(ResourceManager::get().load_model("/Users/tony/theboss.glb"));
-  instances_.emplace_back(ResourceManager::get().load_model("/Users/tony/theboss.glb"));
-  instances_.emplace_back(
-      ResourceManager::get().load_model("/Users/tony/models/Models/Cube/glTF/Cube.gltf"));
+  character_instance_ = add_instance("/Users/tony/theboss.glb");
+  // instances_.emplace_back(
+  //     ResourceManager::get().load_model("/Users/tony/models/Models/Cube/glTF/Cube.gltf"));
   // instances_.emplace_back(ResourceManager::get().load_model(
   //     "/Users/tony/Downloads/killer_clown_balatro_style/scene.gltf"));
   // instances_.emplace_back(ResourceManager::get().load_model("/Users/tony/theboss/theboss.gltf"));
@@ -198,8 +202,7 @@ void App::run() {
   // instances_.emplace_back(ResourceManager::get().load_model(
   //     "/Users/tony/models/Models/AlphaBlendModeTest/glTF/AlphaBlendModeTest.gltf"));
 
-  // instances_.emplace_back(
-  //     ResourceManager::get().load_model(local_models_dir / "Bistro_Godot_opt.glb"));
+  add_instance(local_models_dir / "Bistro_Godot_opt.glb");
 
   // std::filesystem::path env_tex = local_models_dir / "quarry_04_puresky_4k.hdr";
   // std::filesystem::path env_tex = local_models_dir / "immenstadter_horn_2k.hdr";
@@ -218,6 +221,7 @@ void App::run() {
   //       ResourceManager::get().load_model("/Users/tony/models/Models/Fox/glTF/Fox.gltf"));
   // }
 
+  character_cam_.set_rotation(quat{1, 0, 0, 0});
   VkRender2::get().set_env_map(env_tex);
   while (running_ && !glfwWindowShouldClose(window)) {
     {
@@ -241,7 +245,7 @@ void App::run() {
       static std::vector<i32> changed_nodes;
       for (auto& instance_handle : instances_) {
         auto* instance = ResourceManager::get().get_instance(instance_handle);
-        if (!instance || !instance->is_valid()) continue;
+        if (!instance || !instance->is_model_loaded()) continue;
         VkRender2::get().update_animation(*instance, dt);
         changed_nodes.clear();
         validate_hierarchy(instance->scene_graph_data);
@@ -266,6 +270,7 @@ void App::shutdown() const {
   // NOTE: destroying window first doesn't break the renderer for now. it's nice
   // since the window of the app closes faster
   glfwDestroyWindow(window);
+  AnimationManager::shutdown();
   ResourceManager::shutdown();
   VkRender2::shutdown();
   Device::destroy();
@@ -275,7 +280,12 @@ void App::shutdown() const {
 
 void App::update(float dt) {
   ZoneScoped;
-  cam.update_pos(window, dt);
+  if (Input::key_down(GLFW_KEY_LEFT_CONTROL)) {
+    cam.update_pos(dt);
+  } else {
+    update_character(dt);
+  }
+
   info_.view = cam_data.get_view();
   info_.view_pos = cam_data.pos;
   info_.light_dir = glm::normalize(light_dir_);
@@ -284,33 +294,25 @@ void App::update(float dt) {
   static float offset{10.f};
   ImGui::DragFloat("offset", &offset);
 
-  auto* instance = ResourceManager::get().get_instance(instances_[0]);
+  auto* instance = get_instance(character_instance_);
   if (instance) {
-    VkRender2::get().draw_joints(*instance);
-    auto& nodes = instance->scene_graph_data.animation_data.blend_tree_nodes;
-    if (nodes.empty()) {
-      nodes.emplace_back(BlendTreeNode{
-          .children = {1, 2},
-          .weight = .5f,
-          .type = BlendTreeNode::Type::Lerp,
-      });
-      nodes.emplace_back(BlendTreeNode{.animation_i = 3, .type = BlendTreeNode::Type::Clip});
-      nodes.emplace_back(BlendTreeNode{.animation_i = 2, .type = BlendTreeNode::Type::Clip});
+    // TODO: fix
+    if (!character_fsm_.animation_id.is_valid()) {
+      character_cam_.pos = instance->scene_graph_data.node_transforms[0].translation;
+      character_fsm_.animation_id = instance->animation_id;
+      VkRender2::get().draw_joints(*instance);
+      auto* animation = AnimationManager::get().get_animation(instance->animation_id);
+      auto* state = animation->get_state("Jump");
+      state->play_once = true;
+      u32 idle = animation->blend_tree.add_clip_node("Idle", "Idle");
+      u32 walk = animation->blend_tree.add_clip_node("Walk", "Walk");
+      u32 jump = animation->blend_tree.add_clip_node("Jump", "Jump");
+      animation->blend_tree.add_lerp_node("IdleWalkBlend", "Idle", "Walk");
+      // animation->blend_tree.set_root_node("IdleWalkBlend");
+      animation->blend_tree.add_lerp_node("BaseJumpBlend", "IdleWalkBlend", "Jump");
+      animation->blend_tree.set_root_node("BaseJumpBlend");
     }
   }
-
-  // for (auto& instance_h : instances_) {
-  //   auto* instance = ResourceManager::get().get_instance(instance_h);
-  //   if (instance) {
-  //     instance->scene_graph_data.local_transforms[0] =
-  //         glm::translate(mat4{1}, vec3{i++ * offset, 0, 0});
-  //     mark_changed(instance->scene_graph_data, 0);
-  //   }
-  // }
-  // static glm::quat rot = glm::quat(1, 0, 0, 0);
-  // glm::quat delta_rot = glm::angleAxis(dt, glm::vec3(0., 1., 0.));
-  // rot = glm::normalize(delta_rot * rot);  // Accumulate rotation
-  // cam_data.set_rotation(rot);
 }
 
 void App::on_key_event([[maybe_unused]] int key, [[maybe_unused]] int scancode,
@@ -336,7 +338,7 @@ bool first_mouse{true};
 vec2 last_pos{};
 }  // namespace
 
-void App::on_cursor_event(vec2 pos) {
+void App::on_cursor_event(vec2 pos) const {
   if (first_mouse) {
     first_mouse = false;
     last_pos = pos;
@@ -345,7 +347,10 @@ void App::on_cursor_event(vec2 pos) {
   vec2 offset = {pos.x - last_pos.x, last_pos.y - pos.y};
   last_pos = pos;
   if (hide_mouse) {
-    cam.process_mouse(offset);
+    if (Input::key_down(GLFW_KEY_LEFT_CONTROL)) {
+    } else {
+      cam.process_mouse(offset);
+    }
   }
 }
 
@@ -362,6 +367,10 @@ uvec2 App::window_dims() const {
 
 void App::on_imgui() {
   ZoneScoped;
+  if (ImGui::Begin("Player")) {
+    character_cam_controller_.on_imgui();
+  }
+  ImGui::End();
   if (ImGui::Begin("app")) {
     static char filename[100];
     static std::string err_filename;
@@ -446,7 +455,7 @@ void App::on_imgui() {
     if (selected_obj_ >= 0) {
       if (ImGui::Begin("Node")) {
         auto* instance = ResourceManager::get().get_instance(instances_[selected_obj_]);
-        assert(instance && instance->is_valid());
+        assert(instance && instance->is_model_loaded());
         auto* model = ResourceManager::get().get_model(instance->model_handle);
         static ImGuizmo::MODE mode{ImGuizmo::MODE::WORLD};
         static ImGuizmo::OPERATION operation{ImGuizmo::OPERATION::TRANSLATE};
@@ -491,13 +500,13 @@ void App::on_imgui() {
           ImGuizmo::PopID();
           ImGui::TreePop();
         }
-        if (ImGui::TreeNodeEx("Blend Tree", ImGuiTreeNodeFlags_DefaultOpen)) {
-          auto& nodes = instance->scene_graph_data.animation_data.blend_tree_nodes;
-          if (nodes.size()) {
-            ImGui::SliderFloat("weight", &nodes[0].weight, 0.0f, 1.0f);
-          }
-          ImGui::TreePop();
-        }
+        // if (ImGui::TreeNodeEx("Blend Tree", ImGuiTreeNodeFlags_DefaultOpen)) {
+        //   auto& nodes = instance->scene_graph_data.animation_data.blend_tree_nodes;
+        //   if (nodes.size()) {
+        //     ImGui::SliderFloat("weight", &nodes[0].weight, 0.0f, 1.0f);
+        //   }
+        //   ImGui::TreePop();
+        // }
       }
       ImGui::End();
     }
@@ -507,7 +516,7 @@ void App::on_imgui() {
       size_t i = 0;
       for (auto& instance_handle : instances_) {
         auto* instance = ResourceManager::get().get_instance(instance_handle);
-        if (!instance || !instance->is_valid()) {
+        if (!instance || !instance->is_model_loaded()) {
           continue;
         }
         auto* model = ResourceManager::get().get_model(instance->model_handle);
@@ -530,12 +539,22 @@ void App::on_imgui() {
           ImGui::TreePop();
         }
 
-        for (size_t anim_i = 0; anim_i < instance->animation_states.size(); anim_i++) {
-          ImGui::PushID(anim_i);
-          auto& anim = model->animations[anim_i];
-          auto& state = instance->animation_states[anim_i];
-          ImGui::Checkbox(anim.name.c_str(), &state.active);
-          ImGui::PopID();
+        auto* animation = AnimationManager::get().get_animation(instance->animation_id);
+        if (animation) {
+          for (size_t anim_i = 0; anim_i < animation->states.size(); anim_i++) {
+            ImGui::PushID(anim_i);
+            auto& anim = model->animations[anim_i];
+            auto& state = animation->states[anim_i];
+            ImGui::Checkbox(anim.name.c_str(), &state.active);
+            ImGui::PopID();
+          }
+          for (auto& [name, node_i] : animation->blend_tree.name_to_blend_tree_node) {
+            const auto& node = animation->blend_tree.blend_tree_nodes[node_i];
+            ImGui::Text("Node %s weight: %f", name.c_str(),
+                        node.weight_idx < animation->blend_tree.blend_tree_nodes.size()
+                            ? animation->blend_tree.control_vars[node.weight_idx]
+                            : 0.f);
+          }
         }
 
         ImGui::PopID();
@@ -604,4 +623,74 @@ void App::scene_node_imgui(gfx::Scene2& scene, int node, u32 obj_id) {
     ImGui::TreePop();
   }
   ImGui::PopID();
+}
+
+u32 App::add_instance(const std::filesystem::path& model, const mat4& transform) {
+  u32 ret = instances_.size();
+  instances_.emplace_back(ResourceManager::get().load_model(model, transform));
+  return ret;
+}
+
+LoadedInstanceData* App::get_instance(u32 instance) {
+  return ResourceManager::get().get_instance(instances_[instance]);
+}
+void App::update_character(float dt) {
+  auto* instance = get_instance(character_instance_);
+  if (!instance) return;
+  auto* animation = AnimationManager::get().get_animation(instance->animation_id);
+  if (character_cam_controller_.update_pos(dt)) {
+    auto& nt = instance->scene_graph_data.node_transforms[0];
+    nt.translation = character_cam_.pos;
+    if (glm::length(character_cam_controller_.velocity) < min_speed_thresh) {
+      character_cam_.front = last_look_dir_;
+    } else {
+      character_cam_.front = glm::normalize(character_cam_controller_.velocity);
+      last_look_dir_ = character_cam_.front;
+    }
+    float speed = glm::length(character_cam_controller_.velocity);
+    if (Input::key_down(GLFW_KEY_SPACE)) {
+      character_fsm_.jump_time_remaining = 1.f;
+      auto* state = animation->get_state("Jump");
+      state->active = true;
+      state->curr_t = 0.f;
+      state->play_once = true;
+    }
+    character_fsm_.update(dt, speed);
+    auto desired_rot = glm::quatLookAt(last_look_dir_, character_cam_.up);
+    nt.rotation = glm::slerp(nt.rotation, desired_rot, .1f);
+    instance->scene_graph_data.node_transforms[0].to_mat4(
+        instance->scene_graph_data.local_transforms[0]);
+    mark_changed(instance->scene_graph_data, 0);
+  }
+}
+
+// void CharacterFSM::transition_to(State state) {
+//   prev_state = curr_state;
+//   curr_state = state;
+//   auto* animation = AnimationManager::get().get_animation(animation_id);
+//   switch (curr_state) {
+//     case State::Idle:
+//       animation->set_target("Idle", .3f);
+//       break;
+//     case State::Walk:
+//       animation->set_target("Walk", .3f);
+//       break;
+//     default:
+//       break;
+//   }
+// }
+
+void CharacterFSM::update([[maybe_unused]] float dt, float speed) {
+  jump_time_remaining = std::max(0.f, jump_time_remaining - dt);
+  State new_state = determine_state(speed);
+  prev_state = curr_state;
+  curr_state = new_state;
+  float target = curr_state == State::Walk ? 1.f : 0.f;
+  blend_weight = glm::mix(blend_weight, target, dt * 16.f);
+  auto* animation = AnimationManager::get().get_animation(animation_id);
+  animation->set_blend_state("IdleWalkBlend", blend_weight);
+  animation->set_blend_state("BaseJumpBlend", jump_time_remaining);
+  LINFO("{} curr", state_to_string(curr_state));
+  LINFO("{} prev", state_to_string(prev_state));
+  LINFO("{} jump", jump_time_remaining);
 }

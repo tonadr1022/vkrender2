@@ -18,6 +18,7 @@
 #include <tracy/TracyVulkan.hpp>
 #include <utility>
 
+#include "AnimationManager.hpp"
 #include "CommandEncoder.hpp"
 #include "GLFW/glfw3.h"
 #include "RenderGraph.hpp"
@@ -2424,14 +2425,6 @@ void VkRender2::update_transforms(LoadedInstanceData& instance, std::vector<i32>
 
 void VkRender2::mark_dirty(InstanceHandle handle) { dirty_instances_.emplace_back(handle); }
 
-namespace {
-
-float get_interpolation_value(float start_anim_t, float end_anim_t, float curr_t) {
-  return (curr_t - start_anim_t) / (end_anim_t - start_anim_t);
-}
-
-}  // namespace
-
 void VkRender2::update_animation(LoadedInstanceData& instance, float dt) {
   ZoneScoped;
   LoadedModelData* model = ResourceManager::get().get_model(instance.model_handle);
@@ -2440,6 +2433,7 @@ void VkRender2::update_animation(LoadedInstanceData& instance, float dt) {
     return;
   }
   size_t anim_i = 0;
+  auto* anim = AnimationManager::get().get_animation(instance.animation_id);
   instance.transform_accumulators.clear();
   instance.transform_accumulators.resize(instance.scene_graph_data.hierarchies.size(),
                                          NodeTransformAccumulator{});
@@ -2447,7 +2441,7 @@ void VkRender2::update_animation(LoadedInstanceData& instance, float dt) {
   instance.dirty_animation_node_bits.resize(instance.scene_graph_data.hierarchies.size(), false);
   for (auto& animation : model->animations) {
     // assert(animation.duration > 0.f);
-    AnimationState& anim_state = instance.animation_states[anim_i];
+    AnimationState& anim_state = anim->states[anim_i];
     if (!anim_state.active) {
       anim_i++;
       continue;
@@ -2464,10 +2458,11 @@ void VkRender2::update_animation(LoadedInstanceData& instance, float dt) {
     anim_i++;
   }
 
-  auto& blend_tree_nodes = instance.scene_graph_data.animation_data.blend_tree_nodes;
+  auto& blend_tree_nodes = anim->blend_tree.blend_tree_nodes;
   if (!blend_tree_nodes.empty()) {
-    eval_blend_tree(instance, model->animations, instance.transform_accumulators,
-                    blend_tree_nodes[0]);
+    AnimationManager::get().evaluate_blend_tree(instance, *anim, model->animations,
+                                                instance.transform_accumulators, 1.f,
+                                                *anim->blend_tree.get_root_node());
   }
 
   for (size_t node_i = 0; node_i < instance.dirty_animation_node_bits.size(); node_i++) {
@@ -2599,124 +2594,6 @@ u64 LinearCopyer::copy(const void* data, u64 size) {
 #endif
   offset_ += size;
   return offset_ - size;
-}
-
-void VkRender2::apply_clip(const Animation& animation, const AnimationState& state, float weight,
-                           std::span<NodeTransformAccumulator> transform_accumulators,
-                           std::vector<bool>& dirty_node_bits) {
-  if (!state.active) {
-    return;
-  }
-  assert(transform_accumulators.size() > 0);
-  for (size_t channel_i = 0; channel_i < animation.channels.nodes.size(); channel_i++) {
-    int channel_node_i = animation.get_channel_node(channel_i);
-    assert(channel_node_i >= 0);
-    u32 channel_sampler_i = animation.get_channel_sampler_i(channel_i);
-    assert(channel_sampler_i < animation.samplers.size());
-    AnimationPath channel_anim_path = animation.get_channel_anim_path(channel_i);
-    const AnimSampler& sampler = animation.samplers[channel_sampler_i];
-    uvec2 time_indices = sampler.get_time_indices(state.curr_t);
-    u32 time_i = time_indices.x, next_time_i = time_indices.y;
-    float interpolation_val = get_interpolation_value(sampler.inputs[time_indices.x],
-                                                      sampler.inputs[time_indices.y], state.curr_t);
-
-    assert(channel_node_i < (int)transform_accumulators.size());
-    auto& nt = transform_accumulators[channel_node_i];
-    dirty_node_bits[channel_node_i] = true;
-    assert(sampler.inputs.size() > 1);
-    if (channel_anim_path == AnimationPath::Translation) {
-      assert(sampler.outputs_raw.size() == sampler.inputs.size() * 3);
-      const vec3* translations = reinterpret_cast<const vec3*>(sampler.outputs_raw.data());
-      auto translation =
-          sampler.inputs.size() == 1
-              ? translations[0]
-              : glm::mix(translations[time_i], translations[next_time_i], interpolation_val);
-      nt.translation += translation * weight;
-      nt.weights.x += weight;
-    } else if (channel_anim_path == AnimationPath::Rotation) {
-      assert(sampler.outputs_raw.size() == sampler.inputs.size() * 4);
-      assert(time_i < sampler.inputs.size());
-      const quat* rotations = reinterpret_cast<const quat*>(sampler.outputs_raw.data());
-      quat rotation;
-      if (sampler.inputs.size() == 1) {
-        rotation = rotations[0];
-      } else {
-        quat q0 = rotations[time_i];
-        quat q1 = rotations[next_time_i];
-        if (glm::dot(q0, q1) < 0.0f) q1 = -q1;  // ensure shortest path
-        rotation = glm::slerp(q0, q1, interpolation_val);
-      }
-
-      if (nt.weights.y == 0.0f) {
-        nt.rotation = rotation;
-      } else {
-        nt.rotation = glm::slerp(nt.rotation, rotation, weight / (nt.weights.y + weight));
-      }
-      nt.weights.y += weight;
-    } else if (channel_anim_path == AnimationPath::Scale) {
-      assert(sampler.outputs_raw.size() == sampler.inputs.size() * 3);
-      const vec3* scales = reinterpret_cast<const vec3*>(sampler.outputs_raw.data());
-      auto scale = sampler.inputs.size() == 1
-                       ? scales[0]
-                       : glm::mix(scales[time_i], scales[next_time_i], interpolation_val);
-      nt.scale += weight * scale;
-      nt.weights.z += weight;
-    }
-  }
-}
-
-void VkRender2::eval_blend_tree(LoadedInstanceData& instance,
-                                const std::vector<gfx::Animation>& animations,
-                                std::vector<NodeTransformAccumulator>& out_accum,
-                                const BlendTreeNode& node) {
-  if (node.type == BlendTreeNode::Type::Clip) {
-    assert(node.animation_i < animations.size());
-    assert(node.children.empty());
-    apply_clip(animations[node.animation_i], instance.animation_states[node.animation_i],
-               node.weight, out_accum, instance.dirty_animation_node_bits);
-    return;
-  }
-  if (node.type == BlendTreeNode::Type::Lerp && node.children.size() == 2) {
-    auto& left = instance.scene_graph_data.animation_data.blend_tree_nodes[node.children[0]];
-    auto& right = instance.scene_graph_data.animation_data.blend_tree_nodes[node.children[1]];
-
-    std::vector<NodeTransformAccumulator> left_accum(instance.transform_accumulators.size());
-    std::vector<NodeTransformAccumulator> right_accum(instance.transform_accumulators.size());
-    eval_blend_tree(instance, animations, left_accum, left);
-    eval_blend_tree(instance, animations, right_accum, right);
-
-    float weight = node.weight;
-    auto get_translation = [](const NodeTransformAccumulator& accum, const NodeTransform& nt) {
-      return accum.weights.x > 0.f ? accum.translation / accum.weights.x : nt.translation;
-    };
-    auto get_rotation = [](const NodeTransformAccumulator& accum, const NodeTransform& nt) {
-      return accum.weights.y > 0.f ? glm::normalize(accum.rotation) : nt.rotation;
-    };
-    auto get_scale = [](const NodeTransformAccumulator& accum, const NodeTransform& nt) {
-      return accum.weights.z > 0.f ? accum.scale / accum.weights.z : nt.scale;
-    };
-    for (size_t i = 0; i < left_accum.size(); i++) {
-      // mix transforms
-      const auto& left_t = left_accum[i];
-      const auto& right_t = right_accum[i];
-      const auto& nt = instance.scene_graph_data.node_transforms[i];
-      vec3 translation =
-          glm::mix(get_translation(left_t, nt), get_translation(right_t, nt), weight);
-      quat rot;
-      quat left_rot = get_rotation(left_t, nt);
-      quat right_rot = get_rotation(right_t, nt);
-      if (glm::dot(left_rot, right_rot) < 0.f) {
-        rot = glm::slerp(left_rot, -right_rot, weight);
-      } else {
-        rot = glm::slerp(left_rot, right_rot, weight);
-      }
-      vec3 scale = glm::mix(get_scale(left_t, nt), get_scale(right_t, nt), weight);
-      out_accum[i].translation = translation;
-      out_accum[i].rotation = rot;
-      out_accum[i].scale = scale;
-      out_accum[i].weights = vec3{1.f};
-    }
-  }
 }
 
 void VkRender2::draw_joints(LoadedInstanceData& instance) {

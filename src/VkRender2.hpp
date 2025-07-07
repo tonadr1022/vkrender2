@@ -29,8 +29,11 @@ struct VkCtx;
 
 struct LoadedInstanceData;
 struct LoadedModelData;
+struct BlendTreeNode;
 
 namespace gfx {
+
+struct AnimationState;
 
 inline constexpr u32 max_frames_in_flight = 2;
 struct ModelGPUResources {
@@ -163,11 +166,6 @@ class VkRender2 final {
   StaticModelInstanceResourcesHandle add_instance(ModelHandle model_handle);
   void update_transforms(LoadedInstanceData& instance, std::vector<i32>& changed_nodes);
   void update_animation(LoadedInstanceData& instance, float dt);
-  void apply_clip(const Animation& animation, const AnimationState& state, float weight,
-                  std::span<NodeTransformAccumulator> transform_accumulators,
-                  std::vector<bool>& dirty_node_bits);
-  void eval_blend_tree(LoadedInstanceData& instance, const std::vector<gfx::Animation>& animations,
-                       std::vector<NodeTransformAccumulator>& out_accum, const BlendTreeNode& node);
   void draw_joints(LoadedInstanceData& instance);
   bool update_skins(LoadedInstanceData& instance);
   void remove_instance(StaticModelInstanceResourcesHandle handle);
