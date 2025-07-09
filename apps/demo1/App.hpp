@@ -18,6 +18,9 @@ struct CharacterFSM {
         return "walk";
       case State::Jump:
         return "jump";
+      default:
+        assert(0);
+        return "";
     }
   }
   State curr_state{State::Idle};

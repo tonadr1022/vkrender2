@@ -182,7 +182,7 @@ void App::run() {
   // instances_.emplace_back(
   //     ResourceManager::get().load_model("/Users/tony/models/Models/Fox/glTF/Fox.gltf"));
   // instances_.emplace_back(ResourceManager::get().load_model("/Users/tony/theboss.glb"));
-  character_instance_ = add_instance("/Users/tony/theboss.glb");
+  character_instance_ = add_instance("/home/tony/theboss.glb");
   // instances_.emplace_back(
   //     ResourceManager::get().load_model("/Users/tony/models/Models/Cube/glTF/Cube.gltf"));
   // instances_.emplace_back(ResourceManager::get().load_model(
@@ -280,10 +280,10 @@ void App::shutdown() const {
 
 void App::update(float dt) {
   ZoneScoped;
+  cam.update_pos(dt);
   if (Input::key_down(GLFW_KEY_LEFT_CONTROL)) {
-    cam.update_pos(dt);
   } else {
-    update_character(dt);
+    // update_character(dt);
   }
 
   info_.view = cam_data.get_view();
@@ -345,12 +345,10 @@ void App::on_cursor_event(vec2 pos) const {
     return;
   }
   vec2 offset = {pos.x - last_pos.x, last_pos.y - pos.y};
+  LINFO("mouse {} {}", offset.x, offset.y);
   last_pos = pos;
   if (hide_mouse) {
-    if (Input::key_down(GLFW_KEY_LEFT_CONTROL)) {
-    } else {
-      cam.process_mouse(offset);
-    }
+    cam.process_mouse(offset);
   }
 }
 

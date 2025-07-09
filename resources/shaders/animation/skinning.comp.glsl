@@ -66,7 +66,7 @@ void main() {
     float uv_y = in_vtx.uv_y;
     vec4 in_pos = vec4(in_vtx.pos, 1.);
     vec4 in_norm = vec4(in_vtx.normal.xyz, 0.);
-    vec4 in_tangent = vec4(in_vtx.normal.xyz, 0.);
+    vec4 in_tangent = vec4(in_vtx.tangent.xyz, 0.);
     vec4 pos = vec4(0.);
     vec4 normal = vec4(0.);
     vec4 tangent = vec4(0.);
