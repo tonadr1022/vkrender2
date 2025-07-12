@@ -64,10 +64,8 @@ target_compile_options(renderer
     >
 )
 
-option(VKRENDER2_VALIDATION_LAYERS_ENABLED "Enable validation layers" ${VKRENDER2_VALIDATION_LAYERS_ENABLED_DEFAULT})
-message(${VKRENDER2_VALIDATION_LAYERS_ENABLED_DEFAULT} ", enabled: " ${VKRENDER2_VALIDATION_LAYERS_ENABLED})
-if (${VKRENDER2_VALIDATION_LAYERS_ENABLED})
-    target_compile_definitions(renderer PRIVATE VALIDATION_LAYERS_ENABLED)
+if (${VKRENDER2_VALIDATION_LAYERS_ENABLED_DEFAULT})
+    target_compile_definitions(renderer PRIVATE VKRENDER2_VALIDATION_LAYERS_ENABLED_DEFAULT)
 endif()
 
 target_include_directories(renderer SYSTEM PUBLIC

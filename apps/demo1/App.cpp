@@ -83,7 +83,7 @@ App::App(const InitInfo& info) : cam(&cam_data, .1) {
     ((App*)glfwGetWindowUserPointer(win))->on_cursor_event({xpos, ypos});
   });
 
-  Device::init({info.name, window, info.vsync});
+  Device::init({info.name, window, info.vsync, info.enable_validation_layers});
   bool success;
   VkRender2::init(VkRender2::InitInfo{.window = window,
                                       .device = &Device::get(),
@@ -281,10 +281,10 @@ void App::shutdown() const {
 void App::update(float dt) {
   ZoneScoped;
   cam.update_pos(dt);
-  if (Input::key_down(GLFW_KEY_LEFT_CONTROL)) {
-  } else {
-    // update_character(dt);
-  }
+  // if (Input::key_down(GLFW_KEY_LEFT_CONTROL)) {
+  // } else {
+  // update_character(dt);
+  // }
 
   info_.view = cam_data.get_view();
   info_.view_pos = cam_data.pos;
@@ -345,7 +345,6 @@ void App::on_cursor_event(vec2 pos) const {
     return;
   }
   vec2 offset = {pos.x - last_pos.x, last_pos.y - pos.y};
-  LINFO("mouse {} {}", offset.x, offset.y);
   last_pos = pos;
   if (hide_mouse) {
     cam.process_mouse(offset);

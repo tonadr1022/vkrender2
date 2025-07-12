@@ -160,7 +160,7 @@ namespace gfx {
 CSM::CSM(Device* device, DrawFunc draw_fn, AddRenderDependenciesFunc add_deps_fn)
     : draw_fn_(std::move(draw_fn)),
       add_deps_fn_(std::move(add_deps_fn)),
-      shadow_map_res_(uvec2{4096}),
+      shadow_map_res_(uvec2{2048}),
       device_(device) {
   ZoneScoped;
   for (auto& b : shadow_data_bufs_) {

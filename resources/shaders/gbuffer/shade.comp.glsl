@@ -105,7 +105,8 @@ void main() {
             ambient = (kD * diffuse + specular) * ao * scene_data.ambient_intensity;
         } else {
             ambient = kD * diffuse * ao * scene_data.ambient_intensity;
-            // ambient = albedo* ao * scene_data.ambient_intensity;
+            // ambient = NdotV
+            // albedo * ao * scene_data.ambient_intensity;
         }
         vec3 outputColor = light_out + emissive + ambient;
         STORE(vec4(outputColor, 1.));

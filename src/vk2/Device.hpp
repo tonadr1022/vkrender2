@@ -18,9 +18,8 @@
 #include "vk2/Texture.hpp"
 
 #ifndef NDEBUG
-#define VALIDATION_LAYERS_ENABLED 1
-#define DEBUG_CALLBACK_ENABLED 1
 #endif
+#define DEBUG_CALLBACK_ENABLED 1
 template <>
 void destroy(gfx::ImageHandle data);
 template <>
@@ -65,7 +64,12 @@ class Device {
   struct CreateInfo {
     const char* app_name;
     GLFWwindow* window;
-    bool vsync{true};
+    bool vsync{false};
+#ifdef VKRENDER2_ENABLE_VALIDATION_LAYERS_DEFAULT
+    bool enable_validation_layers{VKRENDER2_ENABLE_VALIDATION_LAYERS_DEFAULT};
+#else
+    bool enable_validation_layers{false};
+#endif
   };
 
   static void init(const CreateInfo& info);

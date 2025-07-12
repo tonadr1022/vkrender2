@@ -29,8 +29,8 @@
 namespace {
 
 #ifndef NDEBUG
-#define DEBUG_VK_OBJECT_NAMES 1
 #endif
+#define DEBUG_VK_OBJECT_NAMES 1
 #ifdef DEBUG_CALLBACK_ENABLED
 VKAPI_ATTR VkBool32 VKAPI_CALL
 debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -106,9 +106,10 @@ void Device::init_impl(const CreateInfo& info) {
 #ifdef DEBUG_CALLBACK_ENABLED
     instance_builder.set_debug_callback(debug_callback);
 #endif
-#ifdef VALIDATION_LAYERS_ENABLED
-    instance_builder.request_validation_layers(true);
-#endif
+    LINFO("Validation layers enabled: {}", info.enable_validation_layers);
+    if (info.enable_validation_layers) {
+      instance_builder.request_validation_layers(true);
+    }
 
 #if defined(__APPLE__)
     instance_builder.add_validation_feature_disable(VK_VALIDATION_FEATURE_DISABLE_SHADERS_EXT);

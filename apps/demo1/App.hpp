@@ -54,6 +54,7 @@ struct App {
     bool maximize{false};
     bool decorate{true};
     bool vsync{true};
+    bool enable_validation_layers{};
   };
   explicit App(const InitInfo& info);
   void run();

@@ -23,7 +23,7 @@ struct SwapchainDesc {
   u32 height{};
   u32 buffer_count;
   bool fullscreen{};
-  bool vsync{true};
+  bool vsync{false};
 };
 struct Swapchain {
   enum class Status : u8 { Ready, Resized, NotReady };
