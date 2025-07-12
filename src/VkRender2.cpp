@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cassert>
 #include <filesystem>
+#include <random>
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/io.hpp>
 #include <glm/gtx/string_cast.hpp>
@@ -359,6 +360,7 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
       // .add_compute("postprocess/postprocess.comp", &postprocess_pipeline_)
       .add_compute("debug/clear_img.comp", &img_pipeline_)
       .add_compute("gbuffer/shade.comp", &deferred_shade_pipeline_)
+      .add_compute("ssao/ssao_1.comp", &ssao_1_pipeline_)
       .add_graphics(
           GraphicsPipelineCreateInfo{
               .shaders = {{"debug/basic.vert", ShaderType::Vertex},
@@ -494,6 +496,61 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   default_env_map_path_ = info.resource_dir / "hdr" / "newport_loft.hdr";
   oit_atomic_counter_buf_ = device_->create_buffer_holder(
       BufferCreateInfo{.size = sizeof(u32), .usage = BufferUsage_Storage});
+  {
+    // ssao
+    std::uniform_real_distribution<float> random_floats(0.0, 1.0);
+    std::default_random_engine generator;
+    int n = 64;
+    std::vector<vec4> ssao_kernel;
+    ssao_kernel.reserve(n);
+    for (int i = 0; i < n; i++) {
+      vec3 sample{(random_floats(generator) * 2.f) - 1.f, (random_floats(generator) * 2.f) - 1.f,
+                  (random_floats(generator))};
+      sample = glm::normalize(sample);
+
+      // scale closer to origin
+      float scale = i / (float)n;
+      scale = glm::mix(.1f, 1.f, scale * scale);
+      sample *= random_floats(generator);
+      ssao_kernel.emplace_back(sample, 0.f);
+    }
+    // ssao noise
+    {
+      int n = 16;
+      std::vector<vec4> ssao_noise;
+      ssao_noise.reserve(n);
+      for (int i = 0; i < n; i++) {
+        // leave z at 0 to rotate around z axis
+        vec4 sample{(random_floats(generator) * 2.f) - 1.f, (random_floats(generator) * 2.f) - 1.f,
+                    0, 0};
+        ssao_noise.push_back(sample);
+      }
+      size_t ssao_noise_copy_size = sizeof(vec4) * ssao_noise.size();
+      size_t ssao_kernel_copy_size = sizeof(vec4) * ssao_kernel.size();
+      ssao_noise_buf_ = device_->create_buffer_holder(
+          BufferCreateInfo{.size = ssao_noise_copy_size, .usage = BufferUsage_Storage});
+      ssao_kernel_buf_ = device_->create_buffer_holder(
+          BufferCreateInfo{.size = ssao_kernel_copy_size, .usage = BufferUsage_Storage});
+
+      size_t tot_copy_size = ssao_noise_copy_size + ssao_kernel_copy_size;
+      auto copy_cmd = device_->graphics_copy_allocator_.allocate(tot_copy_size);
+      LinearCopyer copier(device_->get_buffer(copy_cmd.staging_buffer)->mapped_data(),
+                          tot_copy_size);
+      copier.copy(ssao_noise.data(), ssao_noise_copy_size);
+      copier.copy(ssao_kernel.data(), ssao_kernel_copy_size);
+
+      // TODO: barrier
+      // state_.reset(copy_cmd.transfer_cmd_buf)
+      //     .buffer_barrier(device_->get_buffer(ssao_noise_buf_)->buffer(),
+      //                     VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
+      //     .flush_barriers();
+      copy_cmd.copy_buffer(device_, *device_->get_buffer(ssao_noise_buf_), 0, 0,
+                           ssao_noise_copy_size);
+      copy_cmd.copy_buffer(device_, *device_->get_buffer(ssao_kernel_buf_), ssao_noise_copy_size, 0,
+                           ssao_kernel_copy_size);
+      device_->graphics_copy_allocator_.submit(copy_cmd);
+    }
+  }
 }
 
 void VkRender2::draw(const SceneDrawInfo& info) {
@@ -855,6 +912,8 @@ const char* VkRender2::debug_mode_to_string(u32 mode) {
       return "Cascade Levels";
     case DEBUG_MODE_SHADOW:
       return "Shadow";
+    case DEBUG_MODE_SSAO:
+      return "SSAO";
     default:
       return "None";
   }
@@ -1260,7 +1319,6 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
           device_->get_bindless_idx(ibl_->prefiltered_env_map_tex_.handle, SubresourceType::Shader),
           device_->get_bindless_idx(linear_sampler_clamp_to_edge_)};
       cmd.push_constants(sizeof(pc), &pc);
-      // TODO: double sided
       cmd.bind_pipeline(PipelineBindPoint::Graphics, draw_pipeline_);
       for (int pass_i = 0; pass_i < MeshPass_Count; pass_i++) {
         execute_static_geo_draws(cmd, static_cast<MeshPass>(pass_i));
@@ -1343,6 +1401,43 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
         cmd.end_region();
       });
     }
+    if (ssao_enabled_) {
+      auto& pass = rg.add_pass("ssao");
+      auto rg_depth_handle = pass.add_image_access("depth", Access::ComputeRead);
+      auto rg_out_img_handle = pass.add("ssao_out", {.format = ssao_format_}, Access::ComputeWrite);
+      auto rg_gbuffer_a_handle = pass.add_image_access("gbuffer_a", Access::ComputeRead);
+      pass.set_execute_fn(
+          [this, rg_depth_handle, rg_out_img_handle, rg_gbuffer_a_handle](CmdEncoder& cmd) {
+            cmd.begin_region("ssao");
+            auto depth_handle = rg_.get_texture_handle(rg_depth_handle);
+            auto gbuffer_a_handle = rg_.get_texture_handle(rg_gbuffer_a_handle);
+            auto out_img_handle = rg_.get_texture_handle(rg_out_img_handle);
+            auto* depth_tex = device_->get_image(depth_handle);
+            auto dims = depth_tex->size();
+            struct {
+              u32 scene_data_buf;
+              u32 depth_img;
+              u32 ssao_noise_buf;
+              u32 ssao_kernel_buf;
+              u32 output_img;
+              u32 gbuffer_a;
+              float radius;
+            } pc{
+                .scene_data_buf = device_->get_bindless_idx(curr_frame().scene_uniform_buf),
+                .depth_img = device_->get_bindless_idx(depth_handle, SubresourceType::Storage),
+                .ssao_noise_buf = device_->get_bindless_idx(ssao_noise_buf_),
+                .ssao_kernel_buf = device_->get_bindless_idx(ssao_kernel_buf_),
+                .output_img = device_->get_bindless_idx(out_img_handle, SubresourceType::Storage),
+                .gbuffer_a = device_->get_bindless_idx(gbuffer_a_handle, SubresourceType::Storage),
+                .radius = .5f,
+            };
+            cmd.bind_pipeline(PipelineBindPoint::Compute, ssao_1_pipeline_);
+            cmd.push_constants(sizeof(pc), &pc);
+            cmd.dispatch((dims.x + 16) / 16, (dims.y + 16) / 16, 1);
+            cmd.end_region();
+          });
+    }
+
     {
       auto& shade = rg.add_pass("shade");
       auto rg_gbuffer_a =
@@ -1351,6 +1446,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
           shade.add("gbuffer_b", {.format = gbuffer_b_format_}, Access::ComputeRead);
       auto rg_gbuffer_c =
           shade.add("gbuffer_c", {.format = gbuffer_c_format_}, Access::ComputeRead);
+      auto rg_ssao_buf = shade.add_image_access("ssao_out", Access::ComputeRead);
       if (csm_enabled.get()) {
         shade.add_image_access("shadow_map_img", Access::FragmentRead);
         shade.add(csm_->get_shadow_data_buffer(device_->curr_frame_in_flight()),
@@ -1359,15 +1455,16 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
       auto depth_handle = shade.add("depth", {.format = depth_img_format_}, Access::ComputeSample);
       auto final_out_handle =
           shade.add("draw_out", {.format = draw_img_format_}, Access::ComputeWrite);
-      shade.set_execute_fn([&rg, rg_gbuffer_b, rg_gbuffer_c, rg_gbuffer_a, final_out_handle, this,
-                            depth_handle](CmdEncoder& cmd) {
+      shade.set_execute_fn([&rg, rg_gbuffer_b, rg_gbuffer_c, rg_gbuffer_a, final_out_handle,
+                            rg_ssao_buf, this, depth_handle](CmdEncoder& cmd) {
+        cmd.begin_region("shade");
         auto gbuffer_a = rg.get_texture_handle(rg_gbuffer_a);
         auto gbuffer_b = rg.get_texture_handle(rg_gbuffer_b);
         auto gbuffer_c = rg.get_texture_handle(rg_gbuffer_c);
         auto depth_img = rg.get_texture_handle(depth_handle);
         auto shade_out_tex = rg.get_texture_handle(final_out_handle);
         DeferredShadePushConstants pc{
-            glm::inverse(scene_uniform_cpu_data_.view_proj),
+            scene_uniform_cpu_data_.inverse_view_proj,
             device_->get_bindless_idx(gbuffer_a, SubresourceType::Storage),
             device_->get_bindless_idx(gbuffer_b, SubresourceType::Storage),
             device_->get_bindless_idx(gbuffer_c, SubresourceType::Storage),
@@ -1384,11 +1481,15 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
             device_->get_bindless_idx(ibl_->brdf_lut_.handle, SubresourceType::Shader),
             device_->get_bindless_idx(ibl_->prefiltered_env_map_tex_.handle,
                                       SubresourceType::Shader),
-            device_->get_bindless_idx(linear_sampler_clamp_to_edge_)};
+            device_->get_bindless_idx(linear_sampler_clamp_to_edge_),
+            device_->get_bindless_idx(rg_.get_texture_handle(rg_ssao_buf),
+                                      SubresourceType::Storage),
+        };
         cmd.bind_pipeline(PipelineBindPoint::Compute, deferred_shade_pipeline_);
         cmd.push_constants(sizeof(pc), &pc);
         auto dims = device_->get_image(gbuffer_a)->size();
         cmd.dispatch((dims.x + 16) / 16, (dims.y + 16) / 16, 1);
+        cmd.end_region();
       });
     }
     {
@@ -2508,8 +2609,8 @@ void VkRender2::draw_sphere(const glm::vec3& center, float radius, const glm::ve
   for (int i = 0; i < segments; ++i) {
     float a0 = i * step;
     float a1 = (i + 1) * step;
-    glm::vec3 p0 = center + radius * glm::vec3(cos(a0), sin(a0), 0);
-    glm::vec3 p1 = center + radius * glm::vec3(cos(a1), sin(a1), 0);
+    glm::vec3 p0 = center + radius * glm::vec3(glm::cos(a0), glm::sin(a0), 0);
+    glm::vec3 p1 = center + radius * glm::vec3(glm::cos(a1), glm::sin(a1), 0);
     draw_line(p0, p1, color);
   }
 
@@ -2517,8 +2618,8 @@ void VkRender2::draw_sphere(const glm::vec3& center, float radius, const glm::ve
   for (int i = 0; i < segments; ++i) {
     float a0 = i * step;
     float a1 = (i + 1) * step;
-    glm::vec3 p0 = center + radius * glm::vec3(cos(a0), 0, sin(a0));
-    glm::vec3 p1 = center + radius * glm::vec3(cos(a1), 0, sin(a1));
+    glm::vec3 p0 = center + radius * glm::vec3(glm::cos(a0), 0, glm::sin(a0));
+    glm::vec3 p1 = center + radius * glm::vec3(glm::cos(a1), 0, glm::sin(a1));
     draw_line(p0, p1, color);
   }
 
@@ -2526,8 +2627,8 @@ void VkRender2::draw_sphere(const glm::vec3& center, float radius, const glm::ve
   for (int i = 0; i < segments; ++i) {
     float a0 = i * step;
     float a1 = (i + 1) * step;
-    glm::vec3 p0 = center + radius * glm::vec3(0, cos(a0), sin(a0));
-    glm::vec3 p1 = center + radius * glm::vec3(0, cos(a1), sin(a1));
+    glm::vec3 p0 = center + radius * glm::vec3(0, glm::cos(a0), glm::sin(a0));
+    glm::vec3 p1 = center + radius * glm::vec3(0, glm::cos(a1), glm::sin(a1));
     draw_line(p0, p1, color);
   }
 }

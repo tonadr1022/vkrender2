@@ -65,7 +65,7 @@ class ShaderManager {
   inline static const char* spirv_include_write_times_filename{"spirv_include_write_times.txt"};
 
  public:
-  bool shader_debug_mode_{};
+  bool shader_debug_mode_{true};
 };
 
 }  // namespace gfx

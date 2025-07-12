@@ -948,8 +948,6 @@ std::optional<LoadedSceneBaseData> load_gltf_base(const std::filesystem::path& p
       mat.emissive_factors = vec4(gltf_mat.emissiveFactor.x(), gltf_mat.emissiveFactor.y(),
                                   gltf_mat.emissiveFactor.z(), 0);
       mat.emissive_factors *= gltf_mat.emissiveStrength;
-      LINFO("{} asdf", mat.emissive_factors.x);
-
       result->materials.emplace_back(mat);
     }
   }

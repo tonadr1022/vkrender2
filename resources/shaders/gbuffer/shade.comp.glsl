@@ -37,17 +37,20 @@ void main() {
     float metallic = gbuffer_a.b;
     float roughness = gbuffer_a.a;
     vec3 albedo = gbuffer_b.rgb;
-    // STORE(vec4(albedo, 1.));
-    // return;
     vec3 emissive = gbuffer_c.rgb;
     float ao = gbuffer_c.a;
     vec3 V = normalize(scene_data.view_pos - world_pos);
 
+    float ssao_result = imageLoad(vk2_get_storage_img(image2D, ssao_tex), tex_coord).r;
+
+    if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_SSAO) {
+        STORE(vec4(vec3(ssao_result), 1.));
+        return;
+    }
     if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_NORMALS) {
         STORE(vec4(N * .5 + .5, 1.));
         return;
     }
-
     if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_CASCADE_LEVELS) {
         STORE(vec4(cascade_debug_color(shadow_datas[shadow_buffer_idx].data, scene_data, world_pos), 1.));
         return;
@@ -102,11 +105,11 @@ void main() {
                         linear_clamp_to_edge_sampler_idx), R, roughness * MaxReflectionLod).rgb;
             vec2 env_brdf = texture(vk2_sampler2D(brdf_lut_idx, linear_clamp_to_edge_sampler_idx), vec2(NdotV, roughness)).rg;
             vec3 specular = prefiltered_color * (F * env_brdf.x + env_brdf.y);
-            ambient = (kD * diffuse + specular) * ao * scene_data.ambient_intensity;
+            ambient = (kD * diffuse + specular) * ssao_result * scene_data.ambient_intensity;
         } else {
-            ambient = kD * diffuse * ao * scene_data.ambient_intensity;
+            // ambient = kD * diffuse * ssao_result * scene_data.ambient_intensity;
             // ambient = NdotV
-            // albedo * ao * scene_data.ambient_intensity;
+            ambient = albedo * ssao_result * scene_data.ambient_intensity;
         }
         vec3 outputColor = light_out + emissive + ambient;
         STORE(vec4(outputColor, 1.));

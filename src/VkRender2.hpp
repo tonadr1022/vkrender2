@@ -409,11 +409,15 @@ class VkRender2 final {
   PipelineHandle transparent_oit_pipeline_;
   PipelineHandle oit_comp_pipeline_;
   PipelineHandle skinning_comp_pipeline_;
+  PipelineHandle ssao_1_pipeline_;
   Format gbuffer_a_format_{Format::R8G8B8A8Unorm};
   Format gbuffer_b_format_{Format::R8G8B8A8Unorm};
   Format gbuffer_c_format_{Format::R8G8B8A8Unorm};
+  Format ssao_format_{Format::R32Sfloat};
   Format draw_img_format_{Format::R16G16B16A16Sfloat};
   Format depth_img_format_{Format::D32Sfloat};
+  Holder<BufferHandle> ssao_noise_buf_;
+  Holder<BufferHandle> ssao_kernel_buf_;
 
   std::vector<Buffer> free_staging_buffers_;
 
@@ -459,6 +463,9 @@ class VkRender2 final {
   bool oit_enabled_{true};
   bool oit_debug_heatmap_{false};
   float oit_opacity_boost_{0.0};
+
+  // TODO: settings config file
+  bool ssao_enabled_{true};
 };
 
 }  // namespace gfx
