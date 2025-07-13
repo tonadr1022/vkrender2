@@ -41,7 +41,10 @@ void main() {
     float ao = gbuffer_c.a;
     vec3 V = normalize(scene_data.view_pos - world_pos);
 
-    float ssao_result = imageLoad(vk2_get_storage_img(image2D, ssao_tex), tex_coord).r;
+    float ssao_result = 1.0f;
+    if ((debug_flags.x & SSAO_ENABLED_BIT) != 0) {
+        ssao_result = imageLoad(vk2_get_storage_img(image2D, ssao_tex), tex_coord).r;
+    }
 
     if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_SSAO) {
         STORE(vec4(vec3(ssao_result), 1.));
@@ -107,8 +110,6 @@ void main() {
             vec3 specular = prefiltered_color * (F * env_brdf.x + env_brdf.y);
             ambient = (kD * diffuse + specular) * ssao_result * scene_data.ambient_intensity;
         } else {
-            // ambient = kD * diffuse * ssao_result * scene_data.ambient_intensity;
-            // ambient = NdotV
             ambient = albedo * ssao_result * scene_data.ambient_intensity;
         }
         vec3 outputColor = light_out + emissive + ambient;

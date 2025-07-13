@@ -69,7 +69,7 @@
 layout(set = BINDLESS_SAMPLER_SET, binding = BINDLESS_SAMPLER_BINDING) uniform sampler s_samplers[];
 
 #define LINEAR_SAMPLER_BINDLESS_IDX 2
-#define NEAREST_SAMPLER_BINDLESS_IDX 2
+#define NEAREST_SAMPLER_BINDLESS_IDX 1
 
 #endif // end GLSL
 

@@ -597,7 +597,7 @@ struct SamplerCreateInfo {
   FilterMode min_filter{FilterMode::Nearest};
   FilterMode mag_filter{FilterMode::Nearest};
   FilterMode mipmap_mode{FilterMode::Nearest};
-  float min_lod{-1000.f};
+  float min_lod{0.f};
   float max_lod{1000.f};
   AddressMode address_mode{AddressMode::Repeat};
   BorderColor border_color{BorderColor::FloatTransparentBlack};

@@ -178,6 +178,7 @@ struct RenderGraph {
   RenderGraphPass& add_pass(const std::string& name,
                             RenderGraphPass::Type type = RenderGraphPass::Type::Graphics);
   void set_backbuffer_img(const std::string& name) { backbuffer_img_ = name; }
+  void set_render_scale(float render_scale) { render_scale_ = render_scale; }
   [[nodiscard]] const std::string& get_backbuffer_img_name() const { return backbuffer_img_; }
   void reset();
   VoidResult bake();

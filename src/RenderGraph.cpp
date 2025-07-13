@@ -87,7 +87,7 @@ void get_vk_stage_access(Access access, VkAccessFlags2& out_access,
 }
 constexpr auto read_flags = Access::ColorRead | Access::ComputeRead | Access::DepthStencilRead |
                             Access::VertexRead | Access::IndexRead | Access::IndirectRead |
-                            Access::TransferRead | Access::FragmentRead;
+                            Access::TransferRead | Access::FragmentRead | Access::ComputeSample;
 constexpr auto write_flags =
     Access::ColorWrite | Access::ComputeWrite | Access::DepthStencilWrite | Access::TransferWrite;
 bool is_read_access(Access access) { return access & read_flags; }
@@ -238,7 +238,7 @@ VoidResult RenderGraph::bake() {
     for (uint32_t pass_i = 0; pass_i < passes_.size(); pass_i++) {
       auto& pass = passes_[pass_i];
       for (const auto& usage : pass.get_resources()) {
-        if (get_resource(usage.handle)->name == backbuffer_img_) {
+        if (get_resource(usage.handle)->name == backbuffer_img_ && is_write_access(usage.access)) {
           // TODO: move this to validation phase
           // if (!(usage.access_flags & VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT)) {
           //   return std::unexpected("backbuffer output is not of usage ColorOutput");

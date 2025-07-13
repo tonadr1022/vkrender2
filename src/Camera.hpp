@@ -99,7 +99,11 @@ struct CameraController {
     }
 
     if (accelerating) {
-      acceleration = glm::normalize(acceleration) * acceleration_strength;
+      if (glm::length(acceleration) > 0.0001f) {
+        acceleration = glm::normalize(acceleration) * acceleration_strength;
+      } else {
+        acceleration = vec3(0.0f);
+      }
     }
 
     velocity += acceleration * dt;

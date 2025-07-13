@@ -227,6 +227,7 @@ class VkRender2 final {
     mat4 view;
     mat4 proj;
     mat4 inverse_view_proj;
+    mat4 inverse_proj;
     uvec4 debug_flags;
     vec3 view_pos;
     float _p1;
@@ -410,6 +411,8 @@ class VkRender2 final {
   PipelineHandle oit_comp_pipeline_;
   PipelineHandle skinning_comp_pipeline_;
   PipelineHandle ssao_1_pipeline_;
+  PipelineHandle ssao_blur_pipeline_;
+  PipelineHandle fxaa_pipeline_;
   Format gbuffer_a_format_{Format::R8G8B8A8Unorm};
   Format gbuffer_b_format_{Format::R8G8B8A8Unorm};
   Format gbuffer_c_format_{Format::R8G8B8A8Unorm};
@@ -430,6 +433,7 @@ class VkRender2 final {
   void generate_mipmaps(StateTracker& state, CmdEncoder& cmd, ImageHandle handle);
   Holder<BufferHandle> cube_vertex_buf_;
   void add_rendering_passes(RenderGraph& rg);
+  void init_ssao();
 
   u32 tonemap_type_{1};
   const char* tonemap_type_names_[2] = {"Optimized Filmic", "ACES Film"};
@@ -466,6 +470,18 @@ class VkRender2 final {
 
   // TODO: settings config file
   bool ssao_enabled_{true};
+  bool ssao_blur_enabled_{true};
+  bool fxaa_enabled_{true};
+  struct FxaaSettings {
+    float fixed_threshold{fixed_thresh_range.x};
+    float relative_threshold{rel_thresh_range.x};
+    float subpixel_blending{0.75f};
+    constexpr static float default_fixed_threshold{0.0833f};
+    constexpr static float default_relative_threshold{0.125f};
+    constexpr static vec2 rel_thresh_range{0.063f, 0.333f};
+    constexpr static vec2 fixed_thresh_range{0.0312f, 0.0833f};
+  } fxaa_settings_;
+  float render_scale_{1.0};
 };
 
 }  // namespace gfx

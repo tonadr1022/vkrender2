@@ -57,7 +57,7 @@ VkRender2* vkrender2_instance{};
 
 AutoCVarInt ao_map_enabled{"renderer.ao_map", "AO Map", 1, CVarFlags::EditCheckbox};
 AutoCVarInt csm_enabled{"renderer.csm_enabled", "CSM Enabled", 1, CVarFlags::EditCheckbox};
-AutoCVarInt ibl_enabled{"renderer.ibl_enabled", "IBL Enabled", 1, CVarFlags::EditCheckbox};
+AutoCVarInt ibl_enabled{"renderer.ibl_enabled", "IBL Enabled", 0, CVarFlags::EditCheckbox};
 AutoCVarInt postprocess_pass_enabled{"renderer.postprocess_pass_enabled",
                                      "PostProcess Pass Enabled", 1, CVarFlags::EditCheckbox};
 AutoCVarInt tonemap_enabled{"renderer.tonemap_enabled", "Tonemapping Enabled", 1,
@@ -197,7 +197,7 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   nearest_sampler_ = device_->get_or_create_sampler({
       .min_filter = FilterMode::Nearest,
       .mag_filter = FilterMode::Nearest,
-      .mipmap_mode = FilterMode::Nearest,
+      .mipmap_mode = FilterMode::Linear,
       .address_mode = AddressMode::Repeat,
   });
   if (device_->get_bindless_idx(nearest_sampler_) != 1) {
@@ -361,6 +361,8 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
       .add_compute("debug/clear_img.comp", &img_pipeline_)
       .add_compute("gbuffer/shade.comp", &deferred_shade_pipeline_)
       .add_compute("ssao/ssao_1.comp", &ssao_1_pipeline_)
+      .add_compute("ssao/ssao_blur.comp", &ssao_blur_pipeline_)
+      .add_compute("anti_alias/fxaa/fxaa.comp", &fxaa_pipeline_)
       .add_graphics(
           GraphicsPipelineCreateInfo{
               .shaders = {{"debug/basic.vert", ShaderType::Vertex},
@@ -496,61 +498,7 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   default_env_map_path_ = info.resource_dir / "hdr" / "newport_loft.hdr";
   oit_atomic_counter_buf_ = device_->create_buffer_holder(
       BufferCreateInfo{.size = sizeof(u32), .usage = BufferUsage_Storage});
-  {
-    // ssao
-    std::uniform_real_distribution<float> random_floats(0.0, 1.0);
-    std::default_random_engine generator;
-    int n = 64;
-    std::vector<vec4> ssao_kernel;
-    ssao_kernel.reserve(n);
-    for (int i = 0; i < n; i++) {
-      vec3 sample{(random_floats(generator) * 2.f) - 1.f, (random_floats(generator) * 2.f) - 1.f,
-                  (random_floats(generator))};
-      sample = glm::normalize(sample);
-
-      // scale closer to origin
-      float scale = i / (float)n;
-      scale = glm::mix(.1f, 1.f, scale * scale);
-      sample *= random_floats(generator);
-      ssao_kernel.emplace_back(sample, 0.f);
-    }
-    // ssao noise
-    {
-      int n = 16;
-      std::vector<vec4> ssao_noise;
-      ssao_noise.reserve(n);
-      for (int i = 0; i < n; i++) {
-        // leave z at 0 to rotate around z axis
-        vec4 sample{(random_floats(generator) * 2.f) - 1.f, (random_floats(generator) * 2.f) - 1.f,
-                    0, 0};
-        ssao_noise.push_back(sample);
-      }
-      size_t ssao_noise_copy_size = sizeof(vec4) * ssao_noise.size();
-      size_t ssao_kernel_copy_size = sizeof(vec4) * ssao_kernel.size();
-      ssao_noise_buf_ = device_->create_buffer_holder(
-          BufferCreateInfo{.size = ssao_noise_copy_size, .usage = BufferUsage_Storage});
-      ssao_kernel_buf_ = device_->create_buffer_holder(
-          BufferCreateInfo{.size = ssao_kernel_copy_size, .usage = BufferUsage_Storage});
-
-      size_t tot_copy_size = ssao_noise_copy_size + ssao_kernel_copy_size;
-      auto copy_cmd = device_->graphics_copy_allocator_.allocate(tot_copy_size);
-      LinearCopyer copier(device_->get_buffer(copy_cmd.staging_buffer)->mapped_data(),
-                          tot_copy_size);
-      copier.copy(ssao_noise.data(), ssao_noise_copy_size);
-      copier.copy(ssao_kernel.data(), ssao_kernel_copy_size);
-
-      // TODO: barrier
-      // state_.reset(copy_cmd.transfer_cmd_buf)
-      //     .buffer_barrier(device_->get_buffer(ssao_noise_buf_)->buffer(),
-      //                     VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
-      //     .flush_barriers();
-      copy_cmd.copy_buffer(device_, *device_->get_buffer(ssao_noise_buf_), 0, 0,
-                           ssao_noise_copy_size);
-      copy_cmd.copy_buffer(device_, *device_->get_buffer(ssao_kernel_buf_), ssao_noise_copy_size, 0,
-                           ssao_kernel_copy_size);
-      device_->graphics_copy_allocator_.submit(copy_cmd);
-    }
-  }
+  init_ssao();
 }
 
 void VkRender2::draw(const SceneDrawInfo& info) {
@@ -570,6 +518,7 @@ void VkRender2::draw(const SceneDrawInfo& info) {
     scene_uniform_cpu_data_.view = info.view;
     scene_uniform_cpu_data_.debug_flags = uvec4{};
     scene_uniform_cpu_data_.inverse_view_proj = glm::inverse(scene_uniform_cpu_data_.view_proj);
+    scene_uniform_cpu_data_.inverse_proj = glm::inverse(scene_uniform_cpu_data_.proj);
     if (ao_map_enabled.get()) {
       scene_uniform_cpu_data_.debug_flags.x |= AO_ENABLED_BIT;
     }
@@ -581,6 +530,9 @@ void VkRender2::draw(const SceneDrawInfo& info) {
     }
     if (ibl_enabled.get()) {
       scene_uniform_cpu_data_.debug_flags.x |= IBL_ENABLED_BIT;
+    }
+    if (ssao_enabled_) {
+      scene_uniform_cpu_data_.debug_flags.x |= SSAO_ENABLED_BIT;
     }
     scene_uniform_cpu_data_.light_color = info.light_color;
     scene_uniform_cpu_data_.light_dir = glm::normalize(info.light_dir);
@@ -735,7 +687,6 @@ void VkRender2::draw(const SceneDrawInfo& info) {
   }
 
   rg_.reset();
-  rg_.set_backbuffer_img("final_out");
   csm_->prepare_frame(device_->curr_frame_num(), info.view, info.light_dir, aspect_ratio(),
                       info.fov_degrees, scene_aabb_, info.view_pos);
 
@@ -773,6 +724,7 @@ void VkRender2::draw(const SceneDrawInfo& info) {
     }
   }
 
+  rg_.set_render_scale(render_scale_);
   add_rendering_passes(rg_);
   auto res = rg_.bake();
   if (!res) {
@@ -838,13 +790,13 @@ void VkRender2::on_imgui() {
       ImGui::TreePop();
     }
 
-    if (ImGui::TreeNodeEx("Static Geo", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::TreeNodeEx("Static Geo")) {
       ImGui::Text("TODO LMAO");
       for (int mesh_pass = 0; mesh_pass < MeshPass_Count; mesh_pass++) {
         for (int animated = 0; animated < 2; animated++) {
           auto& mgr = get_mgr((MeshPass)mesh_pass, animated);
           ImGui::PushID(&mgr);
-          if (ImGui::TreeNodeEx(mgr.get_name().c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+          if (ImGui::TreeNodeEx(mgr.get_name().c_str())) {
             ImGui::Text("draws %u", mgr.get_num_draw_cmds());
             ImGui::Checkbox("Enabled", &mgr.draw_enabled);
             ImGui::TreePop();
@@ -871,6 +823,23 @@ void VkRender2::on_imgui() {
       ImGui::Checkbox("Paused", &frustum_cull_settings_.paused);
       ImGui::TreePop();
     }
+
+    if (ImGui::TreeNode("SSAO")) {
+      ImGui::Checkbox("enabled", &ssao_enabled_);
+      ImGui::Checkbox("Blur enabled", &ssao_blur_enabled_);
+      ImGui::TreePop();
+    }
+    if (ImGui::TreeNode("Anti-Aliasing")) {
+      ImGui::Checkbox("fxaa enabled", &fxaa_enabled_);
+      ImGui::SliderFloat("Fixed Threshold", &fxaa_settings_.fixed_threshold,
+                         FxaaSettings::fixed_thresh_range.x, FxaaSettings::fixed_thresh_range.y);
+      ImGui::SliderFloat("Relative Threshold", &fxaa_settings_.relative_threshold,
+                         FxaaSettings::rel_thresh_range.x, FxaaSettings::rel_thresh_range.y);
+      ImGui::SliderFloat("Subpixel Blending", &fxaa_settings_.subpixel_blending, 0.0f, 1.0f);
+      ImGui::TreePop();
+    }
+
+    ImGui::SliderFloat("Render Scale", &render_scale_, 0.125f, 2.0f);
 
     if (ImGui::TreeNode("Postprocessing")) {
       if (ImGui::BeginCombo("Tonemapper", tonemap_type_names_[tonemap_type_])) {
@@ -1401,10 +1370,12 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
         cmd.end_region();
       });
     }
+    const char* ssao_final_output_name = "ssao_out";
     if (ssao_enabled_) {
       auto& pass = rg.add_pass("ssao");
       auto rg_depth_handle = pass.add_image_access("depth", Access::ComputeRead);
-      auto rg_out_img_handle = pass.add("ssao_out", {.format = ssao_format_}, Access::ComputeWrite);
+      auto rg_out_img_handle =
+          pass.add(ssao_final_output_name, {.format = ssao_format_}, Access::ComputeWrite);
       auto rg_gbuffer_a_handle = pass.add_image_access("gbuffer_a", Access::ComputeRead);
       pass.set_execute_fn(
           [this, rg_depth_handle, rg_out_img_handle, rg_gbuffer_a_handle](CmdEncoder& cmd) {
@@ -1437,6 +1408,30 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
             cmd.end_region();
           });
     }
+    if (ssao_enabled_ && ssao_blur_enabled_) {
+      auto& pass = rg.add_pass("ssao_blur");
+      auto rg_ssao_handle = pass.add_image_access(ssao_final_output_name, Access::ComputeRead);
+      ssao_final_output_name = "ssao_final_out";
+      auto rg_ssao_blurred_handle =
+          pass.add(ssao_final_output_name, {.format = ssao_format_}, Access::ComputeWrite);
+      pass.set_execute_fn([this, rg_ssao_blurred_handle, rg_ssao_handle](CmdEncoder& cmd) {
+        cmd.begin_region("ssao_blur");
+        auto ssao_handle = rg_.get_texture_handle(rg_ssao_handle);
+        struct {
+          u32 ssao_tex;
+          u32 result_tex;
+        } pc{
+            .ssao_tex = device_->get_bindless_idx(ssao_handle, SubresourceType::Storage),
+            .result_tex = device_->get_bindless_idx(rg_.get_texture_handle(rg_ssao_blurred_handle),
+                                                    SubresourceType::Storage),
+        };
+        cmd.bind_pipeline(PipelineBindPoint::Compute, ssao_blur_pipeline_);
+        cmd.push_constants(sizeof(pc), &pc);
+        auto dims = device_->get_image(ssao_handle)->size();
+        cmd.dispatch((dims.x + 16) / 16, (dims.y + 16) / 16, 1);
+        cmd.end_region();
+      });
+    }
 
     {
       auto& shade = rg.add_pass("shade");
@@ -1446,7 +1441,11 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
           shade.add("gbuffer_b", {.format = gbuffer_b_format_}, Access::ComputeRead);
       auto rg_gbuffer_c =
           shade.add("gbuffer_c", {.format = gbuffer_c_format_}, Access::ComputeRead);
-      auto rg_ssao_buf = shade.add_image_access("ssao_out", Access::ComputeRead);
+      RGResourceHandle rg_ssao_result_tex_handle{};
+      if (ssao_enabled_) {
+        rg_ssao_result_tex_handle =
+            shade.add_image_access(ssao_final_output_name, Access::ComputeRead);
+      }
       if (csm_enabled.get()) {
         shade.add_image_access("shadow_map_img", Access::FragmentRead);
         shade.add(csm_->get_shadow_data_buffer(device_->curr_frame_in_flight()),
@@ -1456,7 +1455,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
       auto final_out_handle =
           shade.add("draw_out", {.format = draw_img_format_}, Access::ComputeWrite);
       shade.set_execute_fn([&rg, rg_gbuffer_b, rg_gbuffer_c, rg_gbuffer_a, final_out_handle,
-                            rg_ssao_buf, this, depth_handle](CmdEncoder& cmd) {
+                            rg_ssao_result_tex_handle, this, depth_handle](CmdEncoder& cmd) {
         cmd.begin_region("shade");
         auto gbuffer_a = rg.get_texture_handle(rg_gbuffer_a);
         auto gbuffer_b = rg.get_texture_handle(rg_gbuffer_b);
@@ -1482,8 +1481,10 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
             device_->get_bindless_idx(ibl_->prefiltered_env_map_tex_.handle,
                                       SubresourceType::Shader),
             device_->get_bindless_idx(linear_sampler_clamp_to_edge_),
-            device_->get_bindless_idx(rg_.get_texture_handle(rg_ssao_buf),
-                                      SubresourceType::Storage),
+            ssao_enabled_
+                ? device_->get_bindless_idx(rg_.get_texture_handle(rg_ssao_result_tex_handle),
+                                            SubresourceType::Storage)
+                : 0,
         };
         cmd.bind_pipeline(PipelineBindPoint::Compute, deferred_shade_pipeline_);
         cmd.push_constants(sizeof(pc), &pc);
@@ -1652,13 +1653,13 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
     }
   }
 
+  const char* ui_color_input_tex_name = "final_out";
   {
     auto& pp = rg.add_pass("post_process");
-    auto draw_out_handle =
-        pp.add(post_process_input_img_name, {.format = draw_img_format_}, Access::FragmentRead);
+    auto draw_out_handle = pp.add_image_access(post_process_input_img_name, Access::FragmentRead);
     auto final_out_handle =
-        pp.add("final_out", AttachmentInfo{.format = device_->get_swapchain_info().format},
-               Access::ColorWrite);
+        pp.add(ui_color_input_tex_name,
+               AttachmentInfo{.format = device_->get_swapchain_info().format}, Access::ColorWrite);
     pp.set_execute_fn([this, &rg, draw_out_handle, final_out_handle](CmdEncoder& cmd) {
       cmd.begin_region("post_process");
       if (postprocess_pass_enabled.get()) {
@@ -1693,6 +1694,39 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
     });
   }
 
+  if (fxaa_enabled_) {
+    auto& pass = rg.add_pass("fxaa");
+    auto rg_fxaa_input_handle =
+        pass.add_image_access(ui_color_input_tex_name, Access::ComputeSample);
+    ui_color_input_tex_name = "final_out_aa";
+    auto rg_fxaa_output_handle =
+        pass.add(ui_color_input_tex_name, {.format = device_->get_swapchain_info().format},
+                 Access::ComputeWrite);
+    pass.set_execute_fn([this, rg_fxaa_input_handle, rg_fxaa_output_handle](CmdEncoder& cmd) {
+      cmd.begin_region("fxaa");
+      auto fxaa_input_handle = rg_.get_texture_handle(rg_fxaa_input_handle);
+      auto fxaa_output_handle = rg_.get_texture_handle(rg_fxaa_output_handle);
+      struct {
+        u32 input_img;
+        u32 output_img;
+        float fixed_threshold;
+        float relative_threshold;
+        float subpixel_blending;
+      } pc{
+          device_->get_bindless_idx(fxaa_input_handle, SubresourceType::Shader),
+          device_->get_bindless_idx(fxaa_output_handle, SubresourceType::Storage),
+          fxaa_settings_.fixed_threshold,
+          fxaa_settings_.relative_threshold,
+          fxaa_settings_.subpixel_blending,
+      };
+      cmd.bind_pipeline(PipelineBindPoint::Compute, fxaa_pipeline_);
+      cmd.push_constants(sizeof(pc), &pc);
+      auto dims = device_->get_image(fxaa_input_handle)->size();
+      cmd.dispatch((dims.x + 16) / 16, (dims.y + 16) / 16, 1);
+      cmd.end_region();
+    });
+  }
+
   if (line_draw_vertices_.size()) {
     Buffer* line_draw_buf = device_->get_buffer(curr_frame().line_draw_buf);
     assert(line_draw_buf);
@@ -1713,7 +1747,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
     if (csm_enabled.get() && csm_->get_debug_render_enabled()) {
       csm_debug_img_handle = imgui_p.add_image_access("shadow_map_debug_img", Access::FragmentRead);
     }
-    auto rg_color_handle = imgui_p.add_image_access("final_out", Access::ColorRW);
+    auto rg_color_handle = imgui_p.add_image_access(ui_color_input_tex_name, Access::ColorRW);
     auto rg_depth_handle = imgui_p.add_image_access("depth", Access::DepthStencilRead);
     imgui_p.set_execute_fn(
         [this, rg_color_handle, &rg, csm_debug_img_handle, rg_depth_handle](CmdEncoder& cmd) {
@@ -1747,6 +1781,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
           cmd.end_region();
         });
   }
+  rg_.set_backbuffer_img(ui_color_input_tex_name);
 }
 
 void VkRender2::execute_draw(CmdEncoder& cmd, BufferHandle buffer, u32 draw_count) const {
@@ -2491,7 +2526,10 @@ std::string to_string(MeshPass p) {
       return "MeshPass_TransparentDoubleSided";
     case MeshPass_Count:
       return "MeshPass_Count";
+    default:
+      return {};
   }
+  return {};
 }
 
 void VkRender2::remove_instance(StaticModelInstanceResourcesHandle handle) {
@@ -2705,6 +2743,55 @@ void VkRender2::draw_joints(LoadedInstanceData& instance) {
       vec3 c{t[0][3], t[1][3], t[2][3]};
       draw_sphere(c, 5, vec4{1.f});
     }
+  }
+}
+
+void VkRender2::init_ssao() {
+  ZoneScoped;
+  std::uniform_real_distribution<float> random_floats(0.0, 1.0);
+  std::default_random_engine generator;
+  int n = 64;
+  std::vector<vec4> ssao_kernel;
+  ssao_kernel.reserve(n);
+  for (int i = 0; i < n; i++) {
+    vec3 sample{(random_floats(generator) * 2.f) - 1.f, (random_floats(generator) * 2.f) - 1.f,
+                (random_floats(generator))};
+    sample = glm::normalize(sample);
+
+    // scale closer to origin
+    float scale = i / (float)n;
+    scale = glm::mix(.1f, 1.f, scale * scale);
+    sample *= random_floats(generator);
+    ssao_kernel.emplace_back(sample, 0.f);
+  }
+  {
+    int n = 16;
+    std::vector<vec4> ssao_noise;
+    ssao_noise.reserve(n);
+    for (int i = 0; i < n; i++) {
+      // leave z at 0 to rotate around z axis
+      vec4 sample{(random_floats(generator) * 2.f) - 1.f, (random_floats(generator) * 2.f) - 1.f, 0,
+                  0};
+      ssao_noise.push_back(sample);
+    }
+    size_t ssao_noise_copy_size = sizeof(vec4) * ssao_noise.size();
+    size_t ssao_kernel_copy_size = sizeof(vec4) * ssao_kernel.size();
+    ssao_noise_buf_ = device_->create_buffer_holder(
+        BufferCreateInfo{.size = ssao_noise_copy_size, .usage = BufferUsage_Storage});
+    ssao_kernel_buf_ = device_->create_buffer_holder(
+        BufferCreateInfo{.size = ssao_kernel_copy_size, .usage = BufferUsage_Storage});
+
+    size_t tot_copy_size = ssao_noise_copy_size + ssao_kernel_copy_size;
+    auto copy_cmd = device_->graphics_copy_allocator_.allocate(tot_copy_size);
+    LinearCopyer copier(device_->get_buffer(copy_cmd.staging_buffer)->mapped_data(), tot_copy_size);
+    copier.copy(ssao_noise.data(), ssao_noise_copy_size);
+    copier.copy(ssao_kernel.data(), ssao_kernel_copy_size);
+
+    copy_cmd.copy_buffer(device_, *device_->get_buffer(ssao_noise_buf_), 0, 0,
+                         ssao_noise_copy_size);
+    copy_cmd.copy_buffer(device_, *device_->get_buffer(ssao_kernel_buf_), ssao_noise_copy_size, 0,
+                         ssao_kernel_copy_size);
+    device_->graphics_copy_allocator_.submit(copy_cmd);
   }
 }
 

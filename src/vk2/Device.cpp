@@ -161,6 +161,7 @@ void Device::init_impl(const CreateInfo& info) {
   VkPhysicalDeviceFeatures features{};
   features.shaderStorageImageWriteWithoutFormat = true;
   features.depthClamp = true;
+  features.samplerAnisotropy = true;
   features.shaderInt64 = true;
   features.multiDrawIndirect = true;
   features.fragmentStoresAndAtomics = true;

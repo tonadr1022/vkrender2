@@ -423,7 +423,7 @@ void App::on_imgui() {
     }
     float frame_time = tot / frame_times.size();
     ImGui::Text("Frame Time: %f ms/frame, FPS: %f", frame_time * 1000.f, 1.f / frame_time);
-    if (ImGui::TreeNodeEx("Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::TreeNodeEx("Camera")) {
       cam.on_imgui();
       ImGui::TreePop();
     }
@@ -456,7 +456,7 @@ void App::on_imgui() {
         auto* model = ResourceManager::get().get_model(instance->model_handle);
         static ImGuizmo::MODE mode{ImGuizmo::MODE::WORLD};
         static ImGuizmo::OPERATION operation{ImGuizmo::OPERATION::TRANSLATE};
-        if (ImGui::TreeNodeEx("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::TreeNodeEx("Transform")) {
           auto& scene = instance->scene_graph_data;
           int node = selected_node_;
           int parent = scene.hierarchies[node].parent;
@@ -508,7 +508,7 @@ void App::on_imgui() {
       ImGui::End();
     }
 
-    if (ImGui::TreeNodeEx("Scene", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::TreeNodeEx("Scene")) {
       util::fixed_vector<u32, 8> to_delete;
       size_t i = 0;
       for (auto& instance_handle : instances_) {
@@ -530,8 +530,7 @@ void App::on_imgui() {
           selected_node_ = 0;
           selected_obj_ = i;
         }
-        if (ImGui::TreeNodeEx("%s", ImGuiTreeNodeFlags_DefaultOpen, "%s",
-                              model->path.string().c_str())) {
+        if (ImGui::TreeNodeEx("%s", 0, "%s", model->path.string().c_str())) {
           scene_node_imgui(instance->scene_graph_data, 0, i);
           ImGui::TreePop();
         }

@@ -7,6 +7,7 @@
 #define NORMAL_MAPS_ENABLED_BIT (1 << 1)
 #define CSM_ENABLED_BIT (1 << 2)
 #define IBL_ENABLED_BIT (1 << 3)
+#define SSAO_ENABLED_BIT (1 << 4)
 
 #define INSTANCE_IS_ANIMATED_BIT (1 << 0)
 
@@ -32,6 +33,7 @@ struct SceneData {
     mat4 view;
     mat4 proj;
     mat4 inverse_view_proj;
+    mat4 inverse_proj;
     uvec4 debug_flags; // w is debug modes
     vec3 view_pos;
     vec3 light_dir;
