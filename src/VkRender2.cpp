@@ -350,11 +350,10 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
           GraphicsPipelineCreateInfo{
               .shaders = {{"fullscreen_quad.vert", ShaderType::Vertex},
                           {"postprocess/postprocess.frag", ShaderType::Fragment}},
-              .rendering = {.color_formats = {convert_format(
-                                device_->get_swapchain_info().format)}},
+              .rendering = {.color_formats = {convert_format(draw_img_format_)}},
               .rasterization = {.cull_mode = CullMode::Front},
               .depth_stencil = GraphicsPipelineCreateInfo::depth_disable(),
-              .name = "depth debug",
+              .name = "postprocess",
           },
           &postprocess_pipeline_)
       // .add_compute("postprocess/postprocess.comp", &postprocess_pipeline_)
@@ -362,7 +361,28 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
       .add_compute("gbuffer/shade.comp", &deferred_shade_pipeline_)
       .add_compute("ssao/ssao_1.comp", &ssao_1_pipeline_)
       .add_compute("ssao/ssao_blur.comp", &ssao_blur_pipeline_)
-      .add_compute("anti_alias/fxaa/fxaa.comp", &fxaa_pipeline_)
+      // .add_compute("anti_alias/fxaa/fxaa.comp", &fxaa_pipeline_)
+      .add_graphics(
+          GraphicsPipelineCreateInfo{
+              .shaders = {{"fullscreen_quad.vert", ShaderType::Vertex},
+                          {"anti_alias/fxaa/fxaa.frag", ShaderType::Fragment}},
+              .rendering = {.color_formats = {convert_format(draw_img_format_)}},
+              .rasterization = {.cull_mode = CullMode::Front},
+              .depth_stencil = GraphicsPipelineCreateInfo::depth_disable(),
+              .name = "fxaa",
+          },
+          &fxaa_pipeline_)
+      .add_graphics(
+          GraphicsPipelineCreateInfo{
+              .shaders = {{"fullscreen_quad.vert", ShaderType::Vertex},
+                          {"downsample/up_down_sample.frag", ShaderType::Fragment}},
+              .rendering = {.color_formats = {convert_format(
+                                device_->get_swapchain_info().format)}},
+              .rasterization = {.cull_mode = CullMode::Front},
+              .depth_stencil = GraphicsPipelineCreateInfo::depth_disable(),
+              .name = "up_down_sample",
+          },
+          &up_down_sample_pipeline_)
       .add_graphics(
           GraphicsPipelineCreateInfo{
               .shaders = {{"debug/basic.vert", ShaderType::Vertex},
@@ -1657,9 +1677,8 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
   {
     auto& pp = rg.add_pass("post_process");
     auto draw_out_handle = pp.add_image_access(post_process_input_img_name, Access::FragmentRead);
-    auto final_out_handle =
-        pp.add(ui_color_input_tex_name,
-               AttachmentInfo{.format = device_->get_swapchain_info().format}, Access::ColorWrite);
+    auto final_out_handle = pp.add(ui_color_input_tex_name,
+                                   AttachmentInfo{.format = draw_img_format_}, Access::ColorWrite);
     pp.set_execute_fn([this, &rg, draw_out_handle, final_out_handle](CmdEncoder& cmd) {
       cmd.begin_region("post_process");
       if (postprocess_pass_enabled.get()) {
@@ -1679,13 +1698,14 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
         cmd.begin_rendering({.extent = dims}, {RenderingAttachmentInfo::color_att(tex)});
         cmd.set_viewport_and_scissor(dims);
         cmd.bind_pipeline(PipelineBindPoint::Graphics, postprocess_pipeline_);
-        auto post_processed_img = rg.get_texture_handle(final_out_handle);
         struct {
-          u32 in_tex_idx, out_tex_idx, flags, tonemap_type;
-        } pc{device_->get_bindless_idx(rg.get_texture_handle(draw_out_handle),
-                                       SubresourceType::Shader),
-             device_->get_bindless_idx(post_processed_img, SubresourceType::Storage),
-             postprocess_flags, tonemap_type_};
+          u32 in_tex_idx, flags, tonemap_type;
+        } pc{
+            device_->get_bindless_idx(rg.get_texture_handle(draw_out_handle),
+                                      SubresourceType::Shader),
+            postprocess_flags,
+            tonemap_type_,
+        };
         cmd.push_constants(sizeof(pc), &pc);
         cmd.draw(3);
         cmd.end_rendering();
@@ -1697,30 +1717,64 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
   if (fxaa_enabled_) {
     auto& pass = rg.add_pass("fxaa");
     auto rg_fxaa_input_handle =
-        pass.add_image_access(ui_color_input_tex_name, Access::ComputeSample);
+        pass.add_image_access(ui_color_input_tex_name, Access::FragmentRead);
     ui_color_input_tex_name = "final_out_aa";
     auto rg_fxaa_output_handle =
-        pass.add(ui_color_input_tex_name, {.format = device_->get_swapchain_info().format},
-                 Access::ComputeWrite);
+        pass.add(ui_color_input_tex_name, {.format = draw_img_format_}, Access::ColorWrite);
     pass.set_execute_fn([this, rg_fxaa_input_handle, rg_fxaa_output_handle](CmdEncoder& cmd) {
       cmd.begin_region("fxaa");
       auto fxaa_input_handle = rg_.get_texture_handle(rg_fxaa_input_handle);
       auto fxaa_output_handle = rg_.get_texture_handle(rg_fxaa_output_handle);
+      auto output_dims = device_->get_image(fxaa_output_handle)->size();
       struct {
         u32 input_img;
-        u32 output_img;
         float fixed_threshold;
         float relative_threshold;
+        ivec2 img_size;
       } pc{
           device_->get_bindless_idx(fxaa_input_handle, SubresourceType::Shader),
-          device_->get_bindless_idx(fxaa_output_handle, SubresourceType::Storage),
           fxaa_settings_.fixed_threshold,
           fxaa_settings_.relative_threshold,
+          ivec2{output_dims},
       };
-      cmd.bind_pipeline(PipelineBindPoint::Compute, fxaa_pipeline_);
+      cmd.begin_rendering({.extent = output_dims},
+                          {RenderingAttachmentInfo::color_att(fxaa_output_handle)});
+      cmd.bind_pipeline(PipelineBindPoint::Graphics, fxaa_pipeline_);
       cmd.push_constants(sizeof(pc), &pc);
-      auto dims = device_->get_image(fxaa_input_handle)->size();
-      cmd.dispatch((dims.x + 16) / 16, (dims.y + 16) / 16, 1);
+      cmd.draw(3);
+      cmd.end_rendering();
+      cmd.end_region();
+    });
+  }
+  {
+    auto& pass = rg.add_pass("up_down_sample");
+    auto input_handle = pass.add_image_access(ui_color_input_tex_name, Access::FragmentRead);
+    ui_color_input_tex_name = "post_up_down_sample_tex";
+    auto output_handle =
+        pass.add(ui_color_input_tex_name, {.format = device_->get_swapchain_info().format},
+                 Access::ColorWrite);
+    pass.set_execute_fn([this, input_handle, output_handle](CmdEncoder& cmd) {
+      cmd.begin_region("up_down_sample");
+      auto output_handle_real = rg_.get_texture_handle(output_handle);
+      cmd.begin_rendering({.extent = device_->get_image(output_handle_real)->size()},
+                          {RenderingAttachmentInfo::color_att(output_handle_real)});
+
+      auto output_dims = vec2{device_->get_image(output_handle_real)->size()};
+      cmd.set_viewport_and_scissor(output_dims);
+      cmd.bind_pipeline(PipelineBindPoint::Graphics, up_down_sample_pipeline_);
+      auto input_handle_real = rg_.get_texture_handle(input_handle);
+      struct {
+        vec2 input_resolution;
+        vec2 output_resolution;
+        u32 input_img;
+      } pc{
+          vec2{device_->get_image(input_handle_real)->size()},
+          output_dims,
+          device_->get_bindless_idx(input_handle_real, SubresourceType::Shader),
+      };
+      cmd.push_constants(sizeof(pc), &pc);
+      cmd.draw(3);
+      cmd.end_rendering();
       cmd.end_region();
     });
   }

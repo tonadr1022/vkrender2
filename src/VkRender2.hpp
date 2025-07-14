@@ -413,6 +413,7 @@ class VkRender2 final {
   PipelineHandle ssao_1_pipeline_;
   PipelineHandle ssao_blur_pipeline_;
   PipelineHandle fxaa_pipeline_;
+  PipelineHandle up_down_sample_pipeline_;
   Format gbuffer_a_format_{Format::R8G8B8A8Unorm};
   Format gbuffer_b_format_{Format::R8G8B8A8Unorm};
   Format gbuffer_c_format_{Format::R8G8B8A8Unorm};

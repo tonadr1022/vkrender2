@@ -32,8 +32,9 @@ struct ResourceDimensions {
   BufferInfo buffer_info;
   ImageHandle external_img_handle;
   SizeClass size_class{SizeClass::SwapchainRelative};
-  bool scaled{true};
   uint32_t width{}, height{}, depth{}, layers{1}, levels{1}, samples{1};
+  bool scaled{true};
+  bool is_swapchain{};
   Access access_usage{};
   // VkImageUsageFlags image_usage_flags{};
   // TODO: queues

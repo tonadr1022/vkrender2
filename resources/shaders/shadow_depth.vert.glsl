@@ -32,7 +32,7 @@ layout(std430, buffer_reference) readonly buffer ObjectDatas {
 void main() {
     InstanceData instance_data = InstanceDatas(instance_buffer).datas[gl_InstanceIndex];
     Vertex v = Vertices(vtx).vertices[gl_VertexIndex];
-    vec4 pos = ObjectDatas(object_data_buffer).datas[instance_data.instance_id].model * vec4(v.pos, 1.);
+    vec4 pos = ObjectDatas(object_data_buffer).datas[gl_InstanceIndex].model * vec4(v.pos, 1.);
     gl_Position = vp_matrix * pos;
     out_uv = vec2(v.uv_x, v.uv_y);
     material_id = instance_data.material_id;

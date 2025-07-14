@@ -458,6 +458,27 @@ void RenderGraph::execute(CmdEncoder& cmd) {
   }
 
   {
+    VkImageMemoryBarrier2 img_barriers[] = {
+        VkImageMemoryBarrier2{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+            .srcAccessMask = 0,
+            .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .image = swapchain_img_,
+            .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                 .levelCount = 1,
+                                 .layerCount = 1},
+        },
+    };
+    VkDependencyInfo info{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                          .imageMemoryBarrierCount = COUNTOF(img_barriers),
+                          .pImageMemoryBarriers = img_barriers};
+    vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
+  }
+  {
     ZoneScopedN("Record commands");
     for (u32 pass_i : pass_stack_) {
       ZoneScopedN("Record command");
@@ -506,84 +527,84 @@ void RenderGraph::execute(CmdEncoder& cmd) {
   }
 
   // blit to swapchain
+  // {
+  //   get_device().begin_swapchain_blit(&cmd);
+  //   // only write each image to the swapchain once
+  //   util::fixed_vector<u32, 20> swapchain_writer_pass_indices;
+  //   for (u32 pass_i : swapchain_writer_passes_) {
+  //     auto& pass = passes_[pass_i];
+  //     if (const auto* output = pass.get_swapchain_write_usage(); output != nullptr) {
+  //       auto* resource = get_resource(output->handle);
+  //       auto* tex = get_texture(output->handle);
+  //
+  //       if (std::ranges::find(swapchain_writer_pass_indices, output->handle.idx) !=
+  //           swapchain_writer_pass_indices.end()) {
+  //         continue;
+  //       }
+  //
+  //       swapchain_writer_pass_indices.push_back(output->handle.idx);
+  //
+  //       assert(resource && tex);
+  //       if (!resource || !tex) {
+  //         continue;
+  //       }
+  //       auto* pstate = get_resource_pipeline_state(resource->physical_idx);
+  //       assert(pstate);
+  //       auto& state = *pstate;
+  //       VkImageMemoryBarrier2 img_barriers[] = {
+  //           VkImageMemoryBarrier2{
+  //               .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+  //               .srcStageMask = state.pipeline_barrier_src_stages,
+  //               .srcAccessMask = state.to_flush_access,
+  //               .dstStageMask = VK_PIPELINE_STAGE_2_BLIT_BIT,
+  //               .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
+  //               .oldLayout = state.layout,
+  //               .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+  //               .image = tex->image(),
+  //               .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+  //           },
+  //       };
+  //       VkDependencyInfo info{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+  //                             .imageMemoryBarrierCount = COUNTOF(img_barriers),
+  //                             .pImageMemoryBarriers = img_barriers};
+  //       vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
+  //
+  //       // LINFO("blt {} {} {} {}", tex->get_desc().dims.x, tex->get_desc().dims.y, desc_.dims.x,
+  //       //       desc_.dims.y);
+  //       get_device().blit_to_swapchain(&cmd, *tex, tex->get_desc().dims, desc_.dims);
+  //
+  //       // write after read barrier
+  //       state.layout = img_barriers[0].newLayout;
+  //       state.to_flush_access = 0;
+  //       for (auto& e : state.invalidated_in_stage) e = 0;
+  //       state.invalidated_in_stage[util::trailing_zeros(VK_PIPELINE_STAGE_2_BLIT_BIT)] =
+  //           VK_ACCESS_2_TRANSFER_READ_BIT;
+  //       state.pipeline_barrier_src_stages = VK_PIPELINE_STAGE_2_BLIT_BIT;
+  //     }
+  //   }
+  //   // TODO: move this into device?
   {
-    get_device().begin_swapchain_blit(&cmd);
-    // only write each image to the swapchain once
-    util::fixed_vector<u32, 20> swapchain_writer_pass_indices;
-    for (u32 pass_i : swapchain_writer_passes_) {
-      auto& pass = passes_[pass_i];
-      if (const auto* output = pass.get_swapchain_write_usage(); output != nullptr) {
-        auto* resource = get_resource(output->handle);
-        auto* tex = get_texture(output->handle);
-
-        if (std::ranges::find(swapchain_writer_pass_indices, output->handle.idx) !=
-            swapchain_writer_pass_indices.end()) {
-          continue;
-        }
-
-        swapchain_writer_pass_indices.push_back(output->handle.idx);
-
-        assert(resource && tex);
-        if (!resource || !tex) {
-          continue;
-        }
-        auto* pstate = get_resource_pipeline_state(resource->physical_idx);
-        assert(pstate);
-        auto& state = *pstate;
-        VkImageMemoryBarrier2 img_barriers[] = {
-            VkImageMemoryBarrier2{
-                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                .srcStageMask = state.pipeline_barrier_src_stages,
-                .srcAccessMask = state.to_flush_access,
-                .dstStageMask = VK_PIPELINE_STAGE_2_BLIT_BIT,
-                .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
-                .oldLayout = state.layout,
-                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                .image = tex->image(),
-                .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
-            },
-        };
-        VkDependencyInfo info{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                              .imageMemoryBarrierCount = COUNTOF(img_barriers),
-                              .pImageMemoryBarriers = img_barriers};
-        vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
-
-        // LINFO("blt {} {} {} {}", tex->get_desc().dims.x, tex->get_desc().dims.y, desc_.dims.x,
-        //       desc_.dims.y);
-        get_device().blit_to_swapchain(&cmd, *tex, tex->get_desc().dims, desc_.dims);
-
-        // write after read barrier
-        state.layout = img_barriers[0].newLayout;
-        state.to_flush_access = 0;
-        for (auto& e : state.invalidated_in_stage) e = 0;
-        state.invalidated_in_stage[util::trailing_zeros(VK_PIPELINE_STAGE_2_BLIT_BIT)] =
-            VK_ACCESS_2_TRANSFER_READ_BIT;
-        state.pipeline_barrier_src_stages = VK_PIPELINE_STAGE_2_BLIT_BIT;
-      }
-    }
-    // TODO: move this into device?
-    {
-      VkImageMemoryBarrier2 img_barriers[] = {
-          VkImageMemoryBarrier2{
-              .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-              .srcStageMask = VK_PIPELINE_STAGE_2_BLIT_BIT,
-              .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-              .dstStageMask = VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,
-              .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT,
-              .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-              .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-              .image = swapchain_img_,
-              .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                   .levelCount = 1,
-                                   .layerCount = 1},
-          },
-      };
-      VkDependencyInfo info{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                            .imageMemoryBarrierCount = COUNTOF(img_barriers),
-                            .pImageMemoryBarriers = img_barriers};
-      vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
-    }
+    VkImageMemoryBarrier2 img_barriers[] = {
+        VkImageMemoryBarrier2{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+            .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,
+            .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            .image = swapchain_img_,
+            .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                 .levelCount = 1,
+                                 .layerCount = 1},
+        },
+    };
+    VkDependencyInfo info{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                          .imageMemoryBarrierCount = COUNTOF(img_barriers),
+                          .pImageMemoryBarriers = img_barriers};
+    vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
   }
+  // }
 }
 
 // TODO: not recursive
@@ -707,11 +728,12 @@ ResourceDimensions RenderGraph::get_resource_dims(const RenderResource& resource
       dims.width = desc_.dims.x;
       dims.height = desc_.dims.y;
       // TODO: lol
-      dims.width *= render_scale_;
-      dims.height *= render_scale_;
       if (resource.name != backbuffer_img_) {
+        dims.width *= render_scale_;
+        dims.height *= render_scale_;
       } else {
-        // dims.scaled = false;
+        dims.is_swapchain = true;
+        dims.scaled = false;
       }
     } else if (resource.info.size_class == SizeClass::Absolute) {
       dims.width = (uint32_t)resource.info.dims.x;
@@ -895,9 +917,13 @@ void RenderGraph::setup_attachments() {
         }
         if (need_new_img) {
           image_pipeline_states_.erase(physical_image_attachments_[i]);
-          LINFO("making new image: {}", i);
-          img_cache_used_.emplace_back(dims, get_device().create_image_holder(desc));
-          physical_image_attachments_[i] = img_cache_used_.back().second.handle;
+          if (!dims.is_swapchain) {
+            LINFO("making new image: {}", i);
+            img_cache_used_.emplace_back(dims, get_device().create_image_holder(desc));
+            physical_image_attachments_[i] = img_cache_used_.back().second.handle;
+          } else {
+            physical_image_attachments_[i] = get_device().get_swapchain_handle();
+          }
         }
       }
     } else if (dims.is_image()) {
@@ -907,6 +933,7 @@ void RenderGraph::setup_attachments() {
     }
   }
 }
+
 namespace {
 VkImageLayout get_image_layout(Access access) {
   if (access & Access::ColorRW) {

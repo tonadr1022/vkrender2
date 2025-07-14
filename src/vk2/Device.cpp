@@ -1524,8 +1524,10 @@ u32 Device::get_bindless_idx(ImageHandle img, SubresourceType type, int subresou
   if (subresource == -1) {
     switch (type) {
       case gfx::SubresourceType::Shader:
+        assert(image->sampled_view_.is_valid());
         return image->sampled_view_.resource_info.handle;
       case gfx::SubresourceType::Storage:
+        assert(image->storage_view_.is_valid());
         return image->storage_view_.resource_info.handle;
       case gfx::SubresourceType::Attachment:
         assert(0 && "can't access attachment view bindlessly");
@@ -2168,9 +2170,10 @@ void Device::create_swapchain(vk2::Swapchain& swapchain, const vk2::SwapchainDes
     img.image_ = imgs_raw[i];
     assert(img.image_);
     img.desc_.misc_flags |= ResourceMiscFlag::ImageSwapchain;
-    img.desc_.bind_flags |= BindFlag::Storage;
+    img.desc_.bind_flags |= BindFlag::ColorAttachment;
     img.desc_.dims = uvec3{swapchain.dims, 1};
     img.desc_.array_layers = 1;
+    img.desc_.sample_count = 1;
     img.desc_.mip_levels = 1;
     img.desc_.format = vk2::convert_format(swapchain.format);
     VkImageViewCreateInfo view_info{.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,

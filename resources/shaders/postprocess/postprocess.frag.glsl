@@ -10,7 +10,6 @@ layout(location = 0) out vec4 out_frag_color;
 
 layout(push_constant) uniform PC {
     uint in_tex_idx;
-    uint out_tex_idx;
     uint flags;
     uint tonemap_type;
 };
