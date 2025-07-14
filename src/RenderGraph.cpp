@@ -235,16 +235,16 @@ VoidResult RenderGraph::bake() {
     swapchain_writer_passes_.clear();
     pass_dependencies_.clear();
     pass_dependencies_.resize(passes_.size());
-    for (uint32_t pass_i = 0; pass_i < passes_.size(); pass_i++) {
+    bool done = false;
+    for (int pass_i = passes_.size() - 1; pass_i >= 0 && !done; pass_i--) {
       auto& pass = passes_[pass_i];
       for (const auto& usage : pass.get_resources()) {
         if (get_resource(usage.handle)->name == backbuffer_img_ && is_write_access(usage.access)) {
-          // TODO: move this to validation phase
-          // if (!(usage.access_flags & VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT)) {
-          //   return std::unexpected("backbuffer output is not of usage ColorOutput");
-          // }
           pass_stack_.emplace_back(pass_i);
           swapchain_writer_passes_.emplace_back(pass_i);
+          // TODO: lol
+          done = true;
+          break;
         }
       }
     }
@@ -548,6 +548,8 @@ void RenderGraph::execute(CmdEncoder& cmd) {
                               .pImageMemoryBarriers = img_barriers};
         vkCmdPipelineBarrier2KHR(cmd.cmd(), &info);
 
+        // LINFO("blt {} {} {} {}", tex->get_desc().dims.x, tex->get_desc().dims.y, desc_.dims.x,
+        //       desc_.dims.y);
         get_device().blit_to_swapchain(&cmd, *tex, tex->get_desc().dims, desc_.dims);
 
         // write after read barrier
@@ -705,11 +707,11 @@ ResourceDimensions RenderGraph::get_resource_dims(const RenderResource& resource
       dims.width = desc_.dims.x;
       dims.height = desc_.dims.y;
       // TODO: lol
+      dims.width *= render_scale_;
+      dims.height *= render_scale_;
       if (resource.name != backbuffer_img_) {
-        dims.width *= render_scale_;
-        dims.height *= render_scale_;
       } else {
-        dims.scaled = false;
+        // dims.scaled = false;
       }
     } else if (resource.info.size_class == SizeClass::Absolute) {
       dims.width = (uint32_t)resource.info.dims.x;
@@ -919,7 +921,7 @@ VkImageLayout get_image_layout(Access access) {
   if (access & Access::DepthStencilRW) {
     return VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL_KHR;
   }
-  if (access & (Access::ComputeRW | Access::TransferWrite)) {
+  if (access & (Access::ComputeRW | Access::TransferWrite | Access::ComputeSample)) {
     return VK_IMAGE_LAYOUT_GENERAL;
   }
   return VK_IMAGE_LAYOUT_UNDEFINED;

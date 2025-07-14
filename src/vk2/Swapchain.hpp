@@ -5,6 +5,8 @@
 #include <vector>
 
 #include "Common.hpp"
+#include "Types.hpp"
+#include "vk2/Pool.hpp"
 
 namespace gfx::vk2 {
 
@@ -28,8 +30,9 @@ struct SwapchainDesc {
 struct Swapchain {
   enum class Status : u8 { Ready, Resized, NotReady };
   SwapchainDesc desc;
-  std::vector<VkImage> imgs;
-  std::vector<VkImageView> img_views;
+  // std::vector<VkImage> imgs;
+  // std::vector<VkImageView> img_views;
+  std::vector<Holder<ImageHandle>> device_imgs;
   std::vector<VkSemaphore> acquire_semaphores;
   std::vector<VkSemaphore> release_semaphores;
   u32 acquire_semaphore_idx{};
@@ -46,7 +49,5 @@ struct Swapchain {
  private:
   // void init(const UpdateSwapchainInfo& info, VkSwapchainKHR old);
 };
-// cannot fail
-void create_swapchain(Swapchain& swapchain, const SwapchainDesc& desc);
 
 }  // namespace gfx::vk2

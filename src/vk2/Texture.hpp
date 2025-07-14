@@ -8,6 +8,11 @@
 
 namespace gfx {
 
+// TODO: clean up
+namespace vk2 {
+struct Swapchain;
+}
+
 struct ImageDesc {
   enum class Type : u8 { OneD, TwoD, ThreeD };
   Type type{Type::TwoD};
@@ -44,6 +49,7 @@ class Image {
 
  private:
   friend class Device;
+  friend struct vk2::Swapchain;
   ImageDesc desc_;
   VkImageView attachment_view_{};
   ImageView2 storage_view_;

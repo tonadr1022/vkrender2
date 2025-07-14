@@ -30,6 +30,11 @@ namespace gfx {
 class Device;
 struct CmdEncoder;
 
+namespace vk2 {
+struct Swapchain;
+struct SwapchainDesc;
+}  // namespace vk2
+
 enum class DeviceFeature : u8 { DrawIndirectCount };
 
 class Sampler {
@@ -88,7 +93,7 @@ class Device {
   // VkFormat get_swapchain_format();
 
   void acquire_next_image(CmdEncoder* cmd);
-  [[nodiscard]] VkImage get_curr_swapchain_img() const;
+  [[nodiscard]] VkImage get_curr_swapchain_img();
 
   // TODO: eradicate this
   [[nodiscard]] VkInstance get_instance() const { return instance_.instance; }
@@ -181,6 +186,7 @@ class Device {
   void free_semaphore_unsafe(VkSemaphore semaphore);
   std::mutex semaphore_pool_mtx_;
   std::vector<VkSemaphore> free_semaphores_;
+  void create_swapchain(vk2::Swapchain& swapchain, const vk2::SwapchainDesc& desc);
 
  public:
   struct Queue {

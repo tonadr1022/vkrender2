@@ -197,7 +197,7 @@ VkRender2::VkRender2(const InitInfo& info, bool& success)
   nearest_sampler_ = device_->get_or_create_sampler({
       .min_filter = FilterMode::Nearest,
       .mag_filter = FilterMode::Nearest,
-      .mipmap_mode = FilterMode::Linear,
+      .mipmap_mode = FilterMode::Nearest,
       .address_mode = AddressMode::Repeat,
   });
   if (device_->get_bindless_idx(nearest_sampler_) != 1) {
@@ -701,7 +701,7 @@ void VkRender2::draw(const SceneDrawInfo& info) {
 
   {
     ZoneScopedN("oit setup");
-    auto draw_img_dims = device_->get_swapchain_info().dims;
+    uvec3 draw_img_dims = uvec3{vec2{device_->get_swapchain_info().dims} * vec2{render_scale_}, 1};
     // OIT
     u32 max_oit_fragments = draw_img_dims.x * draw_img_dims.y * 4;
     if (max_oit_fragments > max_oit_fragments_) {
@@ -835,7 +835,6 @@ void VkRender2::on_imgui() {
                          FxaaSettings::fixed_thresh_range.x, FxaaSettings::fixed_thresh_range.y);
       ImGui::SliderFloat("Relative Threshold", &fxaa_settings_.relative_threshold,
                          FxaaSettings::rel_thresh_range.x, FxaaSettings::rel_thresh_range.y);
-      ImGui::SliderFloat("Subpixel Blending", &fxaa_settings_.subpixel_blending, 0.0f, 1.0f);
       ImGui::TreePop();
     }
 
@@ -1565,6 +1564,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
       transparent_draw_pass.set_execute_fn([&rg, rg_depth_handle, this](CmdEncoder& cmd) {
         cmd.begin_region("oit draw");
         auto dims = rg.get_texture(rg_depth_handle)->size();
+        state_.reset(cmd);
         state_
             .buffer_barrier(*device_->get_buffer(oit_atomic_counter_buf_),
                             VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
@@ -1711,13 +1711,11 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
         u32 output_img;
         float fixed_threshold;
         float relative_threshold;
-        float subpixel_blending;
       } pc{
           device_->get_bindless_idx(fxaa_input_handle, SubresourceType::Shader),
           device_->get_bindless_idx(fxaa_output_handle, SubresourceType::Storage),
           fxaa_settings_.fixed_threshold,
           fxaa_settings_.relative_threshold,
-          fxaa_settings_.subpixel_blending,
       };
       cmd.bind_pipeline(PipelineBindPoint::Compute, fxaa_pipeline_);
       cmd.push_constants(sizeof(pc), &pc);

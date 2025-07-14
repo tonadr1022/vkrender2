@@ -513,6 +513,7 @@ enum class Format {
 enum class ResourceMiscFlag : u8 {
   None = 0,
   ImageCube = 1 << 0,
+  ImageSwapchain = 1 << 1,
 };
 
 enum class Usage : u8 {
