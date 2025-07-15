@@ -273,6 +273,7 @@ struct RenderGraph {
   [[nodiscard]] ResourceDimensions get_resource_dims(const RenderResource& resource) const;
   void build_physical_resource_reqs();
   void build_barrier_infos();
+  void build_resource_aliases();
   void physical_pass_setup_barriers(u32 pass_i);
   void print_barrier(const VkImageMemoryBarrier2& barrier) const;
   void print_barrier(const VkBufferMemoryBarrier2& barrier) const;
@@ -293,5 +294,17 @@ struct RenderGraph {
   bool log_ = true;
   float render_scale_{1};
 };
+
+/*
+dims1 dims2 dims3
+dims3 == dims1
+
+pass1 pass2 pass3
+use1  use2  use3
+
+in pass 3, we know use1 is never used again, so it can be reused
+
+
+*/
 
 }  // namespace gfx

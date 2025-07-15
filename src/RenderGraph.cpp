@@ -263,9 +263,7 @@ VoidResult RenderGraph::bake() {
         return res;
       }
     }
-    // reverse since sinks were added first, initial passes added last
     std::ranges::reverse(pass_stack_);
-    // only execute a pass once
     prune_duplicates(pass_stack_);
 
     if (log_) {
@@ -277,6 +275,7 @@ VoidResult RenderGraph::bake() {
   }
 
   build_physical_resource_reqs();
+  // build_resource_aliases();
 
   {
     ZoneScopedN("build physical passes");
@@ -1222,6 +1221,51 @@ void RenderGraph::print_pass_order() {
     LINFO("{}", passes_[pass].name_);
   }
   LINFO("");
+}
+
+void RenderGraph::build_resource_aliases() {
+  struct RWData {
+    u32 first_read, last_read;
+    u32 first_write, last_write;
+  };
+  std::vector<RWData> last_read_pass_indices(resources_.size());
+  auto find_pass_stack_i = [this](u32 pass) {
+    for (u32 i = 0; i < pass_stack_.size(); i++) {
+      if (pass_stack_[i] == pass) {
+        return i;
+      }
+    }
+    return UINT32_MAX;
+  };
+
+  for (size_t resource_i = 0; resource_i < resources_.size(); resource_i++) {
+    auto& resource = resources_[resource_i];
+    if (resource.get_type() != RenderResource::Type::Texture) continue;
+    u32 last_read_pass = 0;
+    u32 first_read_pass = UINT32_MAX;
+    for (const auto& p : resource.get_read_passes()) {
+      auto pass_stack_i = find_pass_stack_i(p);
+      last_read_pass = std::max(last_read_pass, pass_stack_i);
+      first_read_pass = std::min(first_read_pass, pass_stack_i);
+    }
+
+    u32 last_write_pass = 0;
+    u32 first_write_pass = UINT32_MAX;
+    for (const auto& p : resource.get_written_passes()) {
+      auto pass_stack_i = find_pass_stack_i(p);
+      last_write_pass = std::max(last_write_pass, pass_stack_i);
+      first_write_pass = std::min(first_write_pass, pass_stack_i);
+    }
+
+    last_read_pass_indices[resource_i].last_read = last_read_pass;
+    last_read_pass_indices[resource_i].first_read = first_read_pass;
+    LINFO("[{}][{}] first r: {}, last r {}, first w: {},last w: {}", resource_i, resource.name,
+          first_read_pass, last_read_pass, first_write_pass, last_write_pass);
+  }
+  LINFO("passes[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]");
+  for (auto i : pass_stack_) {
+    LINFO("pass [{}]", passes_[i].name_);
+  }
 }
 
 }  // namespace gfx
