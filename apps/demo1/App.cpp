@@ -182,7 +182,7 @@ void App::run() {
   // instances_.emplace_back(
   //     ResourceManager::get().load_model("/Users/tony/models/Models/Fox/glTF/Fox.gltf"));
   // instances_.emplace_back(ResourceManager::get().load_model("/Users/tony/theboss.glb"));
-  character_instance_ = add_instance("/home/tony/theboss.glb");
+  character_instance_ = add_instance("/Users/tony/Downloads/theboss.glb");
   // instances_.emplace_back(
   //     ResourceManager::get().load_model("/Users/tony/models/Models/Cube/glTF/Cube.gltf"));
   // instances_.emplace_back(ResourceManager::get().load_model(
@@ -202,7 +202,7 @@ void App::run() {
   // instances_.emplace_back(ResourceManager::get().load_model(
   //     "/Users/tony/models/Models/AlphaBlendModeTest/glTF/AlphaBlendModeTest.gltf"));
 
-  add_instance(local_models_dir / "Bistro_Godot_opt.glb");
+  add_instance("/Users/tony/Downloads/Bistro_Godot_opt.glb");
 
   // std::filesystem::path env_tex = local_models_dir / "quarry_04_puresky_4k.hdr";
   // std::filesystem::path env_tex = local_models_dir / "immenstadter_horn_2k.hdr";
@@ -212,7 +212,7 @@ void App::run() {
 
   // instances_.emplace_back(
   //     ResourceManager::get().load_model(resource_dir / "models/Cube/glTF/Cube.gltf"));
-  std::filesystem::path env_tex = local_models_dir / "newport_loft.hdr";
+  std::filesystem::path env_tex = "/Users/tony/Downloads/newport_loft.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/quarry_04_puresky_4k.hdr";
   // std::filesystem::path env_tex = "/home/tony/Downloads/golden_gate_hills_4k.hdr";
 

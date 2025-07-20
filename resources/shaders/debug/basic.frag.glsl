@@ -52,10 +52,6 @@ void main() {
             ao = texture(vk2_sampler2D(material.ids2.x, sampler_idx), in_uv).r;
         }
     }
-    if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_AO_MAP) {
-        out_frag_color = vec4(vec3(ao), 1.);
-        return;
-    }
     float metallic = material.pbr_factors.x;
     float roughness = material.pbr_factors.y;
     if (material.ids.z != 0) {

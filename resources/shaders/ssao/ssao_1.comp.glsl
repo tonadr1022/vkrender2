@@ -17,6 +17,7 @@ vec4 kernel[];
 } ssao_kernels[];
 
 layout(push_constant) uniform PC {
+    ivec2 img_size;
     uint scene_data_buf;
     uint depth_img;
     uint ssao_noise_buf;
@@ -28,15 +29,17 @@ layout(push_constant) uniform PC {
 
 layout(local_size_x = 16, local_size_y = 16) in;
 
+#define SAMP_DEPTH(x) texture(vk2_sampler2D(pc.depth_img, NEAREST_SAMPLER_BINDLESS_IDX), x).r
+
 void main() {
     ivec2 tex_coord = ivec2(gl_GlobalInvocationID);
-    ivec2 img_size = imageSize(vk2_get_storage_img(image2D, pc.depth_img));
+    ivec2 img_size = pc.img_size;
     if (any(greaterThanEqual(tex_coord, img_size))) {
         return;
     }
     SceneData scene_data = scene_data_buffer[pc.scene_data_buf].data;
     vec2 uv = (vec2(tex_coord) + .5) / vec2(img_size);
-    float depth = imageLoad(vk2_get_storage_img(image2D, pc.depth_img), tex_coord).r;
+    float depth = SAMP_DEPTH(uv);
     vec4 clip_pos = vec4(uv * 2. - 1., depth, 1.);
     vec4 wpos_pre_divide = scene_data.inverse_view_proj * clip_pos;
     vec3 world_pos = wpos_pre_divide.xyz / wpos_pre_divide.w;
@@ -70,13 +73,8 @@ void main() {
         vec4 offset = scene_data.proj * vec4(sample_pos, 1.0);
         offset.xyz /= offset.w;
         offset.xy = offset.xy * .5 + .5;
-        // if (offset.x < 0 || offset.x > 1.0 || offset.y < 0.0 || offset.y > 1.0) {
-        //     continue;
-        // }
 
-        ivec2 sample_coord = ivec2(offset.xy * vec2(img_size));
-        sample_coord = clamp(sample_coord, ivec2(0), img_size - 1);
-        float sample_depth = imageLoad(vk2_get_storage_img(image2D, pc.depth_img), sample_coord).r;
+        float sample_depth = SAMP_DEPTH(offset.xy);
         vec4 sample_clip_pos = vec4(offset.xy * 2.0 - 1.0, sample_depth, 1.0);
 
         vec4 sample_wpos_pre_divide = scene_data.inverse_view_proj * sample_clip_pos;

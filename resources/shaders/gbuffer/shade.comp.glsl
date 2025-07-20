@@ -38,7 +38,6 @@ void main() {
     float roughness = gbuffer_a.a;
     vec3 albedo = gbuffer_b.rgb;
     vec3 emissive = gbuffer_c.rgb;
-    float ao = gbuffer_c.a;
     vec3 V = normalize(scene_data.view_pos - world_pos);
 
     float ssao_result = 1.0f;
@@ -46,6 +45,10 @@ void main() {
         ssao_result = imageLoad(vk2_get_storage_img(image2D, ssao_tex), tex_coord).r;
     }
 
+    if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_ALBEDO) {
+        STORE(vec4(vec3(albedo), 1.));
+        return;
+    }
     if ((debug_flags.w & DEBUG_MODE_MASK) == DEBUG_MODE_SSAO) {
         STORE(vec4(vec3(ssao_result), 1.));
         return;
@@ -67,9 +70,6 @@ void main() {
         STORE(vec4(vec3(shadow), 1.));
         return;
     }
-
-    // imageStore(vk2_get_storage_img(image2D, output_tex), tex_coord, vec4(world_pos, 1.));
-    imageStore(vk2_get_storage_img(image2D, output_tex), tex_coord, vec4(N * .5 + .5, 1.));
 
     vec3 light_out = vec3(0.0);
     vec3 F0 = vec3(0.04);

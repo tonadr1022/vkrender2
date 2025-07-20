@@ -457,7 +457,6 @@ class VkRender2 final {
 
   bool render_prefilter_mip_skybox_{true};
   bool draw_imgui_{true};
-  bool deferred_enabled_{true};
   bool draw_debug_aabbs_{false};
 
   // OIT things

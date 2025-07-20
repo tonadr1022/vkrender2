@@ -34,7 +34,6 @@
 #include "imgui/imgui.h"
 #include "shaders/common.h.glsl"
 #include "shaders/cull_objects_common.h.glsl"
-#include "shaders/debug/basic_common.h.glsl"
 #include "shaders/gbuffer/gbuffer_common.h.glsl"
 #include "shaders/gbuffer/shade_common.h.glsl"
 #include "shaders/lines/draw_line_common.h.glsl"
@@ -871,8 +870,6 @@ void VkRender2::on_imgui() {
       }
       ImGui::TreePop();
     }
-
-    ImGui::Checkbox("Deferred Rendering", &deferred_enabled_);
     ImGui::Checkbox("Render prefilter env map skybox", &render_prefilter_mip_skybox_);
     ImGui::SliderInt("Prefilter Env Map Layer", &prefilter_mip_skybox_render_mip_level_, 0,
                      device_->get_image(ibl_->prefiltered_env_map_tex_)->get_desc().mip_levels - 1);
@@ -892,8 +889,6 @@ VkRender2::~VkRender2() {
 
 const char* VkRender2::debug_mode_to_string(u32 mode) {
   switch (mode) {
-    case DEBUG_MODE_AO_MAP:
-      return "AO Map";
     case DEBUG_MODE_NORMALS:
       return "Normals";
     case DEBUG_MODE_CASCADE_LEVELS:
@@ -902,6 +897,8 @@ const char* VkRender2::debug_mode_to_string(u32 mode) {
       return "Shadow";
     case DEBUG_MODE_SSAO:
       return "SSAO";
+    case DEBUG_MODE_ALBEDO:
+      return "Albedo";
     default:
       return "None";
   }
@@ -1260,139 +1257,80 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
     csm_->debug_shadow_pass(rg, linear_sampler_);
   }
 
-  if (!deferred_enabled_) {
-    auto& forward = rg.add_pass("forward");
-    auto rg_final_out_handle =
-        forward.add("draw_out", {.format = draw_img_format_}, Access::ColorWrite);
+  {
+    auto& gbuffer = rg.add_pass("gbuffer");
+    auto rg_gbuffer_a = gbuffer.add("gbuffer_a", {.format = gbuffer_a_format_}, Access::ColorWrite);
+    auto rg_gbuffer_b = gbuffer.add("gbuffer_b", {.format = gbuffer_b_format_}, Access::ColorWrite);
+    auto rg_gbuffer_c = gbuffer.add("gbuffer_c", {.format = gbuffer_c_format_}, Access::ColorWrite);
+    if (draw_stats_.animated_vertices > 0) {
+      gbuffer.add(animated_vertex_output_bufs_.buffers[device_->curr_frame_in_flight()].handle,
+                  (Access)(Access::VertexRead | Access::ComputeRead));
+    }
 
-    for (int pass_i = 0; pass_i < MeshPass_Count; pass_i++) {
-      for (int animated = 0; animated < 2; animated++) {
+    for (int animated = 0; animated < 2; animated++) {
+      for (u32 pass_i : opaque_mesh_pass_idxs_) {
         auto& mgr = get_mgr((MeshPass)pass_i, animated);
         if (mgr.should_draw()) {
-          forward.add(mgr.get_draw_pass(main_view_mesh_pass_indices_[pass_i])
+          gbuffer.add(mgr.get_draw_pass(main_view_mesh_pass_indices_[pass_i])
                           .get_frame_out_draw_cmd_buf_handle(),
                       Access::IndirectRead);
         }
       }
     }
-    if (csm_enabled.get()) {
-      forward.add(csm_->get_shadow_data_buffer(device_->curr_frame_num()), Access::FragmentRead);
-      forward.add("shadow_map_img", csm_->get_shadow_map_att_info(), Access::FragmentRead);
-    }
-    auto depth_out_handle =
-        forward.add("depth", {.format = depth_img_format_}, Access::DepthStencilWrite);
-    forward.set_execute_fn([&rg, rg_final_out_handle, this, depth_out_handle](CmdEncoder& cmd) {
-      auto tex_handle = rg.get_texture_handle(rg_final_out_handle);
-      auto dims = device_->get_image(tex_handle)->size();
-      cmd.begin_rendering({.extent = dims},
-                          {{RenderingAttachmentInfo::color_att(tex_handle, LoadOp::Clear)},
-                           {RenderingAttachmentInfo::color_att(
-                               rg.get_texture_handle(depth_out_handle), LoadOp::Clear)}});
-      cmd.set_viewport_and_scissor(dims);
-      cmd.set_cull_mode(CullMode::None);
+    auto rg_depth_handle =
+        gbuffer.add("depth", {.format = depth_img_format_}, Access::DepthStencilWrite);
+    gbuffer.set_execute_fn(
+        [&rg, rg_gbuffer_a, rg_gbuffer_b, rg_gbuffer_c, this, rg_depth_handle](CmdEncoder& cmd) {
+          cmd.begin_region("gbuffer");
+          auto gbuffer_a = rg.get_texture_handle(rg_gbuffer_a);
+          auto gbuffer_b = rg.get_texture_handle(rg_gbuffer_b);
+          auto gbuffer_c = rg.get_texture_handle(rg_gbuffer_c);
+          uvec2 extent = device_->get_image(gbuffer_a)->size();
+          cmd.begin_rendering({.extent = extent},
+                              {RenderingAttachmentInfo::color_att(gbuffer_a, LoadOp::Clear),
+                               RenderingAttachmentInfo::color_att(gbuffer_b, LoadOp::Clear),
+                               RenderingAttachmentInfo::color_att(gbuffer_c, LoadOp::Clear),
+                               RenderingAttachmentInfo::depth_stencil_att(
+                                   rg.get_texture_handle(rg_depth_handle), LoadOp::Clear)});
 
-      BasicPushConstants pc{
-          device_->get_buffer(curr_frame().scene_uniform_buf)->resource_info_->handle,
-          static_vertex_buf_.get_buffer()->resource_info_->handle,
-          static_instance_data_buf_.get_buffer()->resource_info_->handle,
-          static_object_data_buf_.get_buffer()->resource_info_->handle,
-          static_materials_buf_.get_buffer()->resource_info_->handle,
-          device_->get_bindless_idx(linear_sampler_),
-          device_->get_buffer(csm_->get_shadow_data_buffer(device_->curr_frame_in_flight()))
-              ->resource_info_->handle,
-          device_->get_bindless_idx(shadow_sampler_),
-          device_->get_bindless_idx(csm_->get_shadow_map_img(), SubresourceType::Shader),
-          device_->get_bindless_idx(ibl_->irradiance_cubemap_tex_.handle, SubresourceType::Shader),
-          device_->get_bindless_idx(ibl_->brdf_lut_.handle, SubresourceType::Shader),
-          device_->get_bindless_idx(ibl_->prefiltered_env_map_tex_.handle, SubresourceType::Shader),
-          device_->get_bindless_idx(linear_sampler_clamp_to_edge_)};
-      cmd.push_constants(sizeof(pc), &pc);
-      cmd.bind_pipeline(PipelineBindPoint::Graphics, draw_pipeline_);
-      for (int pass_i = 0; pass_i < MeshPass_Count; pass_i++) {
-        execute_static_geo_draws(cmd, static_cast<MeshPass>(pass_i));
-      }
-      draw_skybox(cmd);
-      cmd.end_rendering();
-    });
-  } else {
-    {
-      auto& gbuffer = rg.add_pass("gbuffer");
-      auto rg_gbuffer_a =
-          gbuffer.add("gbuffer_a", {.format = gbuffer_a_format_}, Access::ColorWrite);
-      auto rg_gbuffer_b =
-          gbuffer.add("gbuffer_b", {.format = gbuffer_b_format_}, Access::ColorWrite);
-      auto rg_gbuffer_c =
-          gbuffer.add("gbuffer_c", {.format = gbuffer_c_format_}, Access::ColorWrite);
-      if (draw_stats_.animated_vertices > 0) {
-        gbuffer.add(animated_vertex_output_bufs_.buffers[device_->curr_frame_in_flight()].handle,
-                    (Access)(Access::VertexRead | Access::ComputeRead));
-      }
+          cmd.set_viewport_and_scissor(extent);
 
-      for (int animated = 0; animated < 2; animated++) {
-        for (u32 pass_i : opaque_mesh_pass_idxs_) {
-          auto& mgr = get_mgr((MeshPass)pass_i, animated);
-          if (mgr.should_draw()) {
-            gbuffer.add(mgr.get_draw_pass(main_view_mesh_pass_indices_[pass_i])
-                            .get_frame_out_draw_cmd_buf_handle(),
-                        Access::IndirectRead);
+          // TODO: pipeline binding should be on the outside
+          for (int animated = 0; animated < 2; animated++) {
+            if (animated && draw_stats_.animated_vertices == 0) {
+              continue;
+            }
+            GBufferPushConstants pc{
+                animated
+                    ? device_
+                          ->get_buffer(
+                              animated_vertex_output_bufs_.buffers[device_->curr_frame_in_flight()])
+                          ->device_addr()
+                    : static_vertex_buf_.get_buffer()->device_addr(),
+                device_->get_buffer(curr_frame().scene_uniform_buf)->device_addr(),
+                static_instance_data_buf_.get_buffer()->device_addr(),
+                static_object_data_buf_.get_buffer()->device_addr(),
+                static_materials_buf_.get_buffer()->device_addr(),
+                device_->get_bindless_idx(linear_sampler_),
+            };
+            cmd.push_constants(sizeof(pc), &pc);
+            cmd.bind_pipeline(PipelineBindPoint::Graphics, gbuffer_pipeline_);
+            execute_static_geo_draws(cmd, MeshPass_Opaque, animated);
+            execute_static_geo_draws(cmd, MeshPass_OpaqueDoubleSided, animated);
+            if (gbuffer_alpha_mask_pipeline_ == gbuffer_pipeline_) {
+              exit(1);
+            }
+            cmd.bind_pipeline(PipelineBindPoint::Graphics, gbuffer_alpha_mask_pipeline_);
+            execute_static_geo_draws(cmd, MeshPass_OpaqueAlphaMask, animated);
+            execute_static_geo_draws(cmd, MeshPass_OpaqueAlphaMaskDoubleSided, animated);
           }
-        }
-      }
-      auto rg_depth_handle =
-          gbuffer.add("depth", {.format = depth_img_format_}, Access::DepthStencilWrite);
-      gbuffer.set_execute_fn([&rg, rg_gbuffer_a, rg_gbuffer_b, rg_gbuffer_c, this,
-                              rg_depth_handle](CmdEncoder& cmd) {
-        cmd.begin_region("gbuffer");
-        auto gbuffer_a = rg.get_texture_handle(rg_gbuffer_a);
-        auto gbuffer_b = rg.get_texture_handle(rg_gbuffer_b);
-        auto gbuffer_c = rg.get_texture_handle(rg_gbuffer_c);
-        uvec2 extent = device_->get_image(gbuffer_a)->size();
-        cmd.begin_rendering({.extent = extent},
-                            {RenderingAttachmentInfo::color_att(gbuffer_a, LoadOp::Clear),
-                             RenderingAttachmentInfo::color_att(gbuffer_b, LoadOp::Clear),
-                             RenderingAttachmentInfo::color_att(gbuffer_c, LoadOp::Clear),
-                             RenderingAttachmentInfo::depth_stencil_att(
-                                 rg.get_texture_handle(rg_depth_handle), LoadOp::Clear)});
-
-        cmd.set_viewport_and_scissor(extent);
-
-        // TODO: pipeline binding should be on the outside
-        for (int animated = 0; animated < 2; animated++) {
-          if (animated && draw_stats_.animated_vertices == 0) {
-            continue;
-          }
-          GBufferPushConstants pc{
-              animated
-                  ? device_
-                        ->get_buffer(
-                            animated_vertex_output_bufs_.buffers[device_->curr_frame_in_flight()])
-                        ->device_addr()
-                  : static_vertex_buf_.get_buffer()->device_addr(),
-              device_->get_buffer(curr_frame().scene_uniform_buf)->device_addr(),
-              static_instance_data_buf_.get_buffer()->device_addr(),
-              static_object_data_buf_.get_buffer()->device_addr(),
-              static_materials_buf_.get_buffer()->device_addr(),
-              device_->get_bindless_idx(linear_sampler_),
-          };
-          cmd.push_constants(sizeof(pc), &pc);
-          cmd.bind_pipeline(PipelineBindPoint::Graphics, gbuffer_pipeline_);
-          execute_static_geo_draws(cmd, MeshPass_Opaque, animated);
-          execute_static_geo_draws(cmd, MeshPass_OpaqueDoubleSided, animated);
-          if (gbuffer_alpha_mask_pipeline_ == gbuffer_pipeline_) {
-            exit(1);
-          }
-          cmd.bind_pipeline(PipelineBindPoint::Graphics, gbuffer_alpha_mask_pipeline_);
-          execute_static_geo_draws(cmd, MeshPass_OpaqueAlphaMask, animated);
-          execute_static_geo_draws(cmd, MeshPass_OpaqueAlphaMaskDoubleSided, animated);
-        }
-        cmd.end_rendering();
-        cmd.end_region();
-      });
-    }
+          cmd.end_rendering();
+          cmd.end_region();
+        });
     const char* ssao_final_output_name = "ssao_out";
     if (ssao_enabled_) {
       auto& pass = rg.add_pass("ssao");
-      auto rg_depth_handle = pass.add_image_access("depth", Access::ComputeRead);
+      auto rg_depth_handle = pass.add_image_access("depth", Access::ComputeSample);
       auto rg_out_img_handle =
           pass.add(ssao_final_output_name, {.format = ssao_format_}, Access::ComputeWrite);
       auto rg_gbuffer_a_handle = pass.add_image_access("gbuffer_a", Access::ComputeRead);
@@ -1405,6 +1343,7 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
             auto* depth_tex = device_->get_image(depth_handle);
             auto dims = depth_tex->size();
             struct {
+              ivec2 img_size;
               u32 scene_data_buf;
               u32 depth_img;
               u32 ssao_noise_buf;
@@ -1413,8 +1352,9 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
               u32 gbuffer_a;
               float radius;
             } pc{
+                .img_size = ivec2{dims},
                 .scene_data_buf = device_->get_bindless_idx(curr_frame().scene_uniform_buf),
-                .depth_img = device_->get_bindless_idx(depth_handle, SubresourceType::Storage),
+                .depth_img = device_->get_bindless_idx(depth_handle, SubresourceType::Shader),
                 .ssao_noise_buf = device_->get_bindless_idx(ssao_noise_buf_),
                 .ssao_kernel_buf = device_->get_bindless_idx(ssao_kernel_buf_),
                 .output_img = device_->get_bindless_idx(out_img_handle, SubresourceType::Storage),
@@ -1673,44 +1613,40 @@ void VkRender2::add_rendering_passes(RenderGraph& rg) {
     }
   }
 
-  const char* ui_color_input_tex_name = "final_out";
-  {
+  const char* ui_color_input_tex_name = post_process_input_img_name;
+  if (postprocess_pass_enabled.get() && debug_mode_ == DEBUG_MODE_NONE) {
+    ui_color_input_tex_name = "final_out";
     auto& pp = rg.add_pass("post_process");
     auto draw_out_handle = pp.add_image_access(post_process_input_img_name, Access::FragmentRead);
     auto final_out_handle = pp.add(ui_color_input_tex_name,
                                    AttachmentInfo{.format = draw_img_format_}, Access::ColorWrite);
     pp.set_execute_fn([this, &rg, draw_out_handle, final_out_handle](CmdEncoder& cmd) {
       cmd.begin_region("post_process");
-      if (postprocess_pass_enabled.get()) {
-        u32 postprocess_flags = 0;
-        if (debug_mode_ != DEBUG_MODE_NONE) {
-          postprocess_flags |= 0x4;
-        }
-        if (gammacorrect_enabled.get()) {
-          postprocess_flags |= 0x2;
-        }
-        if (tonemap_enabled.get()) {
-          postprocess_flags |= 0x1;
-        }
-
-        auto tex = rg.get_texture_handle(final_out_handle);
-        auto dims = device_->get_image(tex)->size();
-        cmd.begin_rendering({.extent = dims}, {RenderingAttachmentInfo::color_att(tex)});
-        cmd.set_viewport_and_scissor(dims);
-        cmd.bind_pipeline(PipelineBindPoint::Graphics, postprocess_pipeline_);
-        struct {
-          u32 in_tex_idx, flags, tonemap_type;
-        } pc{
-            device_->get_bindless_idx(rg.get_texture_handle(draw_out_handle),
-                                      SubresourceType::Shader),
-            postprocess_flags,
-            tonemap_type_,
-        };
-        cmd.push_constants(sizeof(pc), &pc);
-        cmd.draw(3);
-        cmd.end_rendering();
-        cmd.end_region();
+      u32 postprocess_flags = 0;
+      if (gammacorrect_enabled.get()) {
+        postprocess_flags |= 0x2;
       }
+      if (tonemap_enabled.get()) {
+        postprocess_flags |= 0x1;
+      }
+
+      auto tex = rg.get_texture_handle(final_out_handle);
+      auto dims = device_->get_image(tex)->size();
+      cmd.begin_rendering({.extent = dims}, {RenderingAttachmentInfo::color_att(tex)});
+      cmd.set_viewport_and_scissor(dims);
+      cmd.bind_pipeline(PipelineBindPoint::Graphics, postprocess_pipeline_);
+      struct {
+        u32 in_tex_idx, flags, tonemap_type;
+      } pc{
+          device_->get_bindless_idx(rg.get_texture_handle(draw_out_handle),
+                                    SubresourceType::Shader),
+          postprocess_flags,
+          tonemap_type_,
+      };
+      cmd.push_constants(sizeof(pc), &pc);
+      cmd.draw(3);
+      cmd.end_rendering();
+      cmd.end_region();
     });
   }
 

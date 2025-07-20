@@ -710,6 +710,10 @@ void Device::acquire_next_image(CmdEncoder* cmd) {
         enqueue_delete_sempahore(sem);
       }
       swapchain_.acquire_semaphores.clear();
+      for (auto& sem : swapchain_.release_semaphores) {
+        enqueue_delete_sempahore(sem);
+      }
+      swapchain_.release_semaphores.clear();
       int x, y;
       glfwGetFramebufferSize(window_, &x, &y);
       auto desc = swapchain_.desc;
@@ -1825,7 +1829,7 @@ void Device::submit_commands() {
             swapchain->acquire_semaphores[swapchain->acquire_semaphore_idx],
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_BLIT_BIT, 0));
         // signals the release for swapchain
-        VkSemaphore sem = swapchain->release_semaphores[swapchain->acquire_semaphore_idx];
+        VkSemaphore sem = swapchain->release_semaphores[swapchain->curr_swapchain_idx];
         assert(sem != VK_NULL_HANDLE);
         queue.signal_semaphores.emplace_back(sem);
         queue.signal_semaphore_infos.emplace_back(
@@ -2198,6 +2202,7 @@ void Device::create_swapchain(vk2::Swapchain& swapchain, const vk2::SwapchainDes
           get_device().create_semaphore(false, "swapchain acquire semaphore"));
     }
   }
+  swapchain.acquire_semaphore_idx = swapchain.acquire_semaphores.size() - 1;
 
   if (swapchain.release_semaphores.empty()) {
     for (size_t i = 0; i < new_swapchain_img_cnt; i++) {
